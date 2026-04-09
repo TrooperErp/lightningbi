@@ -1,0 +1,157 @@
+# LightningBI Engine - Application Configuration
+
+spring:
+  application:
+    name: lightningbi-engine
+  
+  profiles:
+    active: dev
+  
+  # Flyway configuration
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+    schemas: analytics
+    validate-on-migrate: true
+  
+  # Security
+  security:
+    user:
+      name: admin
+      password: changeme
+  
+  # Redis cache
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+      jedis:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+
+  # Vaadin
+  vaadin:
+    productionMode: false
+    whitelisted-packages: com.lightningbi
+
+# Server configuration
+server:
+  port: 8080
+  compression:
+    enabled: true
+  http2:
+    enabled: true
+
+# Logging
+logging:
+  level:
+    root: INFO
+    com.lightningbi: DEBUG
+    org.springframework.security: DEBUG
+    org.flywaydb: INFO
+
+---
+# Development Profile
+spring:
+  config:
+    activate:
+      on-profile: dev
+  
+  datasource:
+    url: jdbc:clickhouse://localhost:8123/analytics
+    username: admin
+    password: 
+    driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+# Development-specific settings
+lightningbi:
+  security:
+    pepper: dev-pepper-change-in-production
+    mfa:
+      enabled: false
+    rate-limit:
+      login-attempts: 10
+      window-seconds: 300
+  
+  audit:
+    enabled: true
+    retention-days: 90
+  
+  superset:
+    url: http://localhost:8088
+    enabled: true
+
+---
+# Production Profile
+spring:
+  config:
+    activate:
+      on-profile: prod
+  
+  datasource:
+    url: jdbc:clickhouse://${CLICKHOUSE_HOST:localhost}:${CLICKHOUSE_PORT:8123}/${CLICKHOUSE_DB:analytics}
+    username: ${CLICKHOUSE_USER}
+    password: ${CLICKHOUSE_PASSWORD}
+    driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+  
+  vaadin:
+    productionMode: true
+
+  # Security
+  security:
+    user:
+      name: ${ADMIN_USER}
+      password: ${ADMIN_PASSWORD}
+
+# Production-specific settings
+lightningbi:
+  security:
+    pepper: ${SECURITY_PEPPER}
+    mfa:
+      enabled: true
+    rate-limit:
+      login-attempts: 5
+      window-seconds: 900
+  
+  audit:
+    enabled: true
+    retention-days: 730
+  
+  superset:
+    url: ${SUPERSET_URL}
+    enabled: true
+
+server:
+  port: ${SERVER_PORT:8080}
+
+logging:
+  level:
+    root: WARN
+    com.lightningbi: INFO
+    org.springframework.security: WARN
