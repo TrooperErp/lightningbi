@@ -15,7 +15,7 @@ data class Session (
     val userAgent: String,
     val createdAt: LocalDateTime = LocalDateTime.now(),
     val expiresAt: LocalDateTime,
-    val lastActivitiy: LocalDateTime= LocalDateTime.now(),
+    val lastActivity: LocalDateTime= LocalDateTime.now(),
     val revoked: Boolean= false
 
 )
