@@ -1,6 +1,7 @@
 package com.lightningbi.lightning_engine.repository
 
 import com.lightningbi.lightning_engine.model.Role
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
@@ -8,7 +9,7 @@ import java.util.UUID
 
 @Repository
 class RoleRepositoryImpl(
-    private val jdbcTemplate: JdbcTemplate
+    @Qualifier("postgresJdbcTemplate") private val jdbcTemplate: JdbcTemplate
 ) : RoleRepository {
 
     private val rowMapper = RowMapper<Role> { rs, _ ->
@@ -21,44 +22,30 @@ class RoleRepositoryImpl(
     }
 
     override fun findById(id: UUID): Role? =
-        jdbcTemplate.query(
-            "SELECT * FROM system_roles WHERE id = ?",
-            rowMapper, id.toString()
-        ).firstOrNull()
+        jdbcTemplate.query("SELECT * FROM pg_lbi_system_roles WHERE id = ?", rowMapper, id).firstOrNull()
 
     override fun findByName(name: String): Role? =
-        jdbcTemplate.query(
-            "SELECT * FROM system_roles WHERE name = ?",
-            rowMapper, name
-        ).firstOrNull()
+        jdbcTemplate.query("SELECT * FROM pg_lbi_system_roles WHERE name = ?", rowMapper, name).firstOrNull()
 
     override fun save(role: Role): Role {
         jdbcTemplate.update(
-            "INSERT INTO system_roles (id, name, description, created_at) VALUES (?, ?, ?, ?)",
-            role.id.toString(), role.name, role.description, role.createdAt
+            "INSERT INTO pg_lbi_system_roles (id, name, description, created_at) VALUES (?, ?, ?, ?)",
+            role.id, role.name, role.description, role.createdAt
         )
         return role
     }
 
     override fun update(role: Role): Role {
-        jdbcTemplate.update("""
-            ALTER TABLE system_roles UPDATE
-                name = ?, description = ?
-            WHERE id = ?
-        """,
-            role.name, role.description, role.id.toString()
+        jdbcTemplate.update(
+            "UPDATE pg_lbi_system_roles SET name = ?, description = ? WHERE id = ?",
+            role.name, role.description, role.id
         )
         return role
     }
 
-    override fun delete(id: UUID): Boolean {
-        val rows = jdbcTemplate.update(
-            "ALTER TABLE system_roles DELETE WHERE id = ?",
-            id.toString()
-        )
-        return rows > 0
-    }
+    override fun delete(id: UUID): Boolean =
+        jdbcTemplate.update("DELETE FROM pg_lbi_system_roles WHERE id = ?", id) > 0
 
     override fun findAll(): List<Role> =
-        jdbcTemplate.query("SELECT * FROM system_roles", rowMapper)
+        jdbcTemplate.query("SELECT * FROM pg_lbi_system_roles", rowMapper)
 }

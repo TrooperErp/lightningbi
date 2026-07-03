@@ -1,0 +1,17 @@
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">
+    <changeSet id="11" author="lightningbi">
+        <addColumn tableName="lbi_area">
+            <column name="partition_expression" type="varchar(255)"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="12" author="lightningbi">
+        <createTable tableName="lbi_area_source">
+            <column name="id" type="uuid"><constraints primaryKey="true"/></column>
+            <column name="area_id" type="uuid"><constraints nullable="false"/></column>
+            <column name="tipo_sorgente" type="varchar(50)"><constraints nullable="false"/></column>
+            <column name="config" type="jsonb"><constraints nullable="false"/></column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()"/>
+        </createTable>
+    </changeSet>
+</databaseChangeLog>

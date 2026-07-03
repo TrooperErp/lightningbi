@@ -1,0 +1,54 @@
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">
+    <changeSet id="6" author="lightningbi">
+        <createTable tableName="lbi_registry_version">
+            <column name="id" type="int" defaultValue="1"><constraints primaryKey="true"/></column>
+            <column name="version" type="bigint" defaultValue="1"/>
+        </createTable>
+        <insert tableName="lbi_registry_version">
+            <column name="id" value="1"/>
+            <column name="version" value="1"/>
+        </insert>
+    </changeSet>
+
+    <changeSet id="7" author="lightningbi">
+        <createTable tableName="lbi_area">
+            <column name="id" type="uuid"><constraints primaryKey="true"/></column>
+            <column name="nome" type="varchar(100)"><constraints unique="true" nullable="false"/></column>
+            <column name="tabella_fisica" type="varchar(100)"><constraints nullable="false"/></column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="8" author="lightningbi">
+        <createTable tableName="lbi_dimensione">
+            <column name="id" type="uuid"><constraints primaryKey="true"/></column>
+            <column name="nome" type="varchar(100)"><constraints unique="true" nullable="false"/></column>
+            <column name="tipo" type="varchar(50)"/>
+            <column name="conformata" type="boolean" defaultValue="false"/>
+            <column name="tabella_dim_fisica" type="varchar(100)"/>
+            <column name="colonna_chiave" type="varchar(100)"/>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="9" author="lightningbi">
+        <createTable tableName="lbi_area_dimensione">
+            <column name="area_id" type="uuid"><constraints nullable="false"/></column>
+            <column name="dimensione_id" type="uuid"><constraints nullable="false"/></column>
+            <column name="colonna_fisica" type="varchar(100)"><constraints nullable="false"/></column>
+            <column name="obbligatoria" type="boolean" defaultValue="false"/>
+            <column name="cardinalita_stimata" type="bigint"/>
+        </createTable>
+        <addPrimaryKey tableName="lbi_area_dimensione" columnNames="area_id, dimensione_id"/>
+    </changeSet>
+
+    <changeSet id="10" author="lightningbi">
+        <createTable tableName="lbi_area_metrica">
+            <column name="id" type="uuid"><constraints primaryKey="true"/></column>
+            <column name="area_id" type="uuid"><constraints nullable="false"/></column>
+            <column name="nome" type="varchar(100)"><constraints nullable="false"/></column>
+            <column name="colonna_fisica" type="varchar(100)"><constraints nullable="false"/></column>
+            <column name="tipo_aggregazione" type="varchar(20)"/>
+        </createTable>
+    </changeSet>
+</databaseChangeLog>

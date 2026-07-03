@@ -1,6 +1,7 @@
 package com.lightningbi.lightning_engine.repository
 
 import com.lightningbi.lightning_engine.model.Session
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
@@ -9,7 +10,7 @@ import java.util.UUID
 
 @Repository
 class SessionRepositoryImpl(
-    private val jdbcTemplate: JdbcTemplate
+    @Qualifier("postgresJdbcTemplate") private val jdbcTemplate: JdbcTemplate
 ) : SessionRepository {
 
     private val rowMapper = RowMapper<Session> { rs, _ ->
@@ -27,43 +28,29 @@ class SessionRepositoryImpl(
     }
 
     override fun findBySessionId(sessionId: String): Session? =
-        jdbcTemplate.query(
-            "SELECT * FROM system_sessions WHERE session_id = ?",
-            rowMapper, sessionId
-        ).firstOrNull()
+        jdbcTemplate.query("SELECT * FROM pg_lbi_system_sessions WHERE session_id = ?", rowMapper, sessionId).firstOrNull()
 
     override fun findByUserId(userId: UUID): List<Session> =
-        jdbcTemplate.query(
-            "SELECT * FROM system_sessions WHERE user_id = ?",
-            rowMapper, userId.toString()
-        )
+        jdbcTemplate.query("SELECT * FROM pg_lbi_system_sessions WHERE user_id = ?", rowMapper, userId)
 
     override fun save(session: Session): Session {
         jdbcTemplate.update(
-            """INSERT INTO system_sessions 
+            """INSERT INTO pg_lbi_system_sessions
                (session_id, user_id, role_id, ip_address, user_agent, created_at, expires_at, last_activity, revoked)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            session.sessionId, session.userId.toString(), session.roleId.toString(),
+            session.sessionId, session.userId, session.roleId,
             session.ipAddress, session.userAgent, session.createdAt,
             session.expiresAt, session.lastActivity, session.revoked
         )
         return session
     }
 
-    override fun revoke(sessionId: String): Boolean {
-        val rows = jdbcTemplate.update(
-            "ALTER TABLE system_sessions UPDATE revoked = true WHERE session_id = ?",
-            sessionId
-        )
-        return rows > 0
-    }
+    override fun revoke(sessionId: String): Boolean =
+        jdbcTemplate.update("UPDATE pg_lbi_system_sessions SET revoked = true WHERE session_id = ?", sessionId) > 0
 
     override fun deleteExpired(): Int =
-        jdbcTemplate.update(
-            "ALTER TABLE system_sessions DELETE WHERE expires_at < ?",
-            LocalDateTime.now()
-        )
+        jdbcTemplate.update("DELETE FROM pg_lbi_system_sessions WHERE expires_at < ?", LocalDateTime.now())
 
     override fun findAll(): List<Session> =
-        jdbcTemplate.query("SELECT * FROM system_sessions", rowMapper)
+        jdbcTemplate.query("SELECT * FROM pg_lbi_system_sessions", rowMapper)
 }

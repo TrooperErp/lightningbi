@@ -1,0 +1,5 @@
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">
+    <include file="db/changelog/001-users-roles.xml"/>
+    <include file="db/changelog/002-registry.xml"/>
+	<include file="db/changelog/003-area-source-partition.xml"/>
+</databaseChangeLog>

@@ -1,0 +1,60 @@
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">
+    <changeSet id="1" author="lightningbi">
+        <createTable tableName="system_users">
+            <column name="id" type="uuid"><constraints primaryKey="true"/></column>
+            <column name="username" type="varchar(100)"><constraints unique="true" nullable="false"/></column>
+            <column name="email" type="varchar(255)"/>
+            <column name="password_hash" type="varchar(255)"/>
+            <column name="last_login" type="timestamp"/>
+            <column name="failed_attempts" type="int" defaultValue="0"/>
+            <column name="locked_until" type="timestamp"/>
+            <column name="mfa_enabled" type="boolean" defaultValue="false"/>
+            <column name="mfa_secret" type="varchar(255)"/>
+            <column name="recovery_codes_hash" type="varchar(255)"/>
+            <column name="active" type="boolean" defaultValue="true"/>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()"/>
+            <column name="updated_at" type="timestamp" defaultValueComputed="now()"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="2" author="lightningbi">
+        <createTable tableName="system_roles">
+            <column name="id" type="uuid"><constraints primaryKey="true"/></column>
+            <column name="name" type="varchar(100)"/>
+            <column name="description" type="varchar(255)"/>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="3" author="lightningbi">
+        <createTable tableName="system_permissions">
+            <column name="id" type="uuid"><constraints primaryKey="true"/></column>
+            <column name="name" type="varchar(100)"/>
+            <column name="description" type="varchar(255)"/>
+            <column name="category" type="varchar(100)"/>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="4" author="lightningbi">
+        <createTable tableName="system_sessions">
+            <column name="session_id" type="varchar(36)"><constraints primaryKey="true"/></column>
+            <column name="user_id" type="uuid"/>
+            <column name="role_id" type="uuid"/>
+            <column name="ip_address" type="varchar(45)"/>
+            <column name="user_agent" type="varchar(500)"/>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()"/>
+            <column name="expires_at" type="timestamp"/>
+            <column name="last_activity" type="timestamp" defaultValueComputed="now()"/>
+            <column name="revoked" type="boolean" defaultValue="false"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="5" author="lightningbi">
+        <createTable tableName="system_user_roles">
+            <column name="user_id" type="uuid"/>
+            <column name="role_id" type="uuid"/>
+            <column name="assigned_at" type="timestamp" defaultValueComputed="now()"/>
+        </createTable>
+    </changeSet>
+</databaseChangeLog>
