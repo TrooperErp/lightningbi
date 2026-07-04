@@ -19,6 +19,13 @@ class RegistryRepositoryImpl(
             nome
         ).firstOrNull()
 
+    override fun findAreaById(id: UUID): Area? =
+        jdbcTemplate.query(
+            "SELECT * FROM lbi_area WHERE id = ?",
+            { rs, _ -> Area(UUID.fromString(rs.getString("id")), rs.getString("nome"), rs.getString("tabella_fisica")) },
+            id
+        ).firstOrNull()
+
     override fun findDimensioniByArea(areaId: UUID): List<AreaDimensione> =
         jdbcTemplate.query(
             "SELECT * FROM lbi_area_dimensione WHERE area_id = ?",
@@ -31,6 +38,19 @@ class RegistryRepositoryImpl(
             ) },
             areaId
         )
+
+    override fun findDimensioniByIds(ids: List<UUID>): List<Dimensione> {
+        if (ids.isEmpty()) return emptyList()
+        val placeholders = ids.joinToString(",") { "?" }
+        return jdbcTemplate.query(
+            "SELECT * FROM lbi_dimensione WHERE id IN ($placeholders)",
+            { rs, _ -> Dimensione(
+                UUID.fromString(rs.getString("id")), rs.getString("nome"), rs.getString("tipo"),
+                rs.getBoolean("conformata"), rs.getString("tabella_dim_fisica"), rs.getString("colonna_chiave")
+            ) },
+            *ids.toTypedArray()
+        )
+    }
 
     override fun findMetricheByArea(areaId: UUID): List<AreaMetrica> =
         jdbcTemplate.query(

@@ -1,0 +1,24 @@
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">
+    <changeSet id="13" author="lightningbi">
+        <createTable tableName="lbi_etl_run">
+            <column name="id" type="uuid"><constraints primaryKey="true"/></column>
+            <column name="area_id" type="uuid"><constraints nullable="false"/></column>
+            <column name="source_id" type="uuid"><constraints nullable="false"/></column>
+            <column name="started_at" type="timestamp" defaultValueComputed="now()"/>
+            <column name="finished_at" type="timestamp"/>
+            <column name="stato" type="varchar(20)"/>
+            <column name="righe_processate" type="bigint" defaultValue="0"/>
+            <column name="righe_scartate" type="bigint" defaultValue="0"/>
+            <column name="errore" type="text"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="14" author="lightningbi">
+        <createTable tableName="lbi_etl_sync_state">
+            <column name="area_id" type="uuid"><constraints nullable="false"/></column>
+            <column name="source_id" type="uuid"><constraints nullable="false"/></column>
+            <column name="last_sync" type="timestamp"/>
+        </createTable>
+        <addPrimaryKey tableName="lbi_etl_sync_state" columnNames="area_id, source_id"/>
+    </changeSet>
+</databaseChangeLog>

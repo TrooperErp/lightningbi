@@ -2,4 +2,5 @@
     <include file="db/changelog/001-users-roles.xml"/>
     <include file="db/changelog/002-registry.xml"/>
 	<include file="db/changelog/003-area-source-partition.xml"/>
+	<include file="db/changelog/004-etl-sync-log.xml"/>
 </databaseChangeLog>
