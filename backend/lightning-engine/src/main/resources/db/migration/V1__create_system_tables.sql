@@ -9,28 +9,20 @@ CREATE TABLE IF NOT EXISTS system_users (
     username String,
     email String,
     password_hash String,
-    
-    -- Security fields
     last_login Nullable(DateTime64(3)),
     failed_attempts UInt8 DEFAULT 0,
     locked_until Nullable(DateTime64(3)),
-    
-    -- MFA
     mfa_enabled UInt8 DEFAULT 0,
     mfa_secret Nullable(String),
     recovery_codes_hash Nullable(String),
-    
-    -- Status
     active UInt8 DEFAULT 1,
     created_at DateTime64(3) DEFAULT now64(3),
     updated_at DateTime64(3) DEFAULT now64(3),
-    
     PRIMARY KEY (id)
 ) ENGINE = MergeTree()
 ORDER BY (id)
 SETTINGS index_granularity = 8192;
 
--- Index for username lookup
 CREATE INDEX IF NOT EXISTS idx_users_username ON system_users (username) TYPE bloom_filter GRANULARITY 1;
 CREATE INDEX IF NOT EXISTS idx_users_email ON system_users (email) TYPE bloom_filter GRANULARITY 1;
 
@@ -42,7 +34,6 @@ CREATE TABLE IF NOT EXISTS system_roles (
     name String,
     description String,
     created_at DateTime64(3) DEFAULT now64(3),
-    
     PRIMARY KEY (id)
 ) ENGINE = MergeTree()
 ORDER BY (id)
@@ -57,7 +48,6 @@ CREATE TABLE IF NOT EXISTS system_permissions (
     description String,
     category String,
     created_at DateTime64(3) DEFAULT now64(3),
-    
     PRIMARY KEY (id)
 ) ENGINE = MergeTree()
 ORDER BY (id)
@@ -72,7 +62,6 @@ CREATE TABLE IF NOT EXISTS system_role_permissions (
     role_id UUID,
     permission_id UUID,
     assigned_at DateTime64(3) DEFAULT now64(3),
-    
     PRIMARY KEY (role_id, permission_id)
 ) ENGINE = MergeTree()
 ORDER BY (role_id, permission_id)
@@ -85,7 +74,6 @@ CREATE TABLE IF NOT EXISTS system_user_roles (
     user_id UUID,
     role_id UUID,
     assigned_at DateTime64(3) DEFAULT now64(3),
-    
     PRIMARY KEY (user_id, role_id)
 ) ENGINE = MergeTree()
 ORDER BY (user_id, role_id)
@@ -98,7 +86,6 @@ CREATE TABLE IF NOT EXISTS system_user_entities (
     user_id UUID,
     entity_id String,
     assigned_at DateTime64(3) DEFAULT now64(3),
-    
     PRIMARY KEY (user_id, entity_id)
 ) ENGINE = MergeTree()
 ORDER BY (user_id, entity_id)
@@ -111,19 +98,12 @@ CREATE TABLE IF NOT EXISTS system_sessions (
     session_id String,
     user_id UUID,
     role_id UUID,
-    
-    -- Session metadata
     ip_address String,
     user_agent String,
-    
-    -- Timestamps
     created_at DateTime64(3) DEFAULT now64(3),
     expires_at DateTime64(3),
     last_activity DateTime64(3) DEFAULT now64(3),
-    
-    -- Status
     revoked UInt8 DEFAULT 0,
-    
     PRIMARY KEY (session_id)
 ) ENGINE = MergeTree()
 ORDER BY (session_id)
@@ -144,17 +124,12 @@ INSERT INTO system_roles (id, name, description) VALUES
 -- INSERT DEFAULT PERMISSIONS
 -- =====================================================
 INSERT INTO system_permissions (id, code, description, category) VALUES
-    -- Data access
     (generateUUIDv4(), 'VIEW_ALL_ENTITIES', 'Visualizza tutte le entità', 'DATA_ACCESS'),
     (generateUUIDv4(), 'VIEW_OWN_ENTITY', 'Visualizza solo propria entità', 'DATA_ACCESS'),
     (generateUUIDv4(), 'VIEW_ECONOMIC_DATA', 'Visualizza dati economici (costi, margini)', 'DATA_ACCESS'),
     (generateUUIDv4(), 'VIEW_PRODUCTION_DATA', 'Visualizza dati produttivi', 'DATA_ACCESS'),
-    
-    -- Export
     (generateUUIDv4(), 'EXPORT_DATA', 'Esporta dati', 'EXPORT'),
     (generateUUIDv4(), 'EXPORT_UNLIMITED', 'Esportazioni illimitate', 'EXPORT'),
-    
-    -- System management
     (generateUUIDv4(), 'MANAGE_USERS', 'Gestione utenti', 'ADMIN'),
     (generateUUIDv4(), 'MANAGE_ROLES', 'Gestione ruoli', 'ADMIN'),
     (generateUUIDv4(), 'VIEW_AUDIT_LOG', 'Visualizza audit log', 'ADMIN'),
@@ -164,7 +139,6 @@ INSERT INTO system_permissions (id, code, description, category) VALUES
 -- ASSIGN PERMISSIONS TO ROLES
 -- =====================================================
 
--- DIRECTION: all permissions
 INSERT INTO system_role_permissions (role_id, permission_id)
 SELECT 
     r.id as role_id,
@@ -173,7 +147,6 @@ FROM system_roles r
 CROSS JOIN system_permissions p
 WHERE r.name = 'DIRECTION';
 
--- MANAGEMENT: economic data for own entity
 INSERT INTO system_role_permissions (role_id, permission_id)
 SELECT 
     r.id as role_id,
@@ -183,7 +156,6 @@ CROSS JOIN system_permissions p
 WHERE r.name = 'MANAGEMENT'
   AND p.code IN ('VIEW_OWN_ENTITY', 'VIEW_ECONOMIC_DATA', 'VIEW_PRODUCTION_DATA', 'EXPORT_DATA');
 
--- OPERATIONS: production data only for own entity
 INSERT INTO system_role_permissions (role_id, permission_id)
 SELECT 
     r.id as role_id,
@@ -192,20 +164,3 @@ FROM system_roles r
 CROSS JOIN system_permissions p
 WHERE r.name = 'OPERATIONS'
   AND p.code IN ('VIEW_OWN_ENTITY', 'VIEW_PRODUCTION_DATA', 'EXPORT_DATA');
-
--- =====================================================
--- COMMENTS
--- =====================================================
--- Tables created:
--- - system_users: user accounts with security fields
--- - system_roles: role definitions (DIRECTION, MANAGEMENT, OPERATIONS)
--- - system_permissions: granular permissions
--- - system_role_permissions: role-permission mapping
--- - system_user_roles: user-role mapping (supports multiple roles per user)
--- - system_user_entities: user-entity mapping (multi-tenant support)
--- - system_sessions: active sessions tracking
---
--- Default data:
--- - 3 roles: DIRECTION, MANAGEMENT, OPERATIONS
--- - 10 permissions across DATA_ACCESS, EXPORT, ADMIN categories
--- - Permission assignments per role

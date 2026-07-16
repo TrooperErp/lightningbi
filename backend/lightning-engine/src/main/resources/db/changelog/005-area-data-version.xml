@@ -4,9 +4,10 @@
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
-    <include file="db/changelog/001-users-role.xml"/>
-    <include file="db/changelog/002-registry.xml"/>
-    <include file="db/changelog/003-area-source-partition.xml"/>
-    <include file="db/changelog/004-etl-sync-log.xml"/>
-    <include file="db/changelog/005-area-data-version.xml"/>
+    <changeSet id="15" author="lightningbi">
+        <createTable tableName="lbi_area_data_version">
+            <column name="area_id" type="uuid"><constraints primaryKey="true"/></column>
+            <column name="data_version" type="bigint" defaultValue="1"/>
+        </createTable>
+    </changeSet>
 </databaseChangeLog>

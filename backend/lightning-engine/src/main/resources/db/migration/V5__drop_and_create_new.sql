@@ -16,7 +16,7 @@ ENGINE = SummingMergeTree()
 PARTITION BY toYYYYMM(date)
 ORDER BY (date, user_id, action)
 AS SELECT
-    toDate(timestamp) as date, user_id, username, action,
+    toDate(event_time) as date, user_id, username, action,
     count() as action_count, sum(rows_returned) as total_rows,
     avg(duration_ms) as avg_duration_ms, sum(error_flag) as error_count
 FROM ch_lbi_audit_log
@@ -27,7 +27,7 @@ ENGINE = SummingMergeTree()
 PARTITION BY toYYYYMM(hour)
 ORDER BY (hour, ip_address, username)
 AS SELECT
-    toStartOfHour(timestamp) as hour, ip_address, username, count() as attempt_count
+    toStartOfHour(event_time) as hour, ip_address, username, count() as attempt_count
 FROM ch_lbi_auth_events
 WHERE event_type = 'LOGIN_FAIL'
 GROUP BY hour, ip_address, username;

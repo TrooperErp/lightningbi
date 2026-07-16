@@ -5,36 +5,35 @@ spring:
   profiles:
     active: dev
 
+  # Flyway -> ClickHouse (migrations analytics)
   flyway:
     enabled: true
     baseline-on-migrate: true
+    baseline-version: "0"
     locations: classpath:db/migration
     schemas: analytics
-    validate-on-migrate: true
+    validate-on-migrate: false
+    create-schemas: false
 
+  # Liquibase -> Postgres (metadati lbi_*)
   liquibase:
     enabled: true
     change-log: classpath:db/changelog/db.changelog-master.xml
 
-  security:
-    user:
-      name: admin
-      password: changeme
-
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
       timeout: 2000ms
-      jedis:
+      # Spring Boot usa Lettuce di default: pool sotto 'lettuce', non 'jedis'
+      lettuce:
         pool:
           max-active: 8
           max-idle: 8
           min-idle: 0
 
-  vaadin:
-    productionMode: false
-    whitelisted-packages: com.lightningbi
+# Vaadin: proprietà top-level, NON sotto spring
+vaadin:
+  production-mode: false
+  whitelisted-packages: com.lightningbi
 
 server:
   port: 8080
@@ -52,7 +51,7 @@ logging:
     liquibase: INFO
 
 ---
-# Development Profile
+# ============ DEV ============
 spring:
   config:
     activate:
@@ -60,9 +59,9 @@ spring:
 
   datasource:
     clickhouse:
-      url: jdbc:clickhouse://localhost:8123/analytics
+      jdbc-url: jdbc:clickhouse://localhost:8123/analytics
       username: admin
-      password:
+      password: ""
       driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
       hikari:
         maximum-pool-size: 10
@@ -72,18 +71,23 @@ spring:
         max-lifetime: 1800000
 
     postgres:
-      url: jdbc:postgresql://localhost:5432/lightningbi
-      username: lightningbi
-      password: lightningbi_dev_pass
+      jdbc-url: jdbc:postgresql://localhost:5432/lightningbi
+      username: admin
+      password: strongpassword
       driver-class-name: org.postgresql.Driver
       hikari:
         maximum-pool-size: 10
         minimum-idle: 2
 
+  flyway:
+    url: jdbc:clickhouse://localhost:8123/analytics
+    user: admin
+    password: ""
+
   liquibase:
     url: jdbc:postgresql://localhost:5432/lightningbi
-    user: lightningbi
-    password: lightningbi_dev_pass
+    user: admin
+    password: strongpassword
 
   data:
     redis:
@@ -109,7 +113,9 @@ lightningbi:
     enabled: true
 
 ---
-# Production Profile
+# ============ PROD ============
+# Nessun default localhost: se manca una env var il boot fallisce subito
+# (fail-fast), invece di puntare silenziosamente all'host sbagliato.
 spring:
   config:
     activate:
@@ -117,7 +123,7 @@ spring:
 
   datasource:
     clickhouse:
-      url: jdbc:clickhouse://${CLICKHOUSE_HOST:localhost}:${CLICKHOUSE_PORT:8123}/${CLICKHOUSE_DB:analytics}
+      jdbc-url: jdbc:clickhouse://${CLICKHOUSE_HOST}:${CLICKHOUSE_PORT:8123}/${CLICKHOUSE_DB:analytics}
       username: ${CLICKHOUSE_USER}
       password: ${CLICKHOUSE_PASSWORD}
       driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
@@ -129,13 +135,18 @@ spring:
         max-lifetime: 1800000
 
     postgres:
-      url: jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT:5432}/${POSTGRES_DB}
+      jdbc-url: jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT:5432}/${POSTGRES_DB}
       username: ${POSTGRES_USER}
       password: ${POSTGRES_PASSWORD}
       driver-class-name: org.postgresql.Driver
       hikari:
         maximum-pool-size: 20
         minimum-idle: 5
+
+  flyway:
+    url: jdbc:clickhouse://${CLICKHOUSE_HOST}:${CLICKHOUSE_PORT:8123}/${CLICKHOUSE_DB:analytics}
+    user: ${CLICKHOUSE_USER}
+    password: ${CLICKHOUSE_PASSWORD}
 
   liquibase:
     url: jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT:5432}/${POSTGRES_DB}
@@ -147,13 +158,13 @@ spring:
       host: ${REDIS_HOST}
       port: ${REDIS_PORT:6379}
 
-  vaadin:
-    productionMode: true
-
   security:
     user:
       name: ${ADMIN_USER}
       password: ${ADMIN_PASSWORD}
+
+vaadin:
+  production-mode: true
 
 lightningbi:
   security:
@@ -164,11 +175,11 @@ lightningbi:
     rate-limit:
       login-attempts: 5
       window-seconds: 900
-  
+
   audit:
     enabled: true
     retention-days: 730
-  
+
   superset:
     url: ${SUPERSET_URL}
     enabled: true

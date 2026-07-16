@@ -1,12 +1,13 @@
 package com.lightningbi.lightning_engine.etl
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import tools.jackson.databind.ObjectMapper
 import com.lightningbi.lightning_engine.model.EtlRun
 import com.lightningbi.lightning_engine.model.EtlStato
 import com.lightningbi.lightning_engine.model.EtlSyncState
 import com.lightningbi.lightning_engine.repository.EtlRunRepository
 import com.lightningbi.lightning_engine.repository.EtlSyncStateRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
+import com.lightningbi.lightning_engine.service.EtlCompletionService
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.script.DefaultRedisScript
 import org.springframework.stereotype.Service
@@ -24,7 +25,8 @@ class EtlOrchestrator(
     private val transformService: TransformService,
     private val loaderService: LoaderService,
     private val redisTemplate: StringRedisTemplate,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val etlCompletionService: EtlCompletionService
 ) {
 
     private val unlockScript = DefaultRedisScript(
@@ -75,7 +77,7 @@ class EtlOrchestrator(
             val columns = dimensioni.map { it.colonnaFisica } + metriche.map { it.colonnaFisica } + "_partition_key"
             loaderService.load(tabellaFisica, valid, columns)
 
-            etlSyncStateRepository.upsert(EtlSyncState(areaId, sourceId, LocalDateTime.now()))
+            etlCompletionService.completeSuccess(areaId, sourceId, LocalDateTime.now())
 
             etlRunRepository.update(
                 run.copy(

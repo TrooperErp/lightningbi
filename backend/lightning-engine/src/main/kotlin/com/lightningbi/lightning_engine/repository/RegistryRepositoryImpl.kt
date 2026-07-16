@@ -115,4 +115,19 @@ class RegistryRepositoryImpl(
             am.id, am.areaId, am.nome, am.colonnaFisica, am.tipoAggregazione
         )
     }
+
+    override fun findAllAree(): List<Area> =
+        jdbcTemplate.query(
+            "SELECT * FROM lbi_area ORDER BY nome",
+            { rs, _ -> Area(UUID.fromString(rs.getString("id")), rs.getString("nome"), rs.getString("tabella_fisica")) }
+        )
+
+    override fun findAllDimensioni(): List<Dimensione> =
+        jdbcTemplate.query(
+            "SELECT * FROM lbi_dimensione ORDER BY nome",
+            { rs, _ -> Dimensione(
+                UUID.fromString(rs.getString("id")), rs.getString("nome"), rs.getString("tipo"),
+                rs.getBoolean("conformata"), rs.getString("tabella_dim_fisica"), rs.getString("colonna_chiave")
+            ) }
+        )
 }

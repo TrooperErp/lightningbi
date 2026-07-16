@@ -1,6 +1,11 @@
-<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
     <changeSet id="1" author="lightningbi">
-        <createTable tableName="system_users">
+        <createTable tableName="pg_lbi_system_users">
             <column name="id" type="uuid"><constraints primaryKey="true"/></column>
             <column name="username" type="varchar(100)"><constraints unique="true" nullable="false"/></column>
             <column name="email" type="varchar(255)"/>
@@ -16,18 +21,16 @@
             <column name="updated_at" type="timestamp" defaultValueComputed="now()"/>
         </createTable>
     </changeSet>
-
     <changeSet id="2" author="lightningbi">
-        <createTable tableName="system_roles">
+        <createTable tableName="pg_lbi_system_roles">
             <column name="id" type="uuid"><constraints primaryKey="true"/></column>
             <column name="name" type="varchar(100)"/>
             <column name="description" type="varchar(255)"/>
             <column name="created_at" type="timestamp" defaultValueComputed="now()"/>
         </createTable>
     </changeSet>
-
     <changeSet id="3" author="lightningbi">
-        <createTable tableName="system_permissions">
+        <createTable tableName="pg_lbi_system_permissions">
             <column name="id" type="uuid"><constraints primaryKey="true"/></column>
             <column name="name" type="varchar(100)"/>
             <column name="description" type="varchar(255)"/>
@@ -35,9 +38,8 @@
             <column name="created_at" type="timestamp" defaultValueComputed="now()"/>
         </createTable>
     </changeSet>
-
     <changeSet id="4" author="lightningbi">
-        <createTable tableName="system_sessions">
+        <createTable tableName="pg_lbi_system_sessions">
             <column name="session_id" type="varchar(36)"><constraints primaryKey="true"/></column>
             <column name="user_id" type="uuid"/>
             <column name="role_id" type="uuid"/>
@@ -49,9 +51,8 @@
             <column name="revoked" type="boolean" defaultValue="false"/>
         </createTable>
     </changeSet>
-
     <changeSet id="5" author="lightningbi">
-        <createTable tableName="system_user_roles">
+        <createTable tableName="pg_lbi_system_user_roles">
             <column name="user_id" type="uuid"/>
             <column name="role_id" type="uuid"/>
             <column name="assigned_at" type="timestamp" defaultValueComputed="now()"/>

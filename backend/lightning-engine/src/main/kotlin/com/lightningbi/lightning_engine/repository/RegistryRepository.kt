@@ -16,4 +16,7 @@ interface RegistryRepository {
     fun saveDimensione(dimensione: Dimensione)
     fun saveAreaDimensione(ad: AreaDimensione)
     fun saveAreaMetrica(am: AreaMetrica)
+    fun findAllAree(): List<Area>
+
+    fun findAllDimensioni(): List<Dimensione>
 }
