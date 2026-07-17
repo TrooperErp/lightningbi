@@ -1,16 +1,19 @@
 package com.lightningbi.lightning_engine.etl
 
-import tools.jackson.databind.ObjectMapper
+import com.lightningbi.lightning_engine.model.AreaSource
 import com.lightningbi.lightning_engine.model.EtlRun
 import com.lightningbi.lightning_engine.model.EtlStato
-import com.lightningbi.lightning_engine.model.EtlSyncState
+import com.lightningbi.lightning_engine.model.SourceStatus
+import com.lightningbi.lightning_engine.model.SyncMode
 import com.lightningbi.lightning_engine.repository.EtlRunRepository
 import com.lightningbi.lightning_engine.repository.EtlSyncStateRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
+import com.lightningbi.lightning_engine.service.CryptoService
 import com.lightningbi.lightning_engine.service.EtlCompletionService
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.script.DefaultRedisScript
 import org.springframework.stereotype.Service
+import tools.jackson.databind.ObjectMapper
 import java.time.Duration
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -26,7 +29,8 @@ class EtlOrchestrator(
     private val loaderService: LoaderService,
     private val redisTemplate: StringRedisTemplate,
     private val objectMapper: ObjectMapper,
-    private val etlCompletionService: EtlCompletionService
+    private val etlCompletionService: EtlCompletionService,
+    private val cryptoService: CryptoService
 ) {
 
     private val unlockScript = DefaultRedisScript(
@@ -39,45 +43,82 @@ class EtlOrchestrator(
         """.trimIndent(), Long::class.java
     )
 
-    fun runForArea(areaId: UUID, sourceId: UUID, sourceConfigJson: String, tabellaFisica: String) {
-        val lockKey = "etl-lock:$areaId:$sourceId"
+    private fun slug(nome: String): String =
+        nome.lowercase().replace(Regex("\\s+"), "_")
+
+    fun runForArea(areaId: UUID, source: AreaSource) {
+        if (source.status != SourceStatus.VERIFIED) {
+            throw IllegalStateException("Sorgente non verificata (status=${source.status}). Verifica la view prima di sincronizzare.")
+        }
+
+        val lockKey = "etl-lock:$areaId:${source.id}"
         val lockValue = UUID.randomUUID().toString()
         val acquired = redisTemplate.opsForValue()
             .setIfAbsent(lockKey, lockValue, Duration.ofHours(2)) ?: false
 
         if (!acquired) {
-            throw IllegalStateException("ETL already running for area=$areaId source=$sourceId")
+            throw IllegalStateException("ETL already running for area=$areaId source=${source.id}")
         }
 
         val run = EtlRun(
-            id = UUID.randomUUID(), areaId = areaId, sourceId = sourceId,
+            id = UUID.randomUUID(), areaId = areaId, sourceId = source.id,
             startedAt = LocalDateTime.now(), finishedAt = null,
             stato = EtlStato.RUNNING, righeProcessate = 0, righeScartate = 0, errore = null
         )
         etlRunRepository.save(run)
 
         try {
-            val syncState = etlSyncStateRepository.find(areaId, sourceId)
-            val lastSync = syncState?.lastSync
-                ?.minusHours(1)
-                ?.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+            val syncState = etlSyncStateRepository.find(areaId, source.id)
+            val lastSync = if (source.config.syncMode == SyncMode.FULL_RELOAD) {
+                null
+            } else {
+                syncState?.lastSync
+                    ?.minusHours(1)
+                    ?.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+            }
 
-            @Suppress("UNCHECKED_CAST")
-            val config = objectMapper.readValue(sourceConfigJson, Map::class.java) as Map<String, Any>
+            val decryptedPassword = cryptoService.decrypt(source.config.encryptedPassword)
+
+            val config = mapOf(
+                "jdbcUrl" to source.config.jdbcUrl,
+                "username" to source.config.username,
+                "password" to decryptedPassword,
+                "driverClassName" to source.config.driverClassName,
+                "viewName" to source.config.viewName
+            )
 
             val rawRows = extractor.extract(config, lastSync).toList()
 
+            val area = registryRepository.findAreaById(areaId) ?: error("Area not found")
             val dimensioni = registryRepository.findDimensioniByArea(areaId)
             val metriche = registryRepository.findMetricheByArea(areaId)
             val dims = registryRepository.findDimensioniByIds(dimensioni.map { it.dimensioneId })
             val dimensioneNomiById = dims.associate { it.id.toString() to it.nome }
 
-            val (valid, errors) = transformService.transform(rawRows, dimensioni, dimensioneNomiById, metriche)
+            // La view genera colonne già con alias = slug(nome dimensione/metrica).
+            // Serve solo rimappare dallo slug alla colonna fisica dell'area.
+            val remappedRows = rawRows.map { row ->
+                val out = mutableMapOf<String, Any?>()
+                dimensioni.forEach { ad ->
+                    val nome = dimensioneNomiById[ad.dimensioneId.toString()] ?: return@forEach
+                    out[ad.colonnaFisica] = row[slug(nome)]
+                }
+                metriche.forEach { m ->
+                    out[m.colonnaFisica] = row[slug(m.nome)]
+                }
+                out
+            }
 
-            val columns = dimensioni.map { it.colonnaFisica } + metriche.map { it.colonnaFisica } + "_partition_key"
-            loaderService.load(tabellaFisica, valid, columns)
+            val (valid, errors) = transformService.transform(remappedRows, dimensioni, dimensioneNomiById, metriche)
 
-            etlCompletionService.completeSuccess(areaId, sourceId, LocalDateTime.now())
+            if (source.config.syncMode == SyncMode.FULL_RELOAD) {
+                loaderService.truncateAndLoad(area.tabellaFisica, valid, dimensioni.map { it.colonnaFisica } + metriche.map { it.colonnaFisica })
+            } else {
+                val columns = dimensioni.map { it.colonnaFisica } + metriche.map { it.colonnaFisica } + "_partition_key"
+                loaderService.load(area.tabellaFisica, valid, columns)
+            }
+
+            etlCompletionService.completeSuccess(areaId, source.id, LocalDateTime.now())
 
             etlRunRepository.update(
                 run.copy(

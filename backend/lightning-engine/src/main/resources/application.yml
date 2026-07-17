@@ -170,6 +170,7 @@ lightningbi:
   security:
     pepper: ${SECURITY_PEPPER}
     jwt-secret: ${JWT_SECRET}
+    source-encryption-key: ${SOURCE_ENCRYPTION_KEY}
     mfa:
       enabled: true
     rate-limit:
@@ -192,3 +193,4 @@ logging:
     root: WARN
     com.lightningbi: INFO
     org.springframework.security: WARN
+

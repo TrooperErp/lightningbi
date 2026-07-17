@@ -29,4 +29,18 @@ class LoaderService(
             insertColumns.map { row[it] as Any }.toTypedArray()
         })
     }
+    fun truncateAndLoad(tabellaFisica: String, rows: List<Map<String, Any?>>, columns: List<String>) {
+        require(validIdentifier.matches(tabellaFisica)) { "Invalid table name: $tabellaFisica" }
+        columns.forEach { require(validIdentifier.matches(it)) { "Invalid column name: $it" } }
+
+        jdbcTemplate.execute("TRUNCATE TABLE $tabellaFisica")
+
+        if (rows.isEmpty()) return
+
+        val placeholders = columns.joinToString(",") { "?" }
+        val sql = "INSERT INTO $tabellaFisica (${columns.joinToString(",")}) VALUES ($placeholders)"
+        jdbcTemplate.batchUpdate(sql, rows.map { row ->
+            columns.map { row[it] as Any }.toTypedArray()
+        })
+    }
 }

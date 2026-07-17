@@ -1,19 +1,24 @@
 package com.lightningbi.lightning_engine.etl
 
 import org.springframework.stereotype.Component
-import javax.sql.DataSource
 import java.sql.Timestamp
 
 @Component
-class JdbcExtractor(
-    private val sourceDataSource: DataSource
-) : ExtractorPort {
+class JdbcExtractor : ExtractorPort {
 
     override fun extract(config: Map<String, Any>, lastSync: String?): Sequence<Map<String, Any?>> {
-        val query = config["query"] as String // contiene un solo '?' per lastSync
+        val jdbcUrl = config["jdbcUrl"] as String
+        val username = config["username"] as String
+        val password = config["password"] as String // già decifrata dal chiamante
+        val driverClassName = config["driverClassName"] as String
+        val viewName = config["viewName"] as String
+
+        Class.forName(driverClassName)
+
+        val query = "SELECT * FROM $viewName WHERE lbi_updated_at > ?"
 
         return sequence {
-            sourceDataSource.connection.use { conn ->
+            java.sql.DriverManager.getConnection(jdbcUrl, username, password).use { conn ->
                 conn.prepareStatement(query).use { stmt ->
                     stmt.fetchSize = 5000
                     stmt.setTimestamp(1, Timestamp.valueOf(lastSync ?: "1900-01-01 00:00:00"))

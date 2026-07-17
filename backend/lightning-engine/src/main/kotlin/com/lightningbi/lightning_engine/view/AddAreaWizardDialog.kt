@@ -3,7 +3,7 @@ package com.lightningbi.lightning_engine.view
 import com.lightningbi.lightning_engine.model.Dimensione
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import com.lightningbi.lightning_engine.service.RegistryService
-import com.vaadin.flow.component.Component
+import com.lightningbi.lightning_engine.service.SymbolTableService
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant
 import com.vaadin.flow.component.checkbox.Checkbox
@@ -21,6 +21,7 @@ import java.util.UUID
 class AddAreaWizardDialog(
     private val registryService: RegistryService,
     private val registryRepository: RegistryRepository,
+    private val symbolTableService: SymbolTableService,
     private val onAreaCreated: () -> Unit
 ) : Dialog() {
 
@@ -42,13 +43,13 @@ class AddAreaWizardDialog(
     private val sommeAggiunte = mutableListOf<PendingSomma>()
 
     private lateinit var nomeAreaField: TextField
-    private lateinit var tabellaFisicaField: TextField
     private val filtriListDiv = Div()
     private val sommeListDiv = Div()
 
-    private val content = VerticalLayout()
+    private val content = VerticalLayout().apply { className = "lbi-wizard-content" }
 
     init {
+        className = "lbi-wizard-dialog"
         width = "600px"
         headerTitle = "Nuova Analisi"
         isCloseOnEsc = false
@@ -58,6 +59,20 @@ class AddAreaWizardDialog(
         showStep1()
     }
 
+    private fun slugify(nome: String): String =
+        nome.lowercase()
+            .trim()
+            .replace(Regex("[^a-z0-9\\s]"), "")
+            .replace(Regex("\\s+"), "_")
+
+    private fun normalizeColumn(value: String?): String =
+        value
+            ?.lowercase()
+            ?.trim()
+            ?.replace(Regex("[^a-z0-9\\s_]"), "")
+            ?.replace(Regex("\\s+"), "_")
+            ?: ""
+
     // ================= STEP 1: nome analisi =================
     private fun showStep1() {
         content.removeAll()
@@ -66,20 +81,16 @@ class AddAreaWizardDialog(
         })
 
         nomeAreaField = TextField("Nome analisi").apply {
-            placeholder = "es. vendite_2026"
-            setWidthFull()
-        }
-        tabellaFisicaField = TextField("Tabella dati (tecnico)").apply {
-            placeholder = "es. ch_lbi_vendite_2026"
-            helperText = "Nome della tabella già esistente su ClickHouse con i dati"
+            placeholder = "es. Vendite 2026"
+            className = "lbi-wizard-field"
             setWidthFull()
         }
 
-        content.add(nomeAreaField, tabellaFisicaField)
+        content.add(nomeAreaField)
 
         val nextButton = Button("Avanti →") {
-            if (nomeAreaField.value.isNullOrBlank() || tabellaFisicaField.value.isNullOrBlank()) {
-                Notification.show("Compila entrambi i campi")
+            if (nomeAreaField.value.isNullOrBlank()) {
+                Notification.show("Indica il nome dell'analisi")
                 return@Button
             }
             showStep2()
@@ -87,7 +98,7 @@ class AddAreaWizardDialog(
 
         val cancelButton = Button("Annulla") { close() }
 
-        content.add(HorizontalLayout(cancelButton, nextButton))
+        content.add(HorizontalLayout(cancelButton, nextButton).apply { className = "lbi-wizard-actions" })
     }
 
     // ================= STEP 2: filtri (dimensioni) =================
@@ -112,11 +123,12 @@ class AddAreaWizardDialog(
             showStep3()
         }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
 
-        content.add(HorizontalLayout(backButton, nextButton))
+        content.add(HorizontalLayout(backButton, nextButton).apply { className = "lbi-wizard-actions" })
     }
 
     private fun renderFiltriList() {
         filtriListDiv.removeAll()
+        filtriListDiv.className = "lbi-wizard-list"
         filtriAggiunti.forEach { f ->
             filtriListDiv.add(Div(Span("✓ ${f.nome} (colonna: ${f.colonnaFisica})")).apply {
                 className = "lbi-wizard-item"
@@ -125,8 +137,12 @@ class AddAreaWizardDialog(
     }
 
     private fun openAddFiltroForm() {
-        val subDialog = Dialog()
+        val subDialog = Dialog().apply { className = "lbi-wizard-dialog" }
         subDialog.headerTitle = "Nuovo filtro"
+
+        val subtitle = Span("Un valore per cui vuoi poter filtrare, es. Cliente o Anno").apply {
+            className = "lbi-wizard-label"
+        }
 
         val modeGroup = RadioButtonGroup<String>().apply {
             label = "Tipo"
@@ -148,8 +164,14 @@ class AddAreaWizardDialog(
 
         val colonnaField = TextField("Colonna nella tabella dati").apply {
             placeholder = "es. cliente_id"
-            helperText = "Nome della colonna in questa area che contiene questo filtro"
+            helperText = "Verrà convertito automaticamente in minuscolo con underscore"
             setWidthFull()
+            addValueChangeListener { event ->
+                val normalized = normalizeColumn(event.value)
+                if (normalized != event.value) {
+                    value = normalized
+                }
+            }
         }
 
         val obbligatorioCheckbox = Checkbox("Filtro obbligatorio (righe senza valore vengono scartate)")
@@ -161,6 +183,7 @@ class AddAreaWizardDialog(
         }
 
         val form = VerticalLayout(modeGroup, nomeField, existingCombo, colonnaField, obbligatorioCheckbox)
+            .apply { className = "lbi-wizard-content" }
 
         val confirmButton = Button("Aggiungi") {
             val isNuovo = modeGroup.value == "Nuovo filtro"
@@ -192,7 +215,7 @@ class AddAreaWizardDialog(
 
         val cancelButton = Button("Annulla") { subDialog.close() }
 
-        subDialog.add(VerticalLayout(form, HorizontalLayout(cancelButton, confirmButton)))
+        subDialog.add(VerticalLayout(subtitle, form, HorizontalLayout(cancelButton, confirmButton).apply { className = "lbi-wizard-actions" }))
         subDialog.open()
     }
 
@@ -218,11 +241,12 @@ class AddAreaWizardDialog(
             showStep4()
         }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
 
-        content.add(HorizontalLayout(backButton, nextButton))
+        content.add(HorizontalLayout(backButton, nextButton).apply { className = "lbi-wizard-actions" })
     }
 
     private fun renderSommeList() {
         sommeListDiv.removeAll()
+        sommeListDiv.className = "lbi-wizard-list"
         sommeAggiunte.forEach { s ->
             sommeListDiv.add(Div(Span("✓ ${s.nome} (colonna: ${s.colonnaFisica})")).apply {
                 className = "lbi-wizard-item"
@@ -231,8 +255,12 @@ class AddAreaWizardDialog(
     }
 
     private fun openAddSommaForm() {
-        val subDialog = Dialog()
+        val subDialog = Dialog().apply { className = "lbi-wizard-dialog" }
         subDialog.headerTitle = "Nuova somma"
+
+        val subtitle = Span("Un numero da sommare, es. Fatturato o Quantità").apply {
+            className = "lbi-wizard-label"
+        }
 
         val nomeField = TextField("Nome somma").apply {
             placeholder = "es. Fatturato"
@@ -240,7 +268,14 @@ class AddAreaWizardDialog(
         }
         val colonnaField = TextField("Colonna nella tabella dati").apply {
             placeholder = "es. importo"
+            helperText = "Verrà convertito automaticamente in minuscolo con underscore"
             setWidthFull()
+            addValueChangeListener { event ->
+                val normalized = normalizeColumn(event.value)
+                if (normalized != event.value) {
+                    value = normalized
+                }
+            }
         }
 
         val confirmButton = Button("Aggiungi") {
@@ -255,7 +290,7 @@ class AddAreaWizardDialog(
 
         val cancelButton = Button("Annulla") { subDialog.close() }
 
-        subDialog.add(VerticalLayout(nomeField, colonnaField, HorizontalLayout(cancelButton, confirmButton)))
+        subDialog.add(VerticalLayout(subtitle, nomeField, colonnaField, HorizontalLayout(cancelButton, confirmButton).apply { className = "lbi-wizard-actions" }))
         subDialog.open()
     }
 
@@ -264,7 +299,6 @@ class AddAreaWizardDialog(
         content.removeAll()
         content.add(Span("Riepilogo").apply { className = "lbi-wizard-label" })
         content.add(Span("Analisi: ${nomeAreaField.value}"))
-        content.add(Span("Tabella: ${tabellaFisicaField.value}"))
         content.add(Span("Filtri: ${filtriAggiunti.joinToString(", ") { it.nome }}"))
         content.add(Span("Somme: ${sommeAggiunte.joinToString(", ") { it.nome }}"))
 
@@ -272,12 +306,20 @@ class AddAreaWizardDialog(
         val confirmButton = Button("Crea Analisi") { createArea() }
             .apply { addThemeVariants(ButtonVariant.LUMO_SUCCESS) }
 
-        content.add(HorizontalLayout(backButton, confirmButton))
+        content.add(HorizontalLayout(backButton, confirmButton).apply { className = "lbi-wizard-actions" })
     }
 
     private fun createArea() {
         try {
-            val area = registryService.createArea(nomeAreaField.value, tabellaFisicaField.value)
+            val tabellaFisica = "ch_lbi_" + slugify(nomeAreaField.value)
+
+            symbolTableService.createAreaTable(
+                tabellaFisica,
+                filtriAggiunti.map { it.colonnaFisica },
+                sommeAggiunte.map { it.colonnaFisica }
+            )
+
+            val area = registryService.createArea(nomeAreaField.value, tabellaFisica)
 
             filtriAggiunti.forEach { f ->
                 val dimensioneId = if (f.isNuovo) {

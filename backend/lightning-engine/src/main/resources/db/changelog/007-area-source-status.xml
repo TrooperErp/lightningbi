@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+    <changeSet id="17" author="lightningbi">
+        <addColumn tableName="lbi_area_source">
+            <column name="status" type="varchar(20)" defaultValue="PENDING_VIEW">
+                <constraints nullable="false"/>
+            </column>
+            <column name="error_detail" type="text"/>
+        </addColumn>
+    </changeSet>
+</databaseChangeLog>

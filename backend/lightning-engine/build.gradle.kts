@@ -41,6 +41,9 @@ dependencies {
 	implementation("org.jetbrains.kotlin:kotlin-reflect")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 	implementation("tools.jackson.module:jackson-module-kotlin")
+	implementation("com.oracle.database.jdbc:ojdbc11:23.5.0.24.07")
+	implementation("com.ibm.db2:jcc:11.5.9.0")
+	implementation("com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11")
 
 	// Migrations: Flyway -> ClickHouse, Liquibase -> Postgres
 	// (niente versione esplicita su flyway-core: la governa extra["flyway.version"])

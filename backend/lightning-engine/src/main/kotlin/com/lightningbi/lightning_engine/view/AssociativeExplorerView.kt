@@ -3,20 +3,27 @@ package com.lightningbi.lightning_engine.view
 import com.lightningbi.lightning_engine.model.AggregateRequest
 import com.lightningbi.lightning_engine.model.AggregateResult
 import com.lightningbi.lightning_engine.model.Area
+import com.lightningbi.lightning_engine.repository.AreaSourceRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import com.lightningbi.lightning_engine.service.AggregateService
 import com.lightningbi.lightning_engine.service.AssociativeStateService
+import com.lightningbi.lightning_engine.service.CryptoService
 import com.lightningbi.lightning_engine.service.DimensionState
+import com.lightningbi.lightning_engine.service.MetadataService
 import com.lightningbi.lightning_engine.service.RegistryService
+import com.lightningbi.lightning_engine.service.SymbolTableService
 import com.lightningbi.lightning_engine.service.VersionService
+import com.lightningbi.lightning_engine.service.ViewSqlGenerator
 import com.vaadin.flow.component.AttachEvent
 import com.vaadin.flow.component.DetachEvent
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant
-import com.vaadin.flow.component.combobox.ComboBox
+import com.vaadin.flow.component.contextmenu.MenuItem
+import com.vaadin.flow.component.grid.Grid
 import com.vaadin.flow.component.html.Div
 import com.vaadin.flow.component.html.Span
 import com.vaadin.flow.component.listbox.MultiSelectListBox
+import com.vaadin.flow.component.menubar.MenuBar
 import com.vaadin.flow.component.notification.Notification
 import com.vaadin.flow.component.orderedlayout.FlexComponent
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout
@@ -39,7 +46,12 @@ class AssociativeExplorerView(
     private val aggregateService: AggregateService,
     private val versionService: VersionService,
     private val registryRepository: RegistryRepository,
-    private val registryService: RegistryService
+    private val registryService: RegistryService,
+    private val symbolTableService: SymbolTableService,
+    private val areaSourceRepository: AreaSourceRepository,
+    private val cryptoService: CryptoService,
+    private val metadataService: MetadataService,
+    private val viewSqlGenerator: ViewSqlGenerator
 ) : VerticalLayout() {
 
     private var areaId: UUID? = null
@@ -49,62 +61,150 @@ class AssociativeExplorerView(
     private val currentItems = mutableMapOf<UUID, List<Long>>()
 
     private val requestCounter = AtomicLong(0)
-    private val kpiArea = Div()
-    private val dimensionsLayout = HorizontalLayout()
-    private val areaSelector = ComboBox<Area>("Area")
+    private val resultsGrid = Grid<Map<String, Any?>>()
+    private val filtersColumn = VerticalLayout()
+    private val sidebarAreaList = VerticalLayout()
+    private lateinit var selectAreaMenuItem: MenuItem
 
     private var viewScope: CoroutineScope? = null
     private var isDark = false
+    private var currentAreas: List<Area> = emptyList()
 
     init {
-        className = "lbi-page"
-        dimensionsLayout.className = "lbi-dimensions-row"
-        kpiArea.className = "lbi-kpi-row"
+        className = "lbi-app"
+        setSizeFull()
+        isPadding = false
+        isSpacing = false
 
-        val areas = registryRepository.findAllAree()
-        areaSelector.setItems(areas)
-        areaSelector.setItemLabelGenerator { it.nome }
-        areaSelector.className = "lbi-area-selector"
-        areaSelector.addValueChangeListener { event ->
-            val selected = event.value ?: return@addValueChangeListener
-            switchArea(selected.id)
+        currentAreas = registryRepository.findAllAree()
+
+        // ===== Menu top stile desktop =====
+        val menuBar = MenuBar().apply { className = "lbi-menubar" }
+        selectAreaMenuItem = menuBar.addItem("Seleziona Area")
+        rebuildAreaMenu()
+
+        val addAreaItem = menuBar.addItem("+ Nuova analisi")
+        addAreaItem.addClickListener {
+            AddAreaWizardDialog(registryService, registryRepository, symbolTableService)  {
+                currentAreas = registryRepository.findAllAree()
+                rebuildAreaMenu()
+                currentAreas.lastOrNull()?.let { switchArea(it.id) }
+            }.open()
         }
 
-        val addAreaButton = Button("➕ Aggiungi Analisi").apply {
-            addThemeVariants(ButtonVariant.LUMO_PRIMARY)
-            addClickListener {
-                AddAreaWizardDialog(registryService, registryRepository) {
-                    val areas = registryRepository.findAllAree()
-                    areaSelector.setItems(areas)
-                    areaSelector.value = areas.lastOrNull()
-                }.open()
-            }
+        val logoImage = com.vaadin.flow.component.html.Image("images/logo.png", "LightningBI").apply {
+            className = "lbi-logo-img"
+        }
+        val logoSpan = Span("LightningBI").apply { className = "lbi-logo" }
+        val logoContainer = HorizontalLayout(logoImage, logoSpan).apply {
+            className = "lbi-logo-container"
+            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
+            isSpacing = true
         }
 
-        val themeToggle = Button("🌙 Dark").apply {
+        val themeToggle = Button("Dark").apply {
             addThemeVariants(ButtonVariant.LUMO_TERTIARY)
+            className = "lbi-theme-toggle"
             addClickListener {
                 isDark = !isDark
                 element.executeJs(
                     "document.documentElement.setAttribute('theme', \$0)",
                     if (isDark) "dark" else ""
                 )
-                text = if (isDark) "☀️ Light" else "🌙 Dark"
+                text = if (isDark) "Light" else "Dark"
             }
         }
-        val topBar = HorizontalLayout(areaSelector, addAreaButton, themeToggle).apply {
-            className = "lbi-topbar"
+
+        val topMenuBar = HorizontalLayout(logoContainer, menuBar, themeToggle).apply {
+            className = "lbi-topmenu"
             justifyContentMode = FlexComponent.JustifyContentMode.BETWEEN
             defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
             setWidthFull()
         }
 
-        add(topBar)
-        add(dimensionsLayout)
-        add(kpiArea)
+        // ===== Sidebar (vuota per ora, riservata a future voci) =====
+        val sidebar = VerticalLayout(
+            Span("Menu").apply {
+                className = "lbi-sidebar-title"
+            },
+            createSidebarItem("Nuova analisi") {
+                AddAreaWizardDialog(registryService, registryRepository, symbolTableService) {
+                    currentAreas = registryRepository.findAllAree()
+                    rebuildAreaMenu()
+                    currentAreas.lastOrNull()?.let { switchArea(it.id) }
+                }.open()
+            },
+            createSidebarItem("Gestione utenti") {
+                Notification.show("Funzione in arrivo")
+            },
+            createSidebarItem("Sorgenti Dati") {
+                val currentArea = currentAreas.find { it.id == areaId }
+                if (currentArea == null) {
+                    Notification.show("Seleziona prima un'analisi")
+                    return@createSidebarItem
+                }
+                val existing = areaSourceRepository.findByArea(currentArea.id).firstOrNull()
+                ConfigureSourceDialog(
+                    currentArea, areaSourceRepository, registryRepository,
+                    cryptoService, metadataService, viewSqlGenerator, existing
+                ) {
+                    Notification.show("Sorgente aggiornata")
+                }.open()
+            },
+            createSidebarItem("Grafici Superset") {
+                Notification.show("Funzione in arrivo")
+            },
+            createSidebarItem("Stampe") {
+                Notification.show("Funzione in arrivo")
+            }
 
-        if (areas.isNotEmpty()) {
-            areaSelector.value = areas.first()
+        ).apply {
+            className = "lbi-sidebar"
+            setWidth("260px")
+            height = "100%"
+        }
+        // ===== Grid risultati centrale =====
+        resultsGrid.className = "lbi-results-grid"
+        resultsGrid.setSizeFull()
+
+        val centerArea = VerticalLayout(
+            Span("Risultati").apply { className = "lbi-section-title" },
+            resultsGrid
+        ).apply {
+            className = "lbi-center"
+            setSizeFull()
+            isPadding = true
+        }
+
+        // ===== Colonna destra filtri =====
+        filtersColumn.className = "lbi-filters-column"
+        filtersColumn.height = "100%"
+
+        val body = HorizontalLayout(sidebar, centerArea, filtersColumn).apply {
+            className = "lbi-body"
+            setSizeFull()
+            isPadding = false
+            isSpacing = true
+            setFlexGrow(0.0, sidebar)
+            setFlexGrow(1.0, centerArea)
+            setFlexGrow(0.0, filtersColumn)
+        }
+
+        add(topMenuBar, body)
+        setFlexGrow(0.0, topMenuBar)
+        setFlexGrow(1.0, body)
+
+        if (currentAreas.isNotEmpty()) {
+            switchArea(currentAreas.first().id)
+        }
+    }
+
+    private fun rebuildAreaMenu() {
+        selectAreaMenuItem.subMenu.removeAll()
+        currentAreas.forEach { area ->
+            selectAreaMenuItem.subMenu.addItem(area.nome) {
+                switchArea(area.id)
+            }
         }
     }
 
@@ -125,21 +225,22 @@ class AssociativeExplorerView(
         selections.clear()
         dimensionBoxes.clear()
         currentItems.clear()
-        dimensionsLayout.removeAll()
-        kpiArea.removeAll()
-        buildDimensionBoxes(newAreaId)
+        filtersColumn.removeAll()
+        resultsGrid.setItems(emptyList())
+        resultsGrid.removeAllColumns()
+        buildFilterCards(newAreaId)
         refresh()
     }
 
-    private fun buildDimensionBoxes(currentAreaId: UUID) {
+    private fun buildFilterCards(currentAreaId: UUID) {
         val dims = registryRepository.findDimensioniByArea(currentAreaId)
         dims.forEach { areaDim ->
             val dimensione = registryRepository.findDimensione(areaDim.dimensioneId) ?: return@forEach
             val dimId = areaDim.dimensioneId
 
             val box = MultiSelectListBox<Long>()
-            box.width = "250px"
-            box.height = "300px"
+            box.width = "100%"
+            box.height = "180px"
             box.setRenderer(neutralRenderer())
             box.addSelectionListener { event ->
                 if (!event.isFromClient) return@addSelectionListener
@@ -148,9 +249,9 @@ class AssociativeExplorerView(
             }
             dimensionBoxes[dimId] = box
 
-            val title = Span(dimensione.nome).apply { className = "lbi-dimension-title" }
-            val card = VerticalLayout(title, box).apply { className = "lbi-dimension-card" }
-            dimensionsLayout.add(card)
+            val title = Span(dimensione.nome).apply { className = "lbi-filter-title" }
+            val card = VerticalLayout(title, box).apply { className = "lbi-filter-card" }
+            filtersColumn.add(card)
         }
     }
 
@@ -179,9 +280,9 @@ class AssociativeExplorerView(
 
                 ui.access {
                     if (myRequestId != requestCounter.get()) return@access
-                    if (areaId != currentAreaId) return@access // area cambiata nel frattempo
+                    if (areaId != currentAreaId) return@access
                     renderStates(states)
-                    renderAggregates(aggregates)
+                    renderResultsGrid(aggregates)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -220,22 +321,36 @@ class AssociativeExplorerView(
         }
     }
 
-    private fun renderAggregates(result: AggregateResult) {
-        kpiArea.removeAll()
-        result.rows.firstOrNull()?.values?.forEach { (nome, valore) ->
-            val card = Div().apply {
-                className = "lbi-kpi-card"
-                add(Span(nome.uppercase()).apply { className = "lbi-kpi-label" })
-                add(Div(Span(valore.toString())).apply { className = "lbi-kpi-value" })
-            }
-            kpiArea.add(card)
+    private fun renderResultsGrid(result: AggregateResult) {
+        resultsGrid.removeAllColumns()
+
+        val rows = result.rows.map { it.values }
+        if (rows.isEmpty()) {
+            resultsGrid.setItems(emptyList())
+            return
         }
+
+        val columnNames = rows.first().keys.toList()
+        columnNames.forEach { colName ->
+            resultsGrid.addColumn { row -> row[colName]?.toString() ?: "" }
+                .setHeader(colName.replaceFirstChar { it.uppercase() })
+                .setAutoWidth(true)
+        }
+
+        resultsGrid.setItems(rows)
+
         if (result.truncated) {
-            kpiArea.add(Span("(risultato troncato)"))
+            Notification.show("Risultato troncato: troppe righe da mostrare", 4000, Notification.Position.BOTTOM_END)
         }
     }
 
     private fun neutralRenderer() = ComponentRenderer<Span, Long> { valueId ->
         Span(valueId.toString()).apply { className = "state-possible" }
+    }
+    private fun createSidebarItem(label: String, onClick: () -> Unit): Div {
+        return Div(Span(label)).apply {
+            className = "lbi-sidebar-item"
+            addClickListener { onClick() }
+        }
     }
 }

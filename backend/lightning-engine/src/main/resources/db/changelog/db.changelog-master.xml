@@ -9,4 +9,5 @@
     <include file="db/changelog/003-area-source-partition.xml"/>
     <include file="db/changelog/004-etl-sync-log.xml"/>
     <include file="db/changelog/005-area-data-version.xml"/>
+    <include file="db/changelog/006-area-source-timestamptz.xml"/>
 </databaseChangeLog>

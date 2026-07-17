@@ -20,4 +20,27 @@ class SymbolTableService(
             ORDER BY (value_string)
         """)
     }
+
+    fun createAreaTable(
+        tabellaFisica: String,
+        colonneFiltri: List<String>,
+        colonneSomme: List<String>
+    ) {
+        require(validName.matches(tabellaFisica)) { "Invalid table name: $tabellaFisica" }
+        colonneFiltri.forEach { require(validName.matches(it)) { "Invalid column name: $it" } }
+        colonneSomme.forEach { require(validName.matches(it)) { "Invalid column name: $it" } }
+
+        val filtriDef = colonneFiltri.joinToString(",\n                ") { "$it UInt32" }
+        val sommeDef = colonneSomme.joinToString(",\n                ") { "$it Decimal(18,4)" }
+        val orderBy = colonneFiltri.joinToString(", ")
+
+        jdbcTemplate.execute("""
+        CREATE TABLE IF NOT EXISTS $tabellaFisica (
+                $filtriDef,
+                $sommeDef,
+                _partition_key String
+            ) ENGINE = MergeTree()
+            ORDER BY ($orderBy)
+    """)
+    }
 }
