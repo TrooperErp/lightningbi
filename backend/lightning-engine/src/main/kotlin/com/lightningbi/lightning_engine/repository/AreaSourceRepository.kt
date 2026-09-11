@@ -8,4 +8,5 @@ interface AreaSourceRepository {
     fun findById(id: UUID): AreaSource?
     fun save(source: AreaSource) // upsert
     fun delete(id: UUID)
+    fun findAll(): List<AreaSource>
 }

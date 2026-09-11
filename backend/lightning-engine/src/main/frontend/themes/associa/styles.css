@@ -1,69 +1,89 @@
 /* ============================================
-   LightningBI - Tema Dashboard Qlik-style
+   LightningBI - Tema Dynamics 365 / TrooperERP
    ============================================ */
 
 :root {
-    --lbi-bg: #eceef1;
+    --lbi-font: "Segoe UI", "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+
+    --lbi-bg: #f3f2f1;
     --lbi-surface: #ffffff;
-    --lbi-surface-2: #f5f6f8;
-    --lbi-border: #d8dae0;
-    --lbi-text: #1a1a1a;
-    --lbi-text-muted: #6b7280;
-    --lbi-accent: #22c55e;
-    --lbi-excluded-bg: #e5e7eb;
-    --lbi-excluded-text: #9ca3af;
-    --lbi-radius: 14px;
-    --lbi-shadow: 0 2px 8px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
-    --lbi-bubble-bg: #ffffff;
-    --lbi-bubble-border: rgba(0,0,0,0.06);
-    --lbi-primary: #6366f1;
-    --lbi-primary-hover: #4338ca;
-    --lbi-primary-disabled: #a5a6f0;
+    --lbi-surface-2: #faf9f8;
+    --lbi-border: #e1dfdd;
+    --lbi-text: #201f1e;
+    --lbi-text-muted: #605e5c;
+
+    --lbi-header-bg: #1b1a19;
+    --lbi-header-fg: #ffffff;
+
+    --lbi-accent: #6366f1;
+    --lbi-accent-hover: #4338ca;
+    --lbi-accent-disabled: #a5a6f0;
+
+    --lbi-radius: 2px;
+    --lbi-shadow: none;
+
+    --lbi-excluded-bg: #e1dfdd;
+    --lbi-excluded-text: #a19f9d;
+    --lbi-state-selected: #22c55e;
 }
 
 [theme~="dark"] {
-    --lbi-bg: #050505;
-    --lbi-text: #f5f5f5;
-    --lbi-text-muted: #9ca3af;
-    --lbi-accent: #22c55e;
-    --lbi-excluded-bg: #1a1a1c;
-    --lbi-excluded-text: #6b7280;
-    --lbi-shadow: 0 8px 24px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4);
-    --lbi-bubble-bg: linear-gradient(145deg, #1c1c1e, #0e0e10);
-    --lbi-bubble-border: rgba(255,255,255,0.08);
+    --lbi-bg: #201f1e;
+    --lbi-surface: #292827;
+    --lbi-surface-2: #201f1e;
+    --lbi-border: #3b3a39;
+    --lbi-text: #f3f2f1;
+    --lbi-text-muted: #c8c6c4;
+
+    --lbi-header-bg: #000000;
+
+    --lbi-excluded-bg: #3b3a39;
+    --lbi-excluded-text: #797775;
 }
 
 html, body {
     background: var(--lbi-bg);
     color: var(--lbi-text);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family: var(--lbi-font);
     height: 100%;
-}
-
-[theme~="dark"] html, [theme~="dark"] body {
-    background: radial-gradient(circle at top, #0a0a0b 0%, #000000 100%);
+    margin: 0;
+    padding: 0;
 }
 
 .lbi-app {
     background: transparent;
-    padding: 16px;
-    gap: 16px;
+    padding: 0;
+    gap: 0;
 }
 
-/* ===== Menu top ===== */
+/* ===== Menu top: banda nera fissa, iso command bar Dynamics ===== */
 .lbi-topmenu {
-    background: var(--lbi-bubble-bg);
-    border: 1px solid var(--lbi-bubble-border);
-    border-radius: var(--lbi-radius);
-    box-shadow: var(--lbi-shadow);
-    padding: 8px 20px;
+    background: var(--lbi-header-bg);
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0 16px;
+    height: 48px;
+    box-sizing: border-box;
 }
 
 .lbi-logo {
-    font-weight: 700;
-    font-size: 16px;
-    color: var(--lbi-text);
-    letter-spacing: 0.02em;
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--lbi-header-fg);
+    letter-spacing: 0.2px;
+}
+
+.lbi-logo-container {
+    gap: 8px;
+}
+
+.lbi-logo-img {
+    width: 28px;
+    height: 28px;
+    border-radius: 2px;
+    background: transparent !important;
+    object-fit: contain;
 }
 
 .lbi-menubar {
@@ -71,50 +91,61 @@ html, body {
 }
 
 vaadin-menu-bar-button {
-    color: var(--lbi-text) !important;
+    color: var(--lbi-header-fg) !important;
+    background: transparent !important;
+    border-radius: var(--lbi-radius) !important;
+}
+
+vaadin-menu-bar-button:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
 }
 
 .lbi-theme-toggle {
-    color: var(--lbi-text-muted);
+    color: var(--lbi-header-fg);
 }
 
 /* ===== Body layout ===== */
 .lbi-body {
-    gap: 16px;
+    gap: 1px;
+    background: var(--lbi-border);
 }
 
-/* ===== Sidebar ===== */
+/* ===== Sidebar: pannello piatto, no bubble ===== */
 .lbi-sidebar {
-    background: var(--lbi-bubble-bg);
-    border: 1px solid var(--lbi-bubble-border);
-    border-radius: var(--lbi-radius);
-    box-shadow: var(--lbi-shadow);
-    padding: 16px;
+    background: var(--lbi-bg);
+    border: none;
+    border-right: 1px solid var(--lbi-border);
+    border-radius: 0;
+    box-shadow: none;
+    padding: 12px 0;
 }
 
 .lbi-sidebar-title {
-    font-size: 12px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--lbi-text-muted);
     font-weight: 600;
+    padding: 0 16px;
 }
 
 .lbi-sidebar-item {
-    padding: 10px 12px;
-    border-radius: 8px;
+    padding: 10px 16px;
+    border-radius: 0;
     cursor: pointer;
     font-size: 13px;
     white-space: nowrap;
     color: var(--lbi-text);
     background: transparent;
     outline: none;
-    transition: background 0.15s ease, color 0.15s ease;
+    transition: background 0.1s ease, color 0.1s ease;
+    border-left: 3px solid transparent;
 }
 
 .lbi-sidebar-item:hover {
-    background: var(--lbi-primary);
-    color: #ffffff;
+    background: rgba(99, 102, 241, 0.08);
+    color: var(--lbi-text);
+    border-left: 3px solid var(--lbi-accent);
 }
 
 .lbi-sidebar-item:focus,
@@ -123,25 +154,71 @@ vaadin-menu-bar-button {
     background: transparent;
     color: var(--lbi-text);
     outline: none;
+    border-left: 3px solid transparent;
 }
 
 .lbi-sidebar-item:hover:focus,
 .lbi-sidebar-item:hover:active {
-    background: var(--lbi-primary);
-    color: #ffffff;
+    background: rgba(99, 102, 241, 0.08);
+    border-left: 3px solid var(--lbi-accent);
 }
 
-/* ===== Centro (Risultati) ===== */
+/* ===== Sidebar flyout (gruppi con sottomenu a hover, stile TrooperERP) ===== */
+.flyout-item {
+    position: relative;
+    padding: 10px 16px;
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--lbi-text);
+    cursor: pointer;
+    border-left: 3px solid transparent;
+}
+
+.flyout-item:hover {
+    background: rgba(99, 102, 241, 0.08);
+    border-left: 3px solid var(--lbi-accent);
+}
+
+.flyout-submenu {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 100%;
+    min-width: 200px;
+    background: var(--lbi-surface);
+    border: 1px solid var(--lbi-border);
+    box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 10;
+}
+
+.flyout-item:hover .flyout-submenu {
+    display: block;
+}
+
+.flyout-subentry {
+    padding: 10px 16px;
+    font-weight: 400;
+    font-size: 13px;
+    color: var(--lbi-text);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.flyout-subentry:hover {
+    background: rgba(99, 102, 241, 0.08);
+}
+
+/* ===== Centro (Risultati): pannello piatto ===== */
 .lbi-center {
-    background: var(--lbi-bubble-bg);
-    border: 1px solid var(--lbi-bubble-border);
-    border-radius: var(--lbi-radius);
-    box-shadow: var(--lbi-shadow);
+    background: var(--lbi-surface);
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
     padding: 16px;
 }
 
 .lbi-section-title {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -150,16 +227,16 @@ vaadin-menu-bar-button {
     display: block;
 }
 
-/* ===== Grid risultati: sempre bianca, stile Excel ===== */
+/* ===== Grid risultati: sempre bianca, stile Excel (invariato) ===== */
 .lbi-results-grid {
     background: #ffffff !important;
     border: 1px solid #d0d0d0;
-    border-radius: 6px;
+    border-radius: 0;
     overflow: hidden;
 }
 
 .lbi-results-grid::part(header-cell) {
-    background: #f3f4f6 !important;
+    background: #f3f2f1 !important;
     color: #1a1a1a !important;
     font-weight: 600;
     border-bottom: 1px solid #c0c0c0;
@@ -174,28 +251,29 @@ vaadin-menu-bar-button {
 }
 
 .lbi-results-grid::part(row):hover::part(cell) {
-    background: #f0f7ff !important;
+    background: #eef2ff !important;
 }
 
 /* ===== Colonna filtri (destra) ===== */
 .lbi-filters-column {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 1px;
     width: 220px;
     overflow-y: auto;
+    background: var(--lbi-border);
 }
 
 .lbi-filter-card {
-    background: var(--lbi-bubble-bg);
-    border: 1px solid var(--lbi-bubble-border);
-    border-radius: var(--lbi-radius);
-    box-shadow: var(--lbi-shadow);
+    background: var(--lbi-surface);
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
     padding: 12px;
 }
 
 .lbi-filter-title {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -212,33 +290,33 @@ vaadin-list-box, vaadin-multi-select-list-box {
 }
 
 vaadin-item {
-    border-radius: 6px;
-    margin-bottom: 4px;
+    border-radius: 0;
+    margin-bottom: 2px;
     padding: 2px 4px;
-    transition: background 0.15s ease;
+    transition: background 0.1s ease;
 }
 
 vaadin-item:hover {
     background: var(--lbi-surface-2);
 }
 
-/* ===== Stati valore filtro ===== */
+/* ===== Stati valore filtro (verde selezione invariato, resto flat) ===== */
 .state-selected {
     display: inline-flex;
     align-items: center;
     padding: 6px 14px;
-    border-radius: 6px;
-    background: var(--lbi-accent);
+    border-radius: var(--lbi-radius);
+    background: var(--lbi-state-selected);
     color: #ffffff;
     font-weight: 600;
-    box-shadow: 0 2px 6px rgba(34, 197, 94, 0.35);
+    box-shadow: none;
 }
 
 .state-possible {
     display: inline-flex;
     align-items: center;
     padding: 6px 14px;
-    border-radius: 6px;
+    border-radius: var(--lbi-radius);
     background: transparent;
     color: var(--lbi-text);
     font-weight: 500;
@@ -249,11 +327,11 @@ vaadin-item:hover {
     display: inline-flex;
     align-items: center;
     padding: 6px 14px;
-    border-radius: 6px;
+    border-radius: var(--lbi-radius);
     background: var(--lbi-excluded-bg);
     color: var(--lbi-excluded-text);
     font-weight: 400;
-    opacity: 0.6;
+    opacity: 0.7;
     cursor: not-allowed;
 }
 
@@ -262,30 +340,38 @@ vaadin-notification-card {
     border-radius: var(--lbi-radius);
 }
 
-.lbi-logo-img {
-    width: 40px;
-    height: 40px;
-    border-radius: 8px;
-    background: transparent !important;
-    object-fit: contain;
+/* ===== Grid con header custom (wizard discovery colonne) =====
+   Di default l'header della grid ha altezza fissa e taglia contenuti
+   più alti di una riga di testo (es. checkbox + radio nell'header
+   colonna). Forziamo altezza automatica. */
+.lbi-wizard-dialog vaadin-grid::part(header-row) {
+    height: auto;
 }
-
-.lbi-logo-container {
-    gap: 8px;
+.lbi-wizard-dialog vaadin-grid::part(header-cell) {
+    height: auto;
+    align-items: flex-start;
+    padding: 8px 6px;
 }
 
 /* ===== Wizard Dialog ===== */
 .lbi-wizard-dialog::part(overlay) {
-    background: var(--lbi-bubble-bg);
+    background: var(--lbi-surface);
     color: var(--lbi-text);
     border-radius: var(--lbi-radius);
-    border: 1px solid var(--lbi-bubble-border);
+    border: 1px solid var(--lbi-border);
 }
 
 .lbi-wizard-dialog::part(header) {
-    background: var(--lbi-bubble-bg) !important;
-    color: var(--lbi-text) !important;
-    border-bottom: 1px solid var(--lbi-bubble-border);
+    background: var(--lbi-header-bg) !important;
+    color: var(--lbi-header-fg) !important;
+    border-bottom: none;
+}
+
+.lbi-wizard-dialog [slot="title"],
+.lbi-wizard-dialog h2,
+.lbi-wizard-dialog::part(header-content),
+.lbi-wizard-dialog::part(title) {
+    color: var(--lbi-header-fg) !important;
 }
 
 .lbi-wizard-content {
@@ -302,12 +388,13 @@ vaadin-notification-card {
 .lbi-wizard-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 1px;
 }
 
 .lbi-wizard-item {
     background: var(--lbi-surface-2);
-    border-radius: 6px;
+    border-radius: 0;
+    border-left: 3px solid var(--lbi-accent);
     padding: 8px 12px;
     font-size: 14px;
 }
@@ -320,22 +407,22 @@ vaadin-notification-card {
 
 /* ===== Pulsanti ===== */
 vaadin-button {
-    border-radius: 6px !important;
+    border-radius: var(--lbi-radius) !important;
     font-weight: 500;
     box-shadow: none !important;
 }
 
 vaadin-button[theme~="primary"] {
-    background: var(--lbi-primary) !important;
+    background: var(--lbi-accent) !important;
     color: #ffffff !important;
 }
 
 vaadin-button[theme~="primary"]:hover {
-    background: var(--lbi-primary-hover) !important;
+    background: var(--lbi-accent-hover) !important;
 }
 
 vaadin-button[theme~="primary"][disabled] {
-    background: var(--lbi-primary-disabled) !important;
+    background: var(--lbi-accent-disabled) !important;
     color: rgba(255,255,255,0.7) !important;
     cursor: not-allowed;
 }

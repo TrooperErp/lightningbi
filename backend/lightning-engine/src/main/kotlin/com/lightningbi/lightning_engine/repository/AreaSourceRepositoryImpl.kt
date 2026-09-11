@@ -25,6 +25,12 @@ class AreaSourceRepositoryImpl(
             areaId
         )
 
+    override fun findAll(): List<AreaSource> =
+        jdbcTemplate.query(
+            "SELECT * FROM lbi_area_source",
+            { rs, _ -> mapRow(rs) }
+        )
+
     override fun findById(id: UUID): AreaSource? =
         jdbcTemplate.query(
             "SELECT * FROM lbi_area_source WHERE id = ?",

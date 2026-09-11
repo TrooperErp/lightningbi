@@ -255,6 +255,7 @@ class ConfigureSourceDialog(
         updatedAtColumnField = TextField("Colonna data ultima modifica nella tabella principale").apply {
             placeholder = "es. data_modifica"
             setWidthFull()
+            addValueChangeListener { updateSqlPreview() }   // ← riga aggiunta
         }
         content.add(viewNameField, updatedAtColumnField)
 

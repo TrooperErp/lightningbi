@@ -1,10 +1,12 @@
 import '@vaadin/common-frontend/ConnectionIndicator.js';
 import 'Frontend/generated/jar-resources/ReactRouterOutletElement.tsx';
+import 'react-router';
+import 'react';
 
 const loadOnDemand = (key) => {
   const pending = [];
   if (key === '20177c7fbddc3cbb2ad8a9de8f440f79cb12c66b35bf4a53949539ad577e04da') {
-    pending.push(import('./chunks/chunk-b0a61e7cb9c2b34e92cc1c203b3057181c110cc297d62192bf98f72ac12ed697.js'));
+    pending.push(import('./chunks/chunk-e38b8aa7ec16fbaf9ee077f3d721ccdccec85d7140b70faa2af6bb0293c16303.js'));
   }
   return Promise.all(pending);
 }

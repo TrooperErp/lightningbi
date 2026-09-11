@@ -73,4 +73,33 @@ class MetadataService {
         return if (missing.isEmpty()) true to null
         else false to "Colonne mancanti nella view: ${missing.joinToString(", ")}"
     }
+
+    /**
+     * Legge alcune righe di esempio dalla tabella/view, per mostrare
+     * all'utente cosa contiene davvero ogni colonna durante la discovery
+     * del wizard "Nuova Analisi". Sintassi determinata dal prodotto DB
+     * reale (via databaseProductName), non dal driver class dichiarato:
+     * più robusto, e coerente con lo stile degli altri metodi di questo
+     * service che non richiedono di passare il driver esplicitamente.
+     */
+    fun sampleRows(conn: Connection, schema: String?, table: String, limit: Int = 3): List<Map<String, Any?>> {
+        val qualifiedTable = if (schema.isNullOrBlank()) table else "$schema.$table"
+        val productName = conn.metaData.databaseProductName ?: ""
+        val sql = if (productName.contains("Microsoft SQL Server", ignoreCase = true)) {
+            "SELECT TOP $limit * FROM $qualifiedTable"
+        } else {
+            "SELECT * FROM $qualifiedTable LIMIT $limit"
+        }
+        val rows = mutableListOf<Map<String, Any?>>()
+        conn.createStatement().use { stmt ->
+            stmt.executeQuery(sql).use { rs ->
+                val meta = rs.metaData
+                while (rs.next()) {
+                    val row = (1..meta.columnCount).associate { i -> meta.getColumnName(i) to rs.getObject(i) }
+                    rows.add(row)
+                }
+            }
+        }
+        return rows
+    }
 }

@@ -20,7 +20,6 @@ import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant
 import com.vaadin.flow.component.contextmenu.MenuItem
 import com.vaadin.flow.component.grid.Grid
-import com.vaadin.flow.component.html.Div
 import com.vaadin.flow.component.html.Span
 import com.vaadin.flow.component.listbox.MultiSelectListBox
 import com.vaadin.flow.component.menubar.MenuBar
@@ -63,7 +62,7 @@ class AssociativeExplorerView(
     private val requestCounter = AtomicLong(0)
     private val resultsGrid = Grid<Map<String, Any?>>()
     private val filtersColumn = VerticalLayout()
-    private val sidebarAreaList = VerticalLayout()
+    private val sidebar = LbiSidebarMenu()
     private lateinit var selectAreaMenuItem: MenuItem
 
     private var viewScope: CoroutineScope? = null
@@ -84,13 +83,7 @@ class AssociativeExplorerView(
         rebuildAreaMenu()
 
         val addAreaItem = menuBar.addItem("+ Nuova analisi")
-        addAreaItem.addClickListener {
-            AddAreaWizardDialog(registryService, registryRepository, symbolTableService)  {
-                currentAreas = registryRepository.findAllAree()
-                rebuildAreaMenu()
-                currentAreas.lastOrNull()?.let { switchArea(it.id) }
-            }.open()
-        }
+        addAreaItem.addClickListener { openNewAnalysisWizard() }
 
         val logoImage = com.vaadin.flow.component.html.Image("images/logo.png", "LightningBI").apply {
             className = "lbi-logo-img"
@@ -122,47 +115,12 @@ class AssociativeExplorerView(
             setWidthFull()
         }
 
-        // ===== Sidebar (vuota per ora, riservata a future voci) =====
-        val sidebar = VerticalLayout(
-            Span("Menu").apply {
-                className = "lbi-sidebar-title"
-            },
-            createSidebarItem("Nuova analisi") {
-                AddAreaWizardDialog(registryService, registryRepository, symbolTableService) {
-                    currentAreas = registryRepository.findAllAree()
-                    rebuildAreaMenu()
-                    currentAreas.lastOrNull()?.let { switchArea(it.id) }
-                }.open()
-            },
-            createSidebarItem("Gestione utenti") {
-                Notification.show("Funzione in arrivo")
-            },
-            createSidebarItem("Sorgenti Dati") {
-                val currentArea = currentAreas.find { it.id == areaId }
-                if (currentArea == null) {
-                    Notification.show("Seleziona prima un'analisi")
-                    return@createSidebarItem
-                }
-                val existing = areaSourceRepository.findByArea(currentArea.id).firstOrNull()
-                ConfigureSourceDialog(
-                    currentArea, areaSourceRepository, registryRepository,
-                    cryptoService, metadataService, viewSqlGenerator, existing
-                ) {
-                    Notification.show("Sorgente aggiornata")
-                }.open()
-            },
-            createSidebarItem("Grafici Superset") {
-                Notification.show("Funzione in arrivo")
-            },
-            createSidebarItem("Stampe") {
-                Notification.show("Funzione in arrivo")
-            }
+        // ===== Sidebar: costruzione disaccoppiata tramite LbiSidebarMenu =====
+        // La logica di business (i click handler) resta qui, dentro la view,
+        // che continua ad avere accesso ai service applicativi. Il componente
+        // sidebar riceve solo etichette + callback, non conosce i service.
+        sidebar.setGroups(buildMenuGroups())
 
-        ).apply {
-            className = "lbi-sidebar"
-            setWidth("260px")
-            height = "100%"
-        }
         // ===== Grid risultati centrale =====
         resultsGrid.className = "lbi-results-grid"
         resultsGrid.setSizeFull()
@@ -198,6 +156,61 @@ class AssociativeExplorerView(
             switchArea(currentAreas.first().id)
         }
     }
+
+    /**
+     * Apre il wizard unificato "Nuova Analisi" (discovery-first: connessione
+     * sorgente + colonne reali con esempio dati, tutto in un solo flusso).
+     * Sostituisce sia il vecchio AddAreaWizardDialog sia la parte di
+     * mapping manuale di ConfigureSourceDialog.
+     */
+    private fun openNewAnalysisWizard() {
+        NewAnalysisWizardDialog(
+            registryService, registryRepository, symbolTableService,
+            areaSourceRepository, cryptoService, metadataService, viewSqlGenerator
+        ) {
+            currentAreas = registryRepository.findAllAree()
+            rebuildAreaMenu()
+            currentAreas.lastOrNull()?.let { switchArea(it.id) }
+        }.open()
+    }
+
+    /**
+     * Definisce i gruppi del menu sidebar (stile TrooperERP: gruppi con
+     * flyout a sottomenu). I grafici Superset NON sono più una voce di
+     * menu separata: vivono dentro alla pagina di ogni Analisi, sotto
+     * la grid risultati (integrazione futura).
+     *
+     * "Sorgenti Dati" come punto di CREAZIONE è stata rimossa dal menu:
+     * il nuovo wizard "Nuova Analisi" la assorbe interamente (discovery
+     * colonne + collegamento sorgente in un solo flusso). Se in futuro
+     * serve una pagina di sola consultazione/gestione delle sorgenti
+     * già esistenti (stato ETL, ultima sync, errori), va reintrodotta
+     * come voce separata ma non più come punto di creazione.
+     */
+    private fun buildMenuGroups(): List<LbiSidebarMenu.MenuGroup> = listOf(
+        LbiSidebarMenu.MenuGroup(
+            label = "Analisi",
+            entries = listOf(
+                LbiSidebarMenu.MenuEntry("Nuova analisi") { openNewAnalysisWizard() }
+            )
+        ),
+        LbiSidebarMenu.MenuGroup(
+            label = "Amministrazione",
+            entries = listOf(
+                LbiSidebarMenu.MenuEntry("Gestione utenti") {
+                    Notification.show("Funzione in arrivo")
+                }
+            )
+        ),
+        LbiSidebarMenu.MenuGroup(
+            label = "Report",
+            entries = listOf(
+                LbiSidebarMenu.MenuEntry("Stampe") {
+                    Notification.show("Funzione in arrivo")
+                }
+            )
+        )
+    )
 
     private fun rebuildAreaMenu() {
         selectAreaMenuItem.subMenu.removeAll()
@@ -346,11 +359,5 @@ class AssociativeExplorerView(
 
     private fun neutralRenderer() = ComponentRenderer<Span, Long> { valueId ->
         Span(valueId.toString()).apply { className = "state-possible" }
-    }
-    private fun createSidebarItem(label: String, onClick: () -> Unit): Div {
-        return Div(Span(label)).apply {
-            className = "lbi-sidebar-item"
-            addClickListener { onClick() }
-        }
     }
 }

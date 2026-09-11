@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+    http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="003-01-create-mdm10-permission" author="andrea">
+        <createTable tableName="mdm10_permission">
+            <column name="id" type="BIGSERIAL"><constraints primaryKey="true"/></column>
+            <column name="code" type="VARCHAR(100)"><constraints nullable="false" unique="true"/></column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="003-02-create-mdm11-role-permission" author="andrea">
+        <createTable tableName="mdm11_role_permission">
+            <column name="role_id" type="BIGINT"><constraints nullable="false"/></column>
+            <column name="permission_id" type="BIGINT"><constraints nullable="false"/></column>
+        </createTable>
+        <addPrimaryKey tableName="mdm11_role_permission" columnNames="role_id, permission_id"
+            constraintName="pk_role_permission"/>
+        <addForeignKeyConstraint baseTableName="mdm11_role_permission" baseColumnNames="role_id"
+            constraintName="fk_roleperm_role" referencedTableName="mdm07_role" referencedColumnNames="id"/>
+        <addForeignKeyConstraint baseTableName="mdm11_role_permission" baseColumnNames="permission_id"
+            constraintName="fk_roleperm_permission" referencedTableName="mdm10_permission" referencedColumnNames="id"/>
+    </changeSet>
+
+    <changeSet id="003-03-create-mdm09-user-tenant-role" author="andrea">
+        <createTable tableName="mdm09_user_tenant_role">
+            <column name="user_id" type="BIGINT"><constraints nullable="false"/></column>
+            <column name="tenant_id" type="UUID"><constraints nullable="false"/></column>
+            <column name="role_id" type="BIGINT"><constraints nullable="false"/></column>
+        </createTable>
+        <addPrimaryKey tableName="mdm09_user_tenant_role" columnNames="user_id, tenant_id, role_id"
+            constraintName="pk_user_tenant_role"/>
+        <addForeignKeyConstraint baseTableName="mdm09_user_tenant_role" baseColumnNames="user_id"
+            constraintName="fk_usertenantrole_user" referencedTableName="mdm06_user" referencedColumnNames="id"/>
+        <addForeignKeyConstraint baseTableName="mdm09_user_tenant_role" baseColumnNames="role_id"
+            constraintName="fk_usertenantrole_role" referencedTableName="mdm07_role" referencedColumnNames="id"/>
+    </changeSet>
+
+</databaseChangeLog>
