@@ -10,4 +10,5 @@
     <include file="db/changelog/004-etl-sync-log.xml"/>
     <include file="db/changelog/005-area-data-version.xml"/>
     <include file="db/changelog/006-area-source-timestamptz.xml"/>
+	<include file="db/changelog/008-charts.xml"/>
 </databaseChangeLog>

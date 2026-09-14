@@ -35,9 +35,8 @@ class AssociativeStateService(
     private val objectMapper: ObjectMapper
 ) {
     private val log = LoggerFactory.getLogger(AssociativeStateService::class.java)
-    private val validIdentifier = Regex("^[a-z0-9_]+$")
     private val cacheTtl = Duration.ofHours(6)
-    private val symbolCacheTtl = Duration.ofHours(24)
+    private val domainCacheTtl = Duration.ofHours(24)
     private val querySemaphore = Semaphore(4)
 
     suspend fun getStates(areaId: UUID, selections: Map<UUID, Set<Long>>): Map<UUID, DimensionState> =
@@ -77,28 +76,73 @@ class AssociativeStateService(
         selections: Map<UUID, Set<Long>>,
         dataVersion: Long
     ): Map<UUID, DimensionState> = coroutineScope {
-        val area = registryRepository.findAreaById(areaId) ?: error("Area not found")
+        val area = registryRepository.findAreaById(areaId) ?: error("Area not found: $areaId")
         val dimById = dims.associateBy { it.dimensioneId }
 
         dims.map { dim ->
             async {
                 querySemaphore.withPermit {
                     val omitSelf = selections.filterKeys { it != dim.dimensioneId }
-                    val tutti = allValuesCached(dim, dataVersion)
 
-                    val verdi = if (omitSelf.isEmpty()) tutti
+                    // Il dominio è l'insieme dei valori PRESENTI IN QUEST'AREA,
+                    // non tutti i valori della symbol table.
+                    //
+                    // La symbol table di una dimensione è globale e condivisa
+                    // fra tutte le aree che la riusano (dimensione conformata).
+                    // Prendere di lì l'insieme "tutti" faceva comparire come
+                    // verdi valori che in quest'area non hanno nessuna riga:
+                    // l'utente li cliccava e otteneva zero risultati, cioè
+                    // esattamente ciò che il modello associativo deve impedire.
+                    val dominio = areaDomainCached(area.tabellaFisica, dim.colonnaFisica, dataVersion)
+
+                    val verdi = if (omitSelf.isEmpty()) dominio
                     else withContext(Dispatchers.IO) {
                         queryDistinct(area.tabellaFisica, dim.colonnaFisica, omitSelf, dimById)
                     }
 
+                    // Una selezione su una dimensione la cui riga è poi stata
+                    // esclusa da altri filtri non deve restare nei verdi.
+                    val selezionati = (selections[dim.dimensioneId] ?: emptySet()).intersect(dominio)
+
                     dim.dimensioneId to DimensionState(
                         verdi = verdi,
-                        grigi = tutti - verdi,
-                        selezionati = selections[dim.dimensioneId] ?: emptySet()
+                        grigi = dominio - verdi,
+                        selezionati = selezionati
                     )
                 }
             }
         }.awaitAll().toMap()
+    }
+
+    /**
+     * Valori distinti di una colonna nella fact table dell'area, senza filtri.
+     * È il denominatore per il calcolo dei grigi.
+     *
+     * Cambia solo quando cambia il dato, quindi è cachato per dataVersion:
+     * a regime la query gira una volta per dimensione per ciclo ETL.
+     */
+    private suspend fun areaDomainCached(
+        table: String,
+        column: String,
+        dataVersion: Long
+    ): Set<Long> {
+        val t = requireIdentifier(table, "table")
+        val c = requireIdentifier(column, "column")
+
+        val cacheKey = "domain:$t:$c:$dataVersion"
+        safeGet(cacheKey)?.let { cached ->
+            try {
+                return parseIdList(cached)
+            } catch (e: Exception) {
+                log.warn("Domain cache deserialization failed for $cacheKey, recomputing", e)
+            }
+        }
+
+        val values = withContext(Dispatchers.IO) {
+            jdbcTemplate.query("SELECT DISTINCT $c FROM $t", { rs, _ -> rs.getLong(1) }).toSet()
+        }
+        safeSet(cacheKey, values.joinToString(","), domainCacheTtl)
+        return values
     }
 
     private fun queryDistinct(
@@ -107,8 +151,8 @@ class AssociativeStateService(
         filters: Map<UUID, Set<Long>>,
         dimById: Map<UUID, AreaDimensione>
     ): Set<Long> {
-        require(validIdentifier.matches(table)) { "Invalid table: $table" }
-        require(validIdentifier.matches(column)) { "Invalid column: $column" }
+        val t = requireIdentifier(table, "table")
+        val c = requireIdentifier(column, "column")
 
         val whereClauses = mutableListOf<String>()
         val args = mutableListOf<Any>()
@@ -116,42 +160,33 @@ class AssociativeStateService(
         filters.forEach { (dimId, values) ->
             if (values.isEmpty()) return@forEach
             val col = dimById[dimId]?.colonnaFisica ?: return@forEach
-            require(validIdentifier.matches(col)) { "Invalid column: $col" }
-            whereClauses += "$col IN (${values.joinToString(",") { "?" }})"
+            val safeCol = requireIdentifier(col, "column")
+            whereClauses += "$safeCol IN (${values.joinToString(",") { "?" }})"
             args.addAll(values)
         }
 
         val where = if (whereClauses.isEmpty()) "" else "WHERE ${whereClauses.joinToString(" AND ")}"
-        val sql = "SELECT DISTINCT $column FROM $table $where"
+        val sql = "SELECT DISTINCT $c FROM $t $where"
 
         return jdbcTemplate.query(sql, { rs, _ -> rs.getLong(1) }, *args.toTypedArray()).toSet()
     }
 
-    private suspend fun allValuesCached(dim: AreaDimensione, dataVersion: Long): Set<Long> {
-        val dimensione = registryRepository.findDimensione(dim.dimensioneId) ?: return emptySet()
-        val nome = dimensione.nome
-        require(validIdentifier.matches(nome)) { "Invalid dimension name: $nome" }
-
-        val cacheKey = "symbol:$nome:$dataVersion"
-        val cached = safeGet(cacheKey)
-        if (cached != null) {
-            return try {
-                cached.split(",").filter { it.isNotBlank() }.map { it.toLong() }.toSet()
-            } catch (e: Exception) {
-                log.warn("Symbol cache deserialization failed for $cacheKey, recomputing", e)
-                withContext(Dispatchers.IO) { fetchAllValues(nome) }
-            }
+    /**
+     * Gli identificatori arrivano dal registry, dove sono già stati normalizzati
+     * da Naming al momento della creazione. Qui si verifica soltanto, come
+     * difesa contro SQL injection su dati preesistenti o migrati a mano.
+     */
+    private fun requireIdentifier(value: String, what: String): String {
+        val normalized = Naming.slug(value)
+        require(normalized == value) {
+            "Identificatore $what non normalizzato nel registry: '$value' (atteso '$normalized'). " +
+                    "Probabile dato creato prima dell'introduzione di Naming: va migrato."
         }
-
-        val values = withContext(Dispatchers.IO) { fetchAllValues(nome) }
-        safeSet(cacheKey, values.joinToString(","), symbolCacheTtl)
-        return values
+        return value
     }
 
-    private fun fetchAllValues(nome: String): Set<Long> {
-        val table = "ch_lbi_symbol_$nome"
-        return jdbcTemplate.query("SELECT value_id FROM $table", { rs, _ -> rs.getLong(1) }).toSet()
-    }
+    private fun parseIdList(raw: String): Set<Long> =
+        raw.split(",").filter { it.isNotBlank() }.map { it.toLong() }.toSet()
 
     private fun buildCacheKey(
         areaId: UUID, selections: Map<UUID, Set<Long>>, versions: VersionSnapshot
@@ -171,7 +206,10 @@ class AssociativeStateService(
 
     private fun deserialize(json: String): Map<UUID, DimensionState> {
         val raw: Map<String, DimensionState> = objectMapper.readValue(
-            json, objectMapper.typeFactory.constructMapType(Map::class.java, String::class.java, DimensionState::class.java)
+            json,
+            objectMapper.typeFactory.constructMapType(
+                Map::class.java, String::class.java, DimensionState::class.java
+            )
         )
         return raw.mapKeys { UUID.fromString(it.key) }
     }
