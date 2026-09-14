@@ -10,10 +10,10 @@ import com.lightningbi.lightning_engine.repository.EtlSyncStateRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import com.lightningbi.lightning_engine.service.CryptoService
 import com.lightningbi.lightning_engine.service.EtlCompletionService
+import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.script.DefaultRedisScript
 import org.springframework.stereotype.Service
-import tools.jackson.databind.ObjectMapper
 import java.time.Duration
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -28,10 +28,24 @@ class EtlOrchestrator(
     private val transformService: TransformService,
     private val loaderService: LoaderService,
     private val redisTemplate: StringRedisTemplate,
-    private val objectMapper: ObjectMapper,
     private val etlCompletionService: EtlCompletionService,
     private val cryptoService: CryptoService
 ) {
+    private val log = LoggerFactory.getLogger(EtlOrchestrator::class.java)
+
+    private val lockTtl = Duration.ofHours(2)
+
+    /**
+     * Margine di sovrapposizione sul carico incrementale.
+     *
+     * Si riparte da un'ora prima dell'ultima sincronizzazione riuscita per
+     * coprire righe scritte sulla sorgente mentre l'ETL precedente era in
+     * corso, e differenze di orologio fra i due server. Il prezzo è qualche
+     * riga rielaborata, che con l'append puro significa qualche duplicato:
+     * finché non c'è una chiave di deduplica, l'incrementale va usato solo
+     * su sorgenti append-only.
+     */
+    private val overlapHours = 1L
 
     private val unlockScript = DefaultRedisScript(
         """
@@ -43,21 +57,22 @@ class EtlOrchestrator(
         """.trimIndent(), Long::class.java
     )
 
-    private fun slug(nome: String): String =
-        nome.lowercase().replace(Regex("\\s+"), "_")
-
     fun runForArea(areaId: UUID, source: AreaSource) {
         if (source.status != SourceStatus.VERIFIED) {
-            throw IllegalStateException("Sorgente non verificata (status=${source.status}). Verifica la view prima di sincronizzare.")
+            throw IllegalStateException(
+                "Sorgente non verificata (status=${source.status}). Verifica la view prima di sincronizzare."
+            )
+        }
+        require(source.areaId == areaId) {
+            "La sorgente ${source.id} appartiene all'area ${source.areaId}, non a $areaId"
         }
 
         val lockKey = "etl-lock:$areaId:${source.id}"
         val lockValue = UUID.randomUUID().toString()
-        val acquired = redisTemplate.opsForValue()
-            .setIfAbsent(lockKey, lockValue, Duration.ofHours(2)) ?: false
+        val acquired = redisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, lockTtl) ?: false
 
         if (!acquired) {
-            throw IllegalStateException("ETL already running for area=$areaId source=${source.id}")
+            throw IllegalStateException("ETL già in corso per area=$areaId source=${source.id}")
         }
 
         val run = EtlRun(
@@ -68,57 +83,81 @@ class EtlOrchestrator(
         etlRunRepository.save(run)
 
         try {
-            val syncState = etlSyncStateRepository.find(areaId, source.id)
+            val area = registryRepository.findAreaById(areaId) ?: error("Area $areaId non trovata")
+            val dimensioni = registryRepository.findDimensioniByArea(areaId)
+            val metriche = registryRepository.findMetricheByArea(areaId)
+
+            require(dimensioni.isNotEmpty()) { "L'area '${area.nome}' non ha dimensioni configurate" }
+            require(metriche.isNotEmpty()) { "L'area '${area.nome}' non ha metriche configurate" }
+
+            val dims = registryRepository.findDimensioniByIds(dimensioni.map { it.dimensioneId })
+            val dimensioneNomiById = dims.associate { it.id.toString() to it.nome }
+
+            // L'istante di inizio va catturato PRIMA dell'estrazione, non dopo.
+            // Registrando come "ultima sincronizzazione" il momento in cui
+            // l'ETL finisce, tutte le righe scritte sulla sorgente durante
+            // l'esecuzione finirebbero in una finestra temporale già superata
+            // e non verrebbero mai raccolte.
+            val syncStart = LocalDateTime.now()
+
             val lastSync = if (source.config.syncMode == SyncMode.FULL_RELOAD) {
                 null
             } else {
-                syncState?.lastSync
-                    ?.minusHours(1)
+                etlSyncStateRepository.find(areaId, source.id)
+                    ?.lastSync
+                    ?.minusHours(overlapHours)
                     ?.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
             }
-
-            val decryptedPassword = cryptoService.decrypt(source.config.encryptedPassword)
 
             val config = mapOf(
                 "jdbcUrl" to source.config.jdbcUrl,
                 "username" to source.config.username,
-                "password" to decryptedPassword,
+                "password" to cryptoService.decrypt(source.config.encryptedPassword),
                 "driverClassName" to source.config.driverClassName,
                 "viewName" to source.config.viewName
             )
 
-            val rawRows = extractor.extract(config, lastSync).toList()
+            log.info(
+                "ETL area '{}' ({}): modalità {}, view {}, da {}",
+                area.nome, areaId, source.config.syncMode, source.config.viewName, lastSync ?: "inizio"
+            )
 
-            val area = registryRepository.findAreaById(areaId) ?: error("Area not found")
-            val dimensioni = registryRepository.findDimensioniByArea(areaId)
-            val metriche = registryRepository.findMetricheByArea(areaId)
-            val dims = registryRepository.findDimensioniByIds(dimensioni.map { it.dimensioneId })
-            val dimensioneNomiById = dims.associate { it.id.toString() to it.nome }
+            // Nessun rimappaggio.
+            //
+            // La view espone gli alias normalizzati da Naming a partire dal
+            // NOME DELLA COLONNA sorgente, e AreaDimensione.colonnaFisica
+            // contiene lo stesso identificatore: le chiavi prodotte
+            // dall'extractor coincidono già con quelle attese dal transform.
+            //
+            // La versione precedente rimappava per NOME DELLA DIMENSIONE
+            // usando una funzione di slug locale diversa da Naming. Due
+            // problemi: gli alias non coincidevano su nomi con caratteri
+            // speciali (si caricavano colonne di null senza errori), e il
+            // mapping per nome dimensione rende impossibili le dimensioni
+            // usate più volte nella stessa area con ruoli diversi (data
+            // ordine e data consegna entrambe sulla dimensione Tempo), perché
+            // due colonne non possono condividere lo stesso alias.
+            val rows = extractor.extract(config, lastSync).toList()
 
-            // La view genera colonne già con alias = slug(nome dimensione/metrica).
-            // Serve solo rimappare dallo slug alla colonna fisica dell'area.
-            val remappedRows = rawRows.map { row ->
-                val out = mutableMapOf<String, Any?>()
-                dimensioni.forEach { ad ->
-                    val nome = dimensioneNomiById[ad.dimensioneId.toString()] ?: return@forEach
-                    out[ad.colonnaFisica] = row[slug(nome)]
-                }
-                metriche.forEach { m ->
-                    out[m.colonnaFisica] = row[slug(m.nome)]
-                }
-                out
+            if (rows.isEmpty()) {
+                log.warn("ETL area '{}': la sorgente non ha restituito righe", area.nome)
             }
 
-            val (valid, errors) = transformService.transform(remappedRows, dimensioni, dimensioneNomiById, metriche)
+            val (valid, errors) = transformService.transform(rows, dimensioni, dimensioneNomiById, metriche)
+
+            val columns = dimensioni.map { it.colonnaFisica } + metriche.map { it.colonnaFisica }
 
             if (source.config.syncMode == SyncMode.FULL_RELOAD) {
-                loaderService.truncateAndLoad(area.tabellaFisica, valid, dimensioni.map { it.colonnaFisica } + metriche.map { it.colonnaFisica })
+                loaderService.truncateAndLoad(area.tabellaFisica, valid, columns)
             } else {
-                val columns = dimensioni.map { it.colonnaFisica } + metriche.map { it.colonnaFisica } + "_partition_key"
+                // _partition_key non viene più passato: nessuno lo popola e le
+                // tabelle d'area non dichiarano PARTITION BY. Vedi LoaderService.
                 loaderService.load(area.tabellaFisica, valid, columns)
             }
 
-            etlCompletionService.completeSuccess(areaId, source.id, LocalDateTime.now())
+            // Bump della dataVersion e registrazione dell'ultima sincronizzazione:
+            // è questo che invalida le cache associative e degli aggregati.
+            etlCompletionService.completeSuccess(areaId, source.id, syncStart)
 
             etlRunRepository.update(
                 run.copy(
@@ -128,13 +167,29 @@ class EtlOrchestrator(
                     righeScartate = errors.size.toLong()
                 )
             )
+            log.info(
+                "ETL area '{}' completato: {} righe caricate, {} scartate",
+                area.nome, valid.size, errors.size
+            )
         } catch (e: Exception) {
+            log.error("ETL area {} fallito", areaId, e)
             etlRunRepository.update(
-                run.copy(finishedAt = LocalDateTime.now(), stato = EtlStato.FAILED, errore = e.message)
+                run.copy(
+                    finishedAt = LocalDateTime.now(),
+                    stato = EtlStato.FAILED,
+                    // Su NullPointerException e simili message è null: senza
+                    // fallback il log dell'esecuzione resterebbe muto proprio
+                    // sull'errore che serve capire.
+                    errore = e.message ?: e::class.qualifiedName ?: "Errore sconosciuto"
+                )
             )
             throw e
         } finally {
-            redisTemplate.execute(unlockScript, listOf(lockKey), lockValue)
+            try {
+                redisTemplate.execute(unlockScript, listOf(lockKey), lockValue)
+            } catch (e: Exception) {
+                log.warn("Rilascio del lock {} fallito, scadrà da solo entro {}h", lockKey, lockTtl.toHours(), e)
+            }
         }
     }
 }

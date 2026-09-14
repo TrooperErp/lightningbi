@@ -29,6 +29,18 @@ class SymbolLookupService(
     // lock è ancora legittimamente occupato.
     private val maxRetries = ((lockTtl.toMillis() / retryDelayMs) + 10).toInt()
 
+    /**
+     * Id riservato al valore mancante, allineato a TransformService.NULL_VALUE_ID.
+     *
+     * Le colonne dimensione su ClickHouse sono UInt32 non nullable: un dato
+     * sorgente assente su una dimensione non obbligatoria viene scritto come
+     * zero. Lo zero non esiste nella symbol table (i value_id partono da 1),
+     * quindi va tradotto qui, altrimenti comparirebbe fra i filtri come voce
+     * muta e finirebbe nel log degli id non risolti.
+     */
+    private val nullValueId = 0L
+    private val nullValueLabel = "(non definito)"
+
     private val unlockScript = DefaultRedisScript(
         """
         if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -68,6 +80,10 @@ class SymbolLookupService(
             val missing = values - existing.keys
             if (missing.isEmpty()) return existing
 
+            // max(value_id) va letto DENTRO il lock: garantisce che nessun
+            // altro processo stia assegnando id concorrenti sulla stessa
+            // dimensione nel frattempo. Il COALESCE porta il primo id a 1,
+            // lasciando lo zero libero per il valore non definito.
             val maxId = jdbcTemplate.queryForObject(
                 "SELECT max(value_id) FROM $table", Long::class.java
             ) ?: 0L
@@ -96,8 +112,8 @@ class SymbolLookupService(
      * Serve a chiunque debba mostrare dati all'utente: la grid e i grafici
      * ricevono dal motore solo interi, che da soli sono illeggibili.
      *
-     * Gli id mancanti (valore rimosso dalla symbol table, o id inventato)
-     * non compaiono nella mappa: sta al chiamante decidere il fallback.
+     * Gli id non risolti non compaiono nella mappa: sta al chiamante decidere
+     * il fallback.
      */
     fun resolveLabels(dimensioneNome: String, ids: Set<Long>): Map<Long, String> {
         if (ids.isEmpty()) return emptyMap()
@@ -105,12 +121,19 @@ class SymbolLookupService(
         val table = Naming.symbolTable(dimensioneNome)
 
         val result = mutableMapOf<Long, String>()
+
+        // Lo zero non va cercato in tabella: è l'id riservato al valore
+        // assente, e non esiste come riga.
+        if (nullValueId in ids) result[nullValueId] = nullValueLabel
+        val realIds = ids.filterTo(mutableSetOf()) { it != nullValueId }
+        if (realIds.isEmpty()) return result
+
         val missing = mutableSetOf<Long>()
 
-        // Le etichette si cachano singolarmente perché ogni grafico/griglia
+        // Le etichette si cachano singolarmente perché ogni grafico o griglia
         // chiede un sottoinsieme diverso: una cache per-insieme avrebbe hit
         // rate quasi nullo, una per-id viene riusata da tutti.
-        ids.forEach { id ->
+        realIds.forEach { id ->
             val cached = safeGet("symlabel:$slug:$id")
             if (cached != null) result[id] = cached else missing += id
         }
@@ -128,7 +151,7 @@ class SymbolLookupService(
             }
         }
 
-        val unresolved = ids - result.keys
+        val unresolved = realIds - result.keys
         if (unresolved.isNotEmpty()) {
             log.warn(
                 "Symbol table {}: {} id non risolti (es. {}). Symbol table disallineata rispetto ai fatti?",
@@ -138,13 +161,29 @@ class SymbolLookupService(
         return result
     }
 
-    /** Intera mappa id -> stringa di una dimensione. Per dimensioni piccole. */
+    /**
+     * Intera mappa id -> stringa di una dimensione, con in testa la voce del
+     * valore non definito. Per dimensioni di cardinalità contenuta.
+     */
     fun allLabels(dimensioneNome: String): Map<Long, String> {
         val table = Naming.symbolTable(dimensioneNome)
-        return jdbcTemplate.query(
+        val labels = jdbcTemplate.query(
             "SELECT value_id, value_string FROM $table",
             { rs, _ -> rs.getLong("value_id") to rs.getString("value_string") }
         ).toMap()
+        return mapOf(nullValueId to nullValueLabel) + labels
+    }
+
+    /**
+     * Etichetta di un singolo id, con fallback leggibile.
+     *
+     * Da usare nella UI al posto di una lookup diretta sulla mappa: mostrare
+     * "#47" rende visibile un disallineamento fra fatti e symbol table,
+     * mentre una cella vuota lo nasconde.
+     */
+    fun labelOrFallback(labels: Map<Long, String>, id: Long?): String = when {
+        id == null -> "—"
+        else -> labels[id] ?: "#$id"
     }
 
     // ===================== interni =====================
@@ -176,6 +215,8 @@ class SymbolLookupService(
         try {
             redisTemplate.execute(unlockScript, listOf(lockKey), lockValue)
         } catch (e: Exception) {
+            // Il lock scade da solo dopo lockTtl: si logga e si prosegue,
+            // il lavoro sui dati è già andato a buon fine.
             log.warn("Rilascio del lock $lockKey fallito, scadrà da solo", e)
         }
     }
@@ -189,8 +230,9 @@ class SymbolLookupService(
                 { rs, _ -> rs.getString("value_string") to rs.getLong("value_id") },
                 *chunk.toTypedArray()
             ).forEach { (str, id) ->
-                // MergeTree non garantisce unicità: in caso di duplicati si
-                // tiene l'id più basso, così tutti i lettori convergono.
+                // MergeTree non garantisce unicità: in caso di duplicati
+                // (es. scrittura concorrente senza lock) si tiene l'id più
+                // basso, così tutti i lettori convergono sullo stesso valore.
                 result.merge(str, id) { a, b -> minOf(a, b) }
             }
         }
