@@ -10,10 +10,21 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout
  * riceve solo etichette e callback, non conosce AssociativeExplorerView
  * né i service applicativi. Se questo componente si rompe, non rompe
  * la logica dell'analisi associativa.
+ *
+ * MenuEntry supporta uno stato enabled/disabled: serve alle voci del
+ * gruppo "Gestisci" (Verifica sorgente, Sincronizza, ecc.), il cui stato
+ * dipende da cosa succede nell'analisi aperta - una sorgente non ancora
+ * verificata non può sincronizzare, per esempio. Una entry disabilitata
+ * resta visibile ma non cliccabile, con stile visivo attenuato: l'utente
+ * vede sempre cosa esiste, capisce perché non può usarlo ora.
  */
 class LbiSidebarMenu : VerticalLayout() {
 
-    data class MenuEntry(val label: String, val onClick: () -> Unit)
+    data class MenuEntry(
+        val label: String,
+        val enabled: Boolean = true,
+        val onClick: () -> Unit
+    )
     data class MenuGroup(val label: String, val entries: List<MenuEntry>)
 
     init {
@@ -40,8 +51,12 @@ class LbiSidebarMenu : VerticalLayout() {
         val submenu = Div().apply { className = "flyout-submenu" }
         group.entries.forEach { entry ->
             val subEntry = Div(Span(entry.label)).apply {
-                className = "flyout-subentry"
-                addClickListener { entry.onClick() }
+                className = if (entry.enabled) "flyout-subentry" else "flyout-subentry flyout-subentry-disabled"
+                if (entry.enabled) {
+                    addClickListener { entry.onClick() }
+                }
+                // Le entry disabilitate non hanno click listener: anche
+                // se qualcosa forzasse un click via JS, non farebbero nulla.
             }
             submenu.add(subEntry)
         }
@@ -50,4 +65,3 @@ class LbiSidebarMenu : VerticalLayout() {
         return item
     }
 }
- 

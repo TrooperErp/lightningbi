@@ -469,3 +469,13 @@ vaadin-button[disabled] {
     padding: 2px 6px;
     background: var(--lbi-surface);
 }
+
+.flyout-subentry-disabled {
+    color: var(--lbi-text-muted);
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.flyout-subentry-disabled:hover {
+    background: transparent !important;
+}

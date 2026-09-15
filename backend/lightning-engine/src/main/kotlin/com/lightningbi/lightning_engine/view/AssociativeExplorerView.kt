@@ -28,7 +28,6 @@ import com.vaadin.flow.component.grid.Grid
 import com.vaadin.flow.component.html.Image
 import com.vaadin.flow.component.html.Span
 import com.vaadin.flow.component.listbox.MultiSelectListBox
-import com.vaadin.flow.component.menubar.MenuBar
 import com.vaadin.flow.component.notification.Notification
 import com.vaadin.flow.component.orderedlayout.FlexComponent
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout
@@ -77,14 +76,14 @@ class AssociativeExplorerView(
     private val resultsGrid = Grid<AggregateRow>()
     private val filtersColumn = VerticalLayout()
     private val sidebar = LbiSidebarMenu()
-
     private val sourceStatusLabel = Span().apply { className = "lbi-source-status" }
-    private lateinit var gestisciMenu: MenuBar
-    private lateinit var verificaItem: com.vaadin.flow.component.contextmenu.MenuItem
-    private lateinit var sincronizzaItem: com.vaadin.flow.component.contextmenu.MenuItem
-    private lateinit var mostraSqlItem: com.vaadin.flow.component.contextmenu.MenuItem
-    private lateinit var modificaMetricheItem: com.vaadin.flow.component.contextmenu.MenuItem
-    private lateinit var eliminaAnalisiItem: com.vaadin.flow.component.contextmenu.MenuItem
+
+    // Stato corrente della sorgente dell'area aperta, usato per decidere
+    // quali voci del gruppo "Gestisci" in sidebar sono abilitate. Ricalcolato
+    // da refreshSourceStatus() e riletto da buildMenuGroups() ogni volta
+    // che la sidebar viene ridisegnata.
+    private var sourceStatus: SourceStatus? = null
+    private var hasSource: Boolean = false
 
     private var viewScope: CoroutineScope? = null
     private var isDark = false
@@ -127,16 +126,13 @@ class AssociativeExplorerView(
 
         sidebar.setGroups(buildMenuGroups())
 
-        buildGestisciMenu()
-
         resultsGrid.className = "lbi-results-grid"
         resultsGrid.setSizeFull()
 
-        val statusRow = HorizontalLayout(sourceStatusLabel, gestisciMenu).apply {
+        val statusRow = HorizontalLayout(sourceStatusLabel).apply {
             className = "lbi-action-bar"
             defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
             isPadding = false
-            justifyContentMode = FlexComponent.JustifyContentMode.BETWEEN
             setWidthFull()
         }
 
@@ -176,60 +172,91 @@ class AssociativeExplorerView(
         }
     }
 
-    // ================= Pannello "Gestisci" =================
+    // ================= Sidebar: menu "Gestisci" incluso =================
 
-    private fun buildGestisciMenu() {
-        gestisciMenu = MenuBar()
-        val root = gestisciMenu.addItem("Gestisci ▾")
-        val subMenu = root.subMenu
+    /**
+     * Tutte le voci di navigazione e di gestione dell'analisi vivono qui,
+     * nella sidebar - non in un menu separato sopra i risultati. Le voci
+     * di "Gestisci" sono abilitate/disabilitate in base a sourceStatus e
+     * hasSource, aggiornati da refreshSourceStatus() prima di ogni
+     * ricostruzione della sidebar.
+     */
+    private fun buildMenuGroups(): List<LbiSidebarMenu.MenuGroup> {
+        val groups = mutableListOf(
+            LbiSidebarMenu.MenuGroup(
+                label = "Analisi",
+                entries = currentAreas.map { area ->
+                    LbiSidebarMenu.MenuEntry(area.nome) { switchArea(area.id) }
+                } + LbiSidebarMenu.MenuEntry("+ Nuova analisi") { openNewAnalysisWizard() }
+            )
+        )
 
-        verificaItem = subMenu.addItem("Verifica sorgente") { verifySource() }
-        mostraSqlItem = subMenu.addItem("Mostra SQL view") { showViewSql() }
-        sincronizzaItem = subMenu.addItem("Sincronizza") { runEtl() }
-        modificaMetricheItem = subMenu.addItem("Modifica metriche") { openEditMetrics() }
-        eliminaAnalisiItem = subMenu.addItem("Elimina analisi") { confirmDeleteArea() }
+        if (areaId != null) {
+            val verificaEnabled = hasSource
+            val sincronizzaEnabled = hasSource && sourceStatus == SourceStatus.VERIFIED
+            val sqlEnabled = hasSource
+
+            groups.add(
+                LbiSidebarMenu.MenuGroup(
+                    label = "Gestisci",
+                    entries = listOf(
+                        LbiSidebarMenu.MenuEntry("Verifica sorgente", enabled = verificaEnabled) { verifySource() },
+                        LbiSidebarMenu.MenuEntry("Mostra SQL view", enabled = sqlEnabled) { showViewSql() },
+                        LbiSidebarMenu.MenuEntry("Sincronizza", enabled = sincronizzaEnabled) { runEtl() },
+                        LbiSidebarMenu.MenuEntry("Modifica metriche") { openEditMetrics() },
+                        LbiSidebarMenu.MenuEntry("Elimina analisi") { confirmDeleteArea() }
+                    )
+                )
+            )
+        }
+
+        groups.add(
+            LbiSidebarMenu.MenuGroup(
+                label = "Amministrazione",
+                entries = listOf(
+                    LbiSidebarMenu.MenuEntry("Gestione utenti") {
+                        Notification.show("Funzione in arrivo")
+                    }
+                )
+            )
+        )
+        groups.add(
+            LbiSidebarMenu.MenuGroup(
+                label = "Report",
+                entries = listOf(
+                    LbiSidebarMenu.MenuEntry("Stampe") {
+                        Notification.show("Funzione in arrivo")
+                    }
+                )
+            )
+        )
+        return groups
     }
 
     private fun refreshSourceStatus() {
         val currentAreaId = areaId
         if (currentAreaId == null) {
-            gestisciMenu.isVisible = false
+            hasSource = false
+            sourceStatus = null
             sourceStatusLabel.text = ""
+            sidebar.setGroups(buildMenuGroups())
             return
         }
-        gestisciMenu.isVisible = true
-        modificaMetricheItem.isEnabled = true
-        eliminaAnalisiItem.isEnabled = true
 
-        val sources = areaSourceRepository.findByArea(currentAreaId)
-        val source = sources.firstOrNull()
+        val source = areaSourceRepository.findByArea(currentAreaId).firstOrNull()
+        hasSource = source != null
+        sourceStatus = source?.status
 
-        when {
-            source == null -> {
-                sourceStatusLabel.text = "Nessuna sorgente collegata"
-                verificaItem.isEnabled = false
-                sincronizzaItem.isEnabled = false
-                mostraSqlItem.isEnabled = false
-            }
-            source.status == SourceStatus.VERIFIED -> {
-                sourceStatusLabel.text = "Sorgente verificata: ${source.config.viewName}"
-                verificaItem.isEnabled = true
-                sincronizzaItem.isEnabled = true
-                mostraSqlItem.isEnabled = true
-            }
-            source.status == SourceStatus.ERROR -> {
-                sourceStatusLabel.text = "Sorgente in errore: ${source.errorDetail ?: "causa non registrata"}"
-                verificaItem.isEnabled = true
-                sincronizzaItem.isEnabled = false
-                mostraSqlItem.isEnabled = true
-            }
-            else -> {
-                sourceStatusLabel.text = "View da creare sul database di origine (${source.config.viewName})"
-                verificaItem.isEnabled = true
-                sincronizzaItem.isEnabled = false
-                mostraSqlItem.isEnabled = true
-            }
+        sourceStatusLabel.text = when {
+            source == null -> "Nessuna sorgente collegata"
+            source.status == SourceStatus.VERIFIED -> "Sorgente verificata: ${source.config.viewName}"
+            source.status == SourceStatus.ERROR -> "Sorgente in errore: ${source.errorDetail ?: "causa non registrata"}"
+            else -> "View da creare sul database di origine (${source.config.viewName})"
         }
+
+        // La sidebar va ricostruita ad ogni cambio di stato, perché le
+        // voci abilitate/disabilitate dipendono da hasSource/sourceStatus.
+        sidebar.setGroups(buildMenuGroups())
     }
 
     private fun verifySource() {
@@ -237,7 +264,6 @@ class AssociativeExplorerView(
         val ui = ui.orElse(null) ?: return
         val scope = viewScope ?: return
 
-        verificaItem.isEnabled = false
         sourceStatusLabel.text = "Verifica in corso..."
 
         scope.launch {
@@ -275,7 +301,6 @@ class AssociativeExplorerView(
             return
         }
 
-        sincronizzaItem.isEnabled = false
         sourceStatusLabel.text = "Sincronizzazione in corso..."
 
         scope.launch {
@@ -357,7 +382,6 @@ class AssociativeExplorerView(
             Notification.show("Errore durante l'eliminazione: ${e.message}", 8000, Notification.Position.MIDDLE)
         }
         currentAreas = registryRepository.findAllAree()
-        sidebar.setGroups(buildMenuGroups())
         if (areaId == targetAreaId) {
             areaId = null
             selections.clear()
@@ -367,11 +391,13 @@ class AssociativeExplorerView(
             resultsGrid.setItems(emptyList())
             resultsGrid.removeAllColumns()
             currentAreas.firstOrNull()?.let { switchArea(it.id) } ?: refreshSourceStatus()
+        } else {
+            sidebar.setGroups(buildMenuGroups())
         }
         Notification.show("Analisi eliminata", 4000, Notification.Position.BOTTOM_END)
     }
 
-    // ================= Wizard e menu =================
+    // ================= Wizard =================
 
     private fun openNewAnalysisWizard() {
         NewAnalysisWizardDialog(
@@ -379,35 +405,9 @@ class AssociativeExplorerView(
             areaSourceRepository, cryptoService, metadataService, viewSqlGenerator
         ) {
             currentAreas = registryRepository.findAllAree()
-            sidebar.setGroups(buildMenuGroups())
-            currentAreas.lastOrNull()?.let { switchArea(it.id) }
+            currentAreas.lastOrNull()?.let { switchArea(it.id) } ?: sidebar.setGroups(buildMenuGroups())
         }.open()
     }
-
-    private fun buildMenuGroups(): List<LbiSidebarMenu.MenuGroup> = listOf(
-        LbiSidebarMenu.MenuGroup(
-            label = "Analisi",
-            entries = currentAreas.map { area ->
-                LbiSidebarMenu.MenuEntry(area.nome) { switchArea(area.id) }
-            } + LbiSidebarMenu.MenuEntry("+ Nuova analisi") { openNewAnalysisWizard() }
-        ),
-        LbiSidebarMenu.MenuGroup(
-            label = "Amministrazione",
-            entries = listOf(
-                LbiSidebarMenu.MenuEntry("Gestione utenti") {
-                    Notification.show("Funzione in arrivo")
-                }
-            )
-        ),
-        LbiSidebarMenu.MenuGroup(
-            label = "Report",
-            entries = listOf(
-                LbiSidebarMenu.MenuEntry("Stampe") {
-                    Notification.show("Funzione in arrivo")
-                }
-            )
-        )
-    )
 
     override fun onAttach(attachEvent: AttachEvent) {
         super.onAttach(attachEvent)
@@ -443,16 +443,6 @@ class AssociativeExplorerView(
         pivotPanel.setFieldsWithIds(dims, metriche)
     }
 
-    /**
-     * Richiamato dal PivotPanel ad ogni modifica delle zone Righe/Valori.
-     *
-     * Ricalcola SOLO gli aggregati (refreshAggregatesOnly), non gli stati
-     * associativi. Gli stati dipendono dai filtri selezionati, non da come
-     * si raggruppano le Righe: richiamare refresh() per intero ad ogni
-     * drag pagava il costo di AssociativeStateService (una query
-     * ClickHouse per dimensione) per un cambiamento che non lo riguarda -
-     * è questo che rendeva il drag&drop percepito come lento.
-     */
     private fun onPivotChanged(rows: List<UUID>, values: List<UUID>) {
         pivotRows = rows
         pivotValues = values
@@ -488,10 +478,6 @@ class AssociativeExplorerView(
         }
     }
 
-    /**
-     * Refresh completo: filtri (stati associativi) + aggregati. Usato al
-     * cambio area, al cambio selezione filtro, dopo sync/modifica metriche.
-     */
     private fun refresh() {
         val currentAreaId = areaId ?: return
         val ui = ui.orElse(null) ?: return
@@ -545,11 +531,6 @@ class AssociativeExplorerView(
         }
     }
 
-    /**
-     * Refresh leggero: solo aggregati, nessun ricalcolo degli stati
-     * associativi. Usato dal pivot, dove i filtri non cambiano e le
-     * listbox a destra restano esattamente come sono.
-     */
     private fun refreshAggregatesOnly() {
         val currentAreaId = areaId ?: return
         val ui = ui.orElse(null) ?: return
