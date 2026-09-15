@@ -3,6 +3,7 @@ package com.lightningbi.lightning_engine.view
 import com.lightningbi.lightning_engine.etl.EtlOrchestrator
 import com.lightningbi.lightning_engine.model.AggregateRequest
 import com.lightningbi.lightning_engine.model.AggregateResult
+import com.lightningbi.lightning_engine.model.AggregateRow
 import com.lightningbi.lightning_engine.model.Area
 import com.lightningbi.lightning_engine.model.SourceStatus
 import com.lightningbi.lightning_engine.repository.AreaSourceRepository
@@ -21,9 +22,10 @@ import com.lightningbi.lightning_engine.service.ViewSqlGenerator
 import com.vaadin.flow.component.AttachEvent
 import com.vaadin.flow.component.DetachEvent
 import com.vaadin.flow.component.button.Button
-import com.vaadin.flow.component.button.ButtonVariant
-import com.vaadin.flow.component.contextmenu.MenuItem
+import com.vaadin.flow.component.confirmdialog.ConfirmDialog
+import com.vaadin.flow.component.dialog.Dialog
 import com.vaadin.flow.component.grid.Grid
+import com.vaadin.flow.component.html.Image
 import com.vaadin.flow.component.html.Span
 import com.vaadin.flow.component.listbox.MultiSelectListBox
 import com.vaadin.flow.component.menubar.MenuBar
@@ -31,6 +33,7 @@ import com.vaadin.flow.component.notification.Notification
 import com.vaadin.flow.component.orderedlayout.FlexComponent
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout
 import com.vaadin.flow.component.orderedlayout.VerticalLayout
+import com.vaadin.flow.component.textfield.TextArea
 import com.vaadin.flow.data.renderer.ComponentRenderer
 import com.vaadin.flow.router.Route
 import kotlinx.coroutines.CancellationException
@@ -66,23 +69,22 @@ class AssociativeExplorerView(
     private val dimensionBoxes = mutableMapOf<UUID, MultiSelectListBox<Long>>()
     private val currentItems = mutableMapOf<UUID, List<Long>>()
 
+    private var pivotRows: List<UUID> = emptyList()
+    private var pivotValues: List<UUID> = emptyList()
+    private val pivotPanel = PivotPanel { rows, values -> onPivotChanged(rows, values) }
+
     private val requestCounter = AtomicLong(0)
-    private val resultsGrid = Grid<Map<String, Any?>>()
+    private val resultsGrid = Grid<AggregateRow>()
     private val filtersColumn = VerticalLayout()
     private val sidebar = LbiSidebarMenu()
-    private lateinit var selectAreaMenuItem: MenuItem
 
-    // ===== Barra azioni sorgente =====
     private val sourceStatusLabel = Span().apply { className = "lbi-source-status" }
-    private val verifyButton = Button("Verifica sorgente")
-    private val syncButton = Button("Sincronizza")
-    private val sqlButton = Button("Mostra SQL view")
-    private val actionBar = HorizontalLayout().apply {
-        className = "lbi-action-bar"
-        defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
-        isPadding = false
-        isSpacing = true
-    }
+    private lateinit var gestisciMenu: MenuBar
+    private lateinit var verificaItem: com.vaadin.flow.component.contextmenu.MenuItem
+    private lateinit var sincronizzaItem: com.vaadin.flow.component.contextmenu.MenuItem
+    private lateinit var mostraSqlItem: com.vaadin.flow.component.contextmenu.MenuItem
+    private lateinit var modificaMetricheItem: com.vaadin.flow.component.contextmenu.MenuItem
+    private lateinit var eliminaAnalisiItem: com.vaadin.flow.component.contextmenu.MenuItem
 
     private var viewScope: CoroutineScope? = null
     private var isDark = false
@@ -96,17 +98,7 @@ class AssociativeExplorerView(
 
         currentAreas = registryRepository.findAllAree()
 
-        // ===== Menu top stile desktop =====
-        val menuBar = MenuBar().apply { className = "lbi-menubar" }
-        selectAreaMenuItem = menuBar.addItem("Seleziona Area")
-        rebuildAreaMenu()
-
-        val addAreaItem = menuBar.addItem("+ Nuova analisi")
-        addAreaItem.addClickListener { openNewAnalysisWizard() }
-
-        val logoImage = com.vaadin.flow.component.html.Image("images/logo.png", "LightningBI").apply {
-            className = "lbi-logo-img"
-        }
+        val logoImage = Image("images/logo.png", "LightningBI").apply { className = "lbi-logo-img" }
         val logoSpan = Span("LightningBI").apply { className = "lbi-logo" }
         val logoContainer = HorizontalLayout(logoImage, logoSpan).apply {
             className = "lbi-logo-container"
@@ -115,7 +107,6 @@ class AssociativeExplorerView(
         }
 
         val themeToggle = Button("Dark").apply {
-            addThemeVariants(ButtonVariant.LUMO_TERTIARY)
             className = "lbi-theme-toggle"
             addClickListener {
                 isDark = !isDark
@@ -127,38 +118,42 @@ class AssociativeExplorerView(
             }
         }
 
-        val topMenuBar = HorizontalLayout(logoContainer, menuBar, themeToggle).apply {
+        val topMenuBar = HorizontalLayout(logoContainer, themeToggle).apply {
             className = "lbi-topmenu"
             justifyContentMode = FlexComponent.JustifyContentMode.BETWEEN
             defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
             setWidthFull()
         }
 
-        // ===== Sidebar: costruzione disaccoppiata tramite LbiSidebarMenu =====
-        // La logica di business (i click handler) resta qui, dentro la view,
-        // che continua ad avere accesso ai service applicativi. Il componente
-        // sidebar riceve solo etichette + callback, non conosce i service.
         sidebar.setGroups(buildMenuGroups())
 
-        buildActionBar()
+        buildGestisciMenu()
 
-        // ===== Grid risultati centrale =====
         resultsGrid.className = "lbi-results-grid"
         resultsGrid.setSizeFull()
 
+        val statusRow = HorizontalLayout(sourceStatusLabel, gestisciMenu).apply {
+            className = "lbi-action-bar"
+            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
+            isPadding = false
+            justifyContentMode = FlexComponent.JustifyContentMode.BETWEEN
+            setWidthFull()
+        }
+
         val centerArea = VerticalLayout(
-            actionBar,
+            statusRow,
+            pivotPanel,
             Span("Risultati").apply { className = "lbi-section-title" },
             resultsGrid
         ).apply {
             className = "lbi-center"
             setSizeFull()
             isPadding = true
-            setFlexGrow(0.0, actionBar)
+            setFlexGrow(0.0, statusRow)
+            setFlexGrow(0.0, pivotPanel)
             setFlexGrow(1.0, resultsGrid)
         }
 
-        // ===== Colonna destra filtri =====
         filtersColumn.className = "lbi-filters-column"
         filtersColumn.height = "100%"
 
@@ -181,69 +176,58 @@ class AssociativeExplorerView(
         }
     }
 
-    // ================= Barra azioni sorgente =================
+    // ================= Pannello "Gestisci" =================
 
-    /**
-     * Verifica e sincronizzazione vivono qui, sulla pagina dell'Analisi, e
-     * non in una voce di menu separata: non sono azioni di configurazione ma
-     * operazioni sull'analisi che si sta guardando. La creazione della
-     * sorgente resta interamente dentro il wizard "Nuova Analisi".
-     *
-     * Senza questi due comandi la catena era interrotta: una sorgente appena
-     * creata resta PENDING_VIEW, EtlOrchestrator rifiuta di sincronizzare
-     * qualunque cosa non sia VERIFIED, e nessun punto del programma invocava
-     * runForArea. La tabella dei fatti restava quindi vuota per sempre.
-     */
-    private fun buildActionBar() {
-        verifyButton.addThemeVariants(ButtonVariant.LUMO_TERTIARY)
-        verifyButton.addClickListener { verifySource() }
+    private fun buildGestisciMenu() {
+        gestisciMenu = MenuBar()
+        val root = gestisciMenu.addItem("Gestisci ▾")
+        val subMenu = root.subMenu
 
-        syncButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY)
-        syncButton.addClickListener { runEtl() }
-
-        sqlButton.addThemeVariants(ButtonVariant.LUMO_TERTIARY)
-        sqlButton.addClickListener { showViewSql() }
-
-        actionBar.add(sourceStatusLabel, verifyButton, sqlButton, syncButton)
+        verificaItem = subMenu.addItem("Verifica sorgente") { verifySource() }
+        mostraSqlItem = subMenu.addItem("Mostra SQL view") { showViewSql() }
+        sincronizzaItem = subMenu.addItem("Sincronizza") { runEtl() }
+        modificaMetricheItem = subMenu.addItem("Modifica metriche") { openEditMetrics() }
+        eliminaAnalisiItem = subMenu.addItem("Elimina analisi") { confirmDeleteArea() }
     }
 
     private fun refreshSourceStatus() {
         val currentAreaId = areaId
         if (currentAreaId == null) {
-            actionBar.isVisible = false
+            gestisciMenu.isVisible = false
+            sourceStatusLabel.text = ""
             return
         }
+        gestisciMenu.isVisible = true
+        modificaMetricheItem.isEnabled = true
+        eliminaAnalisiItem.isEnabled = true
+
         val sources = areaSourceRepository.findByArea(currentAreaId)
         val source = sources.firstOrNull()
 
-        actionBar.isVisible = true
         when {
             source == null -> {
                 sourceStatusLabel.text = "Nessuna sorgente collegata"
-                verifyButton.isEnabled = false
-                syncButton.isEnabled = false
-                sqlButton.isEnabled = false
+                verificaItem.isEnabled = false
+                sincronizzaItem.isEnabled = false
+                mostraSqlItem.isEnabled = false
             }
             source.status == SourceStatus.VERIFIED -> {
                 sourceStatusLabel.text = "Sorgente verificata: ${source.config.viewName}"
-                verifyButton.isEnabled = true
-                syncButton.isEnabled = true
-                sqlButton.isEnabled = true
+                verificaItem.isEnabled = true
+                sincronizzaItem.isEnabled = true
+                mostraSqlItem.isEnabled = true
             }
             source.status == SourceStatus.ERROR -> {
                 sourceStatusLabel.text = "Sorgente in errore: ${source.errorDetail ?: "causa non registrata"}"
-                verifyButton.isEnabled = true
-                syncButton.isEnabled = false
-                sqlButton.isEnabled = true
+                verificaItem.isEnabled = true
+                sincronizzaItem.isEnabled = false
+                mostraSqlItem.isEnabled = true
             }
             else -> {
                 sourceStatusLabel.text = "View da creare sul database di origine (${source.config.viewName})"
-                verifyButton.isEnabled = true
-                // Sincronizzare una sorgente non verificata solleverebbe
-                // comunque eccezione in EtlOrchestrator: meglio disabilitare
-                // il comando che mostrare un errore dopo il click.
-                syncButton.isEnabled = false
-                sqlButton.isEnabled = true
+                verificaItem.isEnabled = true
+                sincronizzaItem.isEnabled = false
+                mostraSqlItem.isEnabled = true
             }
         }
     }
@@ -253,11 +237,9 @@ class AssociativeExplorerView(
         val ui = ui.orElse(null) ?: return
         val scope = viewScope ?: return
 
-        verifyButton.isEnabled = false
+        verificaItem.isEnabled = false
         sourceStatusLabel.text = "Verifica in corso..."
 
-        // La verifica apre una connessione JDBC verso il database di origine:
-        // eseguirla sul thread della UI bloccherebbe la sessione.
         scope.launch {
             val results = try {
                 sourceVerificationService.verifyArea(currentAreaId)
@@ -293,7 +275,7 @@ class AssociativeExplorerView(
             return
         }
 
-        syncButton.isEnabled = false
+        sincronizzaItem.isEnabled = false
         sourceStatusLabel.text = "Sincronizzazione in corso..."
 
         scope.launch {
@@ -303,9 +285,6 @@ class AssociativeExplorerView(
                     if (areaId != currentAreaId) return@access
                     Notification.show("Sincronizzazione completata", 4000, Notification.Position.BOTTOM_END)
                     refreshSourceStatus()
-                    // Il dato è cambiato: dataVersion è stata incrementata da
-                    // EtlCompletionService, quindi le chiavi di cache non
-                    // corrispondono più e il refresh ricalcola davvero.
                     refresh()
                 }
             } catch (e: CancellationException) {
@@ -322,22 +301,17 @@ class AssociativeExplorerView(
         }
     }
 
-    /**
-     * Mostra l'SQL della view attesa. Serve quando la verifica fallisce:
-     * è il testo da consegnare al DBA, o da eseguire a mano sul database
-     * di origine.
-     */
     private fun showViewSql() {
         val currentAreaId = areaId ?: return
         val source = areaSourceRepository.findByArea(currentAreaId).firstOrNull() ?: return
 
-        val attese = sourceVerificationService.expectedColumns(currentAreaId)
-        val dialog = com.vaadin.flow.component.dialog.Dialog().apply {
+        val attese = sourceVerificationService.expectedColumns(currentAreaId, source.config.syncMode)
+        val dialog = Dialog().apply {
             className = "lbi-wizard-dialog"
             headerTitle = "View attesa: ${source.config.viewName}"
             width = "760px"
         }
-        val area = com.vaadin.flow.component.textfield.TextArea().apply {
+        val area = TextArea().apply {
             isReadOnly = true
             setWidthFull()
             height = "320px"
@@ -354,38 +328,68 @@ class AssociativeExplorerView(
         dialog.open()
     }
 
+    private fun openEditMetrics() {
+        val currentAreaId = areaId ?: return
+        EditMetricsDialog(currentAreaId, registryService) {
+            refreshPivotFields(currentAreaId)
+            refresh()
+        }.open()
+    }
+
+    private fun confirmDeleteArea() {
+        val currentAreaId = areaId ?: return
+        val areaNome = currentAreas.find { it.id == currentAreaId }?.nome ?: "questa analisi"
+
+        ConfirmDialog(
+            "Eliminare \"$areaNome\"?",
+            "L'analisi, le sue metriche, i collegamenti alle dimensioni e i dati caricati verranno rimossi. L'operazione non è reversibile.",
+            "Elimina",
+            { _ -> performDeleteArea(currentAreaId) },
+            "Annulla",
+            { _ -> }
+        ).open()
+    }
+
+    private fun performDeleteArea(targetAreaId: UUID) {
+        try {
+            registryService.deleteAreaCompleta(targetAreaId)
+        } catch (e: Exception) {
+            Notification.show("Errore durante l'eliminazione: ${e.message}", 8000, Notification.Position.MIDDLE)
+        }
+        currentAreas = registryRepository.findAllAree()
+        sidebar.setGroups(buildMenuGroups())
+        if (areaId == targetAreaId) {
+            areaId = null
+            selections.clear()
+            dimensionBoxes.clear()
+            currentItems.clear()
+            filtersColumn.removeAll()
+            resultsGrid.setItems(emptyList())
+            resultsGrid.removeAllColumns()
+            currentAreas.firstOrNull()?.let { switchArea(it.id) } ?: refreshSourceStatus()
+        }
+        Notification.show("Analisi eliminata", 4000, Notification.Position.BOTTOM_END)
+    }
+
     // ================= Wizard e menu =================
 
-    /**
-     * Apre il wizard unificato "Nuova Analisi" (discovery-first: connessione
-     * sorgente + colonne reali con esempio dati, tutto in un solo flusso).
-     */
     private fun openNewAnalysisWizard() {
         NewAnalysisWizardDialog(
             registryService, registryRepository, symbolTableService,
             areaSourceRepository, cryptoService, metadataService, viewSqlGenerator
         ) {
             currentAreas = registryRepository.findAllAree()
-            rebuildAreaMenu()
+            sidebar.setGroups(buildMenuGroups())
             currentAreas.lastOrNull()?.let { switchArea(it.id) }
         }.open()
     }
 
-    /**
-     * Definisce i gruppi del menu sidebar.
-     *
-     * "Sorgenti Dati" come punto di CREAZIONE è stata rimossa dal menu: il
-     * wizard "Nuova Analisi" la assorbe interamente. Verifica e
-     * sincronizzazione vivono invece nella barra azioni della pagina, perché
-     * riguardano l'analisi correntemente aperta e non una configurazione
-     * globale.
-     */
     private fun buildMenuGroups(): List<LbiSidebarMenu.MenuGroup> = listOf(
         LbiSidebarMenu.MenuGroup(
             label = "Analisi",
-            entries = listOf(
-                LbiSidebarMenu.MenuEntry("Nuova analisi") { openNewAnalysisWizard() }
-            )
+            entries = currentAreas.map { area ->
+                LbiSidebarMenu.MenuEntry(area.nome) { switchArea(area.id) }
+            } + LbiSidebarMenu.MenuEntry("+ Nuova analisi") { openNewAnalysisWizard() }
         ),
         LbiSidebarMenu.MenuGroup(
             label = "Amministrazione",
@@ -404,15 +408,6 @@ class AssociativeExplorerView(
             )
         )
     )
-
-    private fun rebuildAreaMenu() {
-        selectAreaMenuItem.subMenu.removeAll()
-        currentAreas.forEach { area ->
-            selectAreaMenuItem.subMenu.addItem(area.nome) {
-                switchArea(area.id)
-            }
-        }
-    }
 
     override fun onAttach(attachEvent: AttachEvent) {
         super.onAttach(attachEvent)
@@ -436,8 +431,32 @@ class AssociativeExplorerView(
         resultsGrid.setItems(emptyList())
         resultsGrid.removeAllColumns()
         buildFilterCards(newAreaId)
+        refreshPivotFields(newAreaId)
         refreshSourceStatus()
         refresh()
+    }
+
+    private fun refreshPivotFields(currentAreaId: UUID) {
+        val dims = registryRepository.findDimensioniByArea(currentAreaId)
+            .mapNotNull { ad -> registryRepository.findDimensione(ad.dimensioneId)?.let { ad.dimensioneId to it.nome } }
+        val metriche = registryRepository.findMetricheByArea(currentAreaId).map { it.id to it.nome }
+        pivotPanel.setFieldsWithIds(dims, metriche)
+    }
+
+    /**
+     * Richiamato dal PivotPanel ad ogni modifica delle zone Righe/Valori.
+     *
+     * Ricalcola SOLO gli aggregati (refreshAggregatesOnly), non gli stati
+     * associativi. Gli stati dipendono dai filtri selezionati, non da come
+     * si raggruppano le Righe: richiamare refresh() per intero ad ogni
+     * drag pagava il costo di AssociativeStateService (una query
+     * ClickHouse per dimensione) per un cambiamento che non lo riguarda -
+     * è questo che rendeva il drag&drop percepito come lento.
+     */
+    private fun onPivotChanged(rows: List<UUID>, values: List<UUID>) {
+        pivotRows = rows
+        pivotValues = values
+        refreshAggregatesOnly()
     }
 
     private fun buildFilterCards(currentAreaId: UUID) {
@@ -457,10 +476,6 @@ class AssociativeExplorerView(
             }
             dimensionBoxes[dimId] = box
 
-            // Una dimensione può comparire più volte nella stessa area con
-            // ruoli diversi (data ordine e data consegna sulla stessa
-            // dimensione Tempo): in quel caso il nome della dimensione da
-            // solo non distingue le due schede, serve la colonna.
             val etichetta = if (dims.count { it.dimensioneId == dimId } > 1) {
                 "${dimensione.nome} (${areaDim.colonnaFisica})"
             } else {
@@ -473,6 +488,10 @@ class AssociativeExplorerView(
         }
     }
 
+    /**
+     * Refresh completo: filtri (stati associativi) + aggregati. Usato al
+     * cambio area, al cambio selezione filtro, dopo sync/modifica metriche.
+     */
     private fun refresh() {
         val currentAreaId = areaId ?: return
         val ui = ui.orElse(null) ?: return
@@ -482,6 +501,8 @@ class AssociativeExplorerView(
         val selectionsSnapshot: Map<UUID, Set<Long>> = selections
             .filterValues { it.isNotEmpty() }
             .mapValues { it.value.toSet() }
+        val rowsSnapshot = pivotRows
+        val valuesSnapshot = pivotValues
 
         scope.launch {
             try {
@@ -491,26 +512,27 @@ class AssociativeExplorerView(
                     associativeStateService.getStates(currentAreaId, selectionsSnapshot, versions)
                 }
                 val aggregatesDeferred = async {
-                    aggregateService.getAggregates(AggregateRequest(currentAreaId, selectionsSnapshot), versions)
+                    aggregateService.getAggregates(
+                        AggregateRequest(
+                            areaId = currentAreaId,
+                            selections = selectionsSnapshot,
+                            groupBy = rowsSnapshot,
+                            metricIds = valuesSnapshot,
+                            resolveLabels = true
+                        ),
+                        versions
+                    )
                 }
                 val states = statesDeferred.await()
                 val aggregates = aggregatesDeferred.await()
 
-                // Le etichette si risolvono QUI, nel thread di background.
-                //
-                // Il motore associativo ragiona su value_id interi, ma le
-                // listbox mostravano quegli interi tali e quali: l'utente
-                // vedeva "47", "48", "51" al posto dei nomi dei clienti, e
-                // non c'era modo di capire se gli stati verde/grigio fossero
-                // corretti. La risoluzione richiede query su ClickHouse,
-                // quindi non può stare dentro ui.access.
                 val labels = resolveLabels(states)
 
                 ui.access {
                     if (myRequestId != requestCounter.get()) return@access
                     if (areaId != currentAreaId) return@access
                     renderStates(states, labels)
-                    renderResultsGrid(aggregates)
+                    renderResultsGrid(aggregates, rowsSnapshot)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -523,7 +545,52 @@ class AssociativeExplorerView(
         }
     }
 
-    /** dimensioneId -> (value_id -> etichetta), per tutte le dimensioni visibili. */
+    /**
+     * Refresh leggero: solo aggregati, nessun ricalcolo degli stati
+     * associativi. Usato dal pivot, dove i filtri non cambiano e le
+     * listbox a destra restano esattamente come sono.
+     */
+    private fun refreshAggregatesOnly() {
+        val currentAreaId = areaId ?: return
+        val ui = ui.orElse(null) ?: return
+        val scope = viewScope ?: return
+        val myRequestId = requestCounter.incrementAndGet()
+
+        val selectionsSnapshot: Map<UUID, Set<Long>> = selections
+            .filterValues { it.isNotEmpty() }
+            .mapValues { it.value.toSet() }
+        val rowsSnapshot = pivotRows
+        val valuesSnapshot = pivotValues
+
+        scope.launch {
+            try {
+                val versions = versionService.snapshotVersions(currentAreaId)
+                val aggregates = aggregateService.getAggregates(
+                    AggregateRequest(
+                        areaId = currentAreaId,
+                        selections = selectionsSnapshot,
+                        groupBy = rowsSnapshot,
+                        metricIds = valuesSnapshot,
+                        resolveLabels = true
+                    ),
+                    versions
+                )
+                ui.access {
+                    if (myRequestId != requestCounter.get()) return@access
+                    if (areaId != currentAreaId) return@access
+                    renderResultsGrid(aggregates, rowsSnapshot)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ui.access {
+                    if (myRequestId != requestCounter.get()) return@access
+                    Notification.show("Errore aggiornamento: ${e.message}", 5000, Notification.Position.BOTTOM_END)
+                }
+            }
+        }
+    }
+
     private fun resolveLabels(states: Map<UUID, DimensionState>): Map<UUID, Map<Long, String>> =
         states.mapNotNull { (dimId, state) ->
             val dimensione = registryRepository.findDimensione(dimId) ?: return@mapNotNull null
@@ -539,9 +606,6 @@ class AssociativeExplorerView(
             val box = dimensionBoxes[dimId] ?: return@forEach
             val dimLabels = labels[dimId] ?: emptyMap()
 
-            // Ordinamento per etichetta, non per id: i value_id seguono
-            // l'ordine di primo caricamento nella symbol table, che non ha
-            // nessun rapporto con l'ordine alfabetico atteso dall'utente.
             val allValues = (state.verdi + state.grigi + state.selezionati)
                 .distinct()
                 .sortedBy { symbolLookupService.labelOrFallback(dimLabels, it) }
@@ -567,26 +631,36 @@ class AssociativeExplorerView(
         }
     }
 
-    private fun renderResultsGrid(result: AggregateResult) {
+    private fun renderResultsGrid(result: AggregateResult, rows: List<UUID>) {
         resultsGrid.removeAllColumns()
 
-        val rows = result.rows.map { it.values }
-        if (rows.isEmpty()) {
+        if (result.rows.isEmpty()) {
             resultsGrid.setItems(emptyList())
             return
         }
 
-        val columnNames = rows.first().keys.toList()
-        columnNames.forEach { colName ->
-            resultsGrid.addColumn { row -> row[colName]?.toString() ?: "" }
-                .setHeader(colName.replaceFirstChar { it.uppercase() })
+        rows.forEach { dimId ->
+            val dimensione = registryRepository.findDimensione(dimId)
+            resultsGrid.addColumn { row: AggregateRow ->
+                row.labels[dimId] ?: row.groupKeys[dimId]?.let { "#$it" } ?: "—"
+            }.setHeader(dimensione?.nome ?: "?").setAutoWidth(true)
+        }
+
+        val metricNames = result.rows.first().values.keys.toList()
+        metricNames.forEach { name ->
+            resultsGrid.addColumn { row: AggregateRow -> row.values[name]?.toString() ?: "" }
+                .setHeader(name)
                 .setAutoWidth(true)
         }
 
-        resultsGrid.setItems(rows)
+        resultsGrid.setItems(result.rows)
 
         if (result.truncated) {
-            Notification.show("Risultato troncato: troppe righe da mostrare", 4000, Notification.Position.BOTTOM_END)
+            val messaggio = if (rows.isEmpty())
+                "Risultato troncato: troppe righe da mostrare"
+            else
+                "Troppe combinazioni da mostrare: prova a togliere una dimensione dalle Righe"
+            Notification.show(messaggio, 5000, Notification.Position.BOTTOM_END)
         }
     }
 

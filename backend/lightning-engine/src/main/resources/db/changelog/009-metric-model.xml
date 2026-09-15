@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Estende lbi_area_metrica per supportare:
+      - più metriche sulla stessa colonna con aggregazioni diverse
+        (es. media, minimo e massimo di lead_time_giorni nella stessa analisi)
+      - metriche senza colonna, come COUNT(*)
+      - il futuro supporto a metriche calcolate come espressione di altre
+        metriche (es. SUM(scartati)/SUM(prodotti)), non ancora implementato
+        ma già ospitabile senza una seconda migration.
+
+      tipo_aggregazione diventa un valore controllato (enum lato Kotlin),
+      non più una stringa libera interpolata direttamente nell'SQL generato:
+      prima del wizard nuovo era scritta a mano solo dal codice fidato, con
+      la selezione multipla diventa un valore scelto dall'utente e va
+      validato come tale.
+    -->
+    <changeSet id="20" author="lightningbi">
+        <dropNotNullConstraint
+                tableName="lbi_area_metrica"
+                columnName="colonna_fisica"
+                columnDataType="character varying"/>
+    </changeSet>
+
+    <changeSet id="21" author="lightningbi">
+        <addColumn tableName="lbi_area_metrica">
+            <!-- AGGREGAZIONE_COLONNA (oggi) | ESPRESSIONE_CALCOLATA (futuro, non implementato) -->
+            <column name="tipo_metrica" type="varchar(30)" defaultValue="AGGREGAZIONE_COLONNA">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Usata solo da ESPRESSIONE_CALCOLATA. Nessun codice la legge oggi. -->
+            <column name="espressione" type="text"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

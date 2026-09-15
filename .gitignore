@@ -25,3 +25,5 @@ replay_pid*
 
 .idea/
 *.iml"*.hprof" 
+"*.hprof" 
+"backend/lightning-engine/src/main/bundles/prod.bundle" 

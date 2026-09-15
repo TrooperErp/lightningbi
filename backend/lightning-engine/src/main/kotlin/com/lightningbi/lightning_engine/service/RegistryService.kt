@@ -1,6 +1,7 @@
 package com.lightningbi.lightning_engine.service
 
 import com.lightningbi.lightning_engine.model.*
+import com.lightningbi.lightning_engine.repository.AreaSourceRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -9,6 +10,7 @@ import java.util.UUID
 @Service
 class RegistryService(
     private val registryRepository: RegistryRepository,
+    private val areaSourceRepository: AreaSourceRepository,
     private val symbolTableService: SymbolTableService
 ) {
     fun getArea(nome: String) = registryRepository.findAreaByNome(nome)
@@ -25,26 +27,11 @@ class RegistryService(
         return area
     }
 
-    /**
-     * Cerca una dimensione già esistente il cui nome, una volta normalizzato,
-     * coincide con quello richiesto.
-     *
-     * Serve perché due dimensioni con lo stesso nome fisico condividerebbero
-     * la stessa symbol table ma avrebbero id diversi nel registry: i value_id
-     * diventerebbero ambigui e le dimensioni "conformate" smetterebbero di
-     * esserlo. Il confronto è sul nome normalizzato, non su quello logico,
-     * perché "Cliente" e "CLIENTE" puntano alla stessa tabella fisica.
-     */
     fun findDimensioneByNomeFisico(nome: String): Dimensione? {
         val target = Naming.slug(nome)
         return registryRepository.findAllDimensioni().firstOrNull { Naming.slug(it.nome) == target }
     }
 
-    /**
-     * Restituisce la dimensione esistente se c'è, altrimenti la crea.
-     * È il metodo che i wizard devono usare: creare sempre una dimensione
-     * nuova produce duplicati e rompe il riuso tra aree.
-     */
     @Transactional("postgresTransactionManager")
     fun findOrCreateDimensione(
         nome: String,
@@ -54,23 +41,12 @@ class RegistryService(
         colonnaChiave: String? = null
     ): Dimensione {
         findDimensioneByNomeFisico(nome)?.let { existing ->
-            // Rete di sicurezza: se il registry ha la dimensione ma la symbol
-            // table manca (es. rollback precedente), la ricrea. CREATE TABLE
-            // IF NOT EXISTS rende l'operazione idempotente.
             symbolTableService.createSymbolTable(existing.nome)
             return existing
         }
         return createDimensione(nome, tipo, conformata, tabellaDim, colonnaChiave)
     }
 
-    /**
-     * Crea una nuova dimensione.
-     *
-     * Ordine invertito rispetto a prima: si salva PRIMA su Postgres (dentro
-     * transazione) e solo dopo si crea la symbol table su ClickHouse. Con
-     * l'ordine precedente, un fallimento del save lasciava una tabella
-     * ClickHouse orfana che il rollback Postgres non poteva rimuovere.
-     */
     @Transactional("postgresTransactionManager")
     fun createDimensione(
         nome: String,
@@ -79,7 +55,7 @@ class RegistryService(
         tabellaDim: String?,
         colonnaChiave: String?
     ): Dimensione {
-        Naming.slug(nome) // fallisce subito se il nome non è convertibile
+        Naming.slug(nome)
         val dim = Dimensione(UUID.randomUUID(), nome, tipo, conformata, tabellaDim, colonnaChiave)
         registryRepository.saveDimensione(dim)
         registryRepository.bumpVersion()
@@ -101,13 +77,108 @@ class RegistryService(
         registryRepository.bumpVersion()
     }
 
+    fun getColonneMetricheDisponibili(areaId: UUID): List<String> =
+        registryRepository.findMetricheByArea(areaId)
+            .mapNotNull { it.colonnaFisica }
+            .distinct()
+            .sorted()
+
     @Transactional("postgresTransactionManager")
-    fun addMetrica(areaId: UUID, nome: String, colonnaFisica: String, tipoAggregazione: String): AreaMetrica {
+    fun addMetrica(
+        areaId: UUID,
+        nome: String,
+        colonnaFisica: String?,
+        tipoAggregazione: TipoAggregazione,
+        tipoMetrica: TipoMetrica = TipoMetrica.AGGREGAZIONE_COLONNA,
+        espressione: String? = null
+    ): AreaMetrica {
+        require(colonnaFisica != null || tipoAggregazione == TipoAggregazione.COUNT) {
+            "colonnaFisica è obbligatoria per l'aggregazione $tipoAggregazione"
+        }
+        validateNomeUnivoco(areaId, nome, escludiId = null)
+
         val metrica = AreaMetrica(
-            UUID.randomUUID(), areaId, nome, Naming.column(colonnaFisica), tipoAggregazione
+            id = UUID.randomUUID(),
+            areaId = areaId,
+            nome = nome,
+            colonnaFisica = colonnaFisica?.let { Naming.column(it) },
+            tipoAggregazione = tipoAggregazione,
+            tipoMetrica = tipoMetrica,
+            espressione = espressione
         )
         registryRepository.saveAreaMetrica(metrica)
         registryRepository.bumpVersion()
         return metrica
+    }
+
+    @Transactional("postgresTransactionManager")
+    fun updateMetrica(
+        metricaId: UUID,
+        nuovoNome: String,
+        nuovoTipoAggregazione: TipoAggregazione
+    ): AreaMetrica {
+        val esistente = registryRepository.findMetricaById(metricaId)
+            ?: error("Metrica $metricaId non trovata")
+
+        require(esistente.colonnaFisica != null || nuovoTipoAggregazione == TipoAggregazione.COUNT) {
+            "colonnaFisica è obbligatoria per l'aggregazione $nuovoTipoAggregazione"
+        }
+        validateNomeUnivoco(esistente.areaId, nuovoNome, escludiId = metricaId)
+
+        val aggiornata = esistente.copy(nome = nuovoNome, tipoAggregazione = nuovoTipoAggregazione)
+        registryRepository.updateAreaMetrica(aggiornata)
+        registryRepository.bumpVersion()
+        return aggiornata
+    }
+
+    @Transactional("postgresTransactionManager")
+    fun deleteMetrica(metricaId: UUID) {
+        registryRepository.deleteAreaMetrica(metricaId)
+        registryRepository.bumpVersion()
+    }
+
+    /**
+     * Cancellazione completa di un'area: sorgenti, metriche, collegamenti
+     * a dimensioni, la riga area, e la tabella fatti su ClickHouse.
+     *
+     * Non tocca lbi_dimensione: le dimensioni possono essere condivise con
+     * altre aree (conformate), cancellarle qui romperebbe quelle altre aree
+     * silenziosamente. Restano nel registry anche se questa era l'unica
+     * area che le usava - orfane ma innocue, si possono ripulire a parte
+     * in futuro con un controllo esplicito di utilizzo.
+     *
+     * L'ordine conta: prima le righe che referenziano l'area (sorgenti,
+     * metriche, collegamenti dimensione), poi l'area stessa, poi la tabella
+     * fisica ClickHouse per ultima - se qualcosa fallisce a metà, meglio
+     * un'area orfana in Postgres (recuperabile) che una tabella ClickHouse
+     * sparita mentre il registry pensa ancora che esista.
+     */
+    @Transactional("postgresTransactionManager")
+    fun deleteAreaCompleta(areaId: UUID) {
+        val area = registryRepository.findAreaById(areaId) ?: error("Area $areaId non trovata")
+
+        areaSourceRepository.findByArea(areaId).forEach { areaSourceRepository.delete(it.id) }
+        registryRepository.deleteAreaMetricheByArea(areaId)
+        registryRepository.deleteAreaDimensioniByArea(areaId)
+        registryRepository.deleteArea(areaId)
+        registryRepository.bumpVersion()
+
+        try {
+            symbolTableService.dropTable(area.tabellaFisica)
+        } catch (e: Exception) {
+            // Il registry è già pulito: un fallimento qui lascia una
+            // tabella ClickHouse orfana, non un'area rotta. Va segnalato
+            // ma non deve far fallire l'intera cancellazione.
+            throw IllegalStateException(
+                "Area \"${area.nome}\" rimossa dal registry, ma la tabella ${area.tabellaFisica} " +
+                        "su ClickHouse non è stata eliminata: ${e.message}. Va rimossa a mano.", e
+            )
+        }
+    }
+
+    private fun validateNomeUnivoco(areaId: UUID, nome: String, escludiId: UUID?) {
+        val esistenti = registryRepository.findMetricheByArea(areaId)
+        val collisione = esistenti.any { it.nome.equals(nome, ignoreCase = true) && it.id != escludiId }
+        require(!collisione) { "Esiste già una metrica chiamata \"$nome\" in questa area" }
     }
 }

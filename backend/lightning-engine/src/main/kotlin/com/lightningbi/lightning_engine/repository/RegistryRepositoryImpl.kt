@@ -55,15 +55,26 @@ class RegistryRepositoryImpl(
     override fun findMetricheByArea(areaId: UUID): List<AreaMetrica> =
         jdbcTemplate.query(
             "SELECT * FROM lbi_area_metrica WHERE area_id = ?",
-            { rs, _ -> AreaMetrica(
-                UUID.fromString(rs.getString("id")),
-                UUID.fromString(rs.getString("area_id")),
-                rs.getString("nome"),
-                rs.getString("colonna_fisica"),
-                rs.getString("tipo_aggregazione")
-            ) },
+            { rs, _ -> mapMetrica(rs) },
             areaId
         )
+
+    override fun findMetricaById(id: UUID): AreaMetrica? =
+        jdbcTemplate.query(
+            "SELECT * FROM lbi_area_metrica WHERE id = ?",
+            { rs, _ -> mapMetrica(rs) },
+            id
+        ).firstOrNull()
+
+    private fun mapMetrica(rs: java.sql.ResultSet): AreaMetrica = AreaMetrica(
+        UUID.fromString(rs.getString("id")),
+        UUID.fromString(rs.getString("area_id")),
+        rs.getString("nome"),
+        rs.getString("colonna_fisica"),
+        TipoAggregazione.valueOf(rs.getString("tipo_aggregazione") ?: "SUM"),
+        TipoMetrica.valueOf(rs.getString("tipo_metrica") ?: "AGGREGAZIONE_COLONNA"),
+        rs.getString("espressione")
+    )
 
     override fun findDimensione(id: UUID): Dimensione? =
         jdbcTemplate.query(
@@ -111,9 +122,25 @@ class RegistryRepositoryImpl(
 
     override fun saveAreaMetrica(am: AreaMetrica) {
         jdbcTemplate.update(
-            "INSERT INTO lbi_area_metrica (id, area_id, nome, colonna_fisica, tipo_aggregazione) VALUES (?, ?, ?, ?, ?)",
-            am.id, am.areaId, am.nome, am.colonnaFisica, am.tipoAggregazione
+            """INSERT INTO lbi_area_metrica
+               (id, area_id, nome, colonna_fisica, tipo_aggregazione, tipo_metrica, espressione)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            am.id, am.areaId, am.nome, am.colonnaFisica,
+            am.tipoAggregazione.name, am.tipoMetrica.name, am.espressione
         )
+    }
+
+    override fun updateAreaMetrica(am: AreaMetrica) {
+        jdbcTemplate.update(
+            """UPDATE lbi_area_metrica SET
+               nome = ?, tipo_aggregazione = ?, tipo_metrica = ?, espressione = ?
+               WHERE id = ?""",
+            am.nome, am.tipoAggregazione.name, am.tipoMetrica.name, am.espressione, am.id
+        )
+    }
+
+    override fun deleteAreaMetrica(id: UUID) {
+        jdbcTemplate.update("DELETE FROM lbi_area_metrica WHERE id = ?", id)
     }
 
     override fun findAllAree(): List<Area> =
@@ -130,4 +157,16 @@ class RegistryRepositoryImpl(
                 rs.getBoolean("conformata"), rs.getString("tabella_dim_fisica"), rs.getString("colonna_chiave")
             ) }
         )
+
+    override fun deleteAreaDimensioniByArea(areaId: UUID) {
+        jdbcTemplate.update("DELETE FROM lbi_area_dimensione WHERE area_id = ?", areaId)
+    }
+
+    override fun deleteAreaMetricheByArea(areaId: UUID) {
+        jdbcTemplate.update("DELETE FROM lbi_area_metrica WHERE area_id = ?", areaId)
+    }
+
+    override fun deleteArea(id: UUID) {
+        jdbcTemplate.update("DELETE FROM lbi_area WHERE id = ?", id)
+    }
 }

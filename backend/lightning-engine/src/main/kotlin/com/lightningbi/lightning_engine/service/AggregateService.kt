@@ -7,6 +7,7 @@ import com.lightningbi.lightning_engine.model.AggregateResult
 import com.lightningbi.lightning_engine.model.AggregateRow
 import com.lightningbi.lightning_engine.model.AreaDimensione
 import com.lightningbi.lightning_engine.model.AreaMetrica
+import com.lightningbi.lightning_engine.model.TipoAggregazione
 import com.lightningbi.lightning_engine.model.VersionSnapshot
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import org.slf4j.LoggerFactory
@@ -87,8 +88,6 @@ class AggregateService(
                 result = sortByLabel(result, cleanGroupBy)
             }
             if (!req.resolveLabels) {
-                // Le etichette servivano solo per ordinare: non le si trascina
-                // in cache se il chiamante non le ha chieste.
                 result = AggregateResult(result.rows.map { it.copy(labels = emptyMap()) }, result.truncated)
             }
         }
@@ -108,29 +107,31 @@ class AggregateService(
         limit: Int
     ): AggregateResult {
         val t = requireIdentifier(table, "table")
-        metriche.forEach { requireIdentifier(it.colonnaFisica, "metric column") }
+
+        // colonnaFisica è null SOLO per COUNT: ogni altra aggregazione la
+        // richiede. Verificato qui perché è l'unico punto che genera SQL,
+        // ma la regola vive già in RegistryService.addMetrica al momento
+        // della creazione - qui è una difesa contro dati incoerenti scritti
+        // altrove (migrazioni, inserimenti a mano).
+        metriche.forEach { m ->
+            require(m.colonnaFisica != null || m.tipoAggregazione == TipoAggregazione.COUNT) {
+                "Metrica '${m.nome}': colonnaFisica nulla non consentita per ${m.tipoAggregazione}"
+            }
+            m.colonnaFisica?.let { requireIdentifier(it, "metric column") }
+        }
 
         val groupCols = groupBy.mapNotNull { dimById[it]?.colonnaFisica }
         groupCols.forEach { requireIdentifier(it, "group column") }
 
         val (where, args) = buildWhere(selections, dimById)
 
-        // Alias esplicito e stabile per ogni metrica: usare il nome colonna
-        // come alias rompe se due metriche insistono sulla stessa colonna
-        // (es. stessa colonna con aggregazioni diverse).
         val metricAliases = metriche.mapIndexed { i, m -> m to "m_$i" }
         val selectCols = groupCols +
-                metricAliases.map { (m, alias) -> "${m.tipoAggregazione}(${m.colonnaFisica}) AS $alias" }
+                metricAliases.map { (m, alias) -> "${sqlExpression(m)} AS $alias" }
 
         val groupClause = if (groupCols.isEmpty()) "" else "GROUP BY ${groupCols.joinToString(",")}"
         val whereClause = if (where.isEmpty()) "" else "WHERE $where"
 
-        // L'ORDER BY per metrica va fatto dal database: è l'unico modo per
-        // avere un vero top-N. L'ordinamento per dimensione invece NON si può
-        // fare qui, perché in SQL ordinerebbe per value_id - cioè per ordine
-        // di primo caricamento nella symbol table, che non ha alcun rapporto
-        // con l'ordine alfabetico o cronologico atteso dall'utente. Quello si
-        // fa in memoria dopo aver risolto le etichette.
         val orderClause = when (order) {
             AggregateOrder.METRIC_DESC -> "ORDER BY ${aliasOf(metricAliases, orderMetrica)} DESC"
             AggregateOrder.METRIC_ASC -> "ORDER BY ${aliasOf(metricAliases, orderMetrica)} ASC"
@@ -151,10 +152,30 @@ class AggregateService(
         return AggregateResult(if (truncated) rawRows.take(limit) else rawRows, truncated)
     }
 
+    /**
+     * Traduce l'aggregazione nella sintassi SQL corretta.
+     *
+     * COUNT senza colonna diventa COUNT(*) letterale, non COUNT(null) che
+     * ClickHouse rifiuterebbe. COUNT_DISTINCT non è una funzione SQL: va
+     * tradotta come COUNT(DISTINCT colonna) - usare uniqExact darebbe un
+     * conteggio esatto più veloce su ClickHouse, ma COUNT(DISTINCT ...) è
+     * standard SQL e resta portabile se un domani cambia il motore fatti.
+     */
+    private fun sqlExpression(m: AreaMetrica): String {
+        val col = m.colonnaFisica
+        return when (m.tipoAggregazione) {
+            TipoAggregazione.COUNT -> if (col != null) "COUNT($col)" else "COUNT(*)"
+            TipoAggregazione.COUNT_DISTINCT -> "COUNT(DISTINCT $col)"
+            TipoAggregazione.SUM -> "SUM($col)"
+            TipoAggregazione.AVG -> "AVG($col)"
+            TipoAggregazione.MIN -> "MIN($col)"
+            TipoAggregazione.MAX -> "MAX($col)"
+        }
+    }
+
     private fun aliasOf(pairs: List<Pair<AreaMetrica, String>>, metrica: AreaMetrica?): String =
         pairs.first { it.first.id == metrica?.id }.second
 
-    /** Aggiunge a ogni riga le etichette leggibili delle chiavi di raggruppamento. */
     private fun withLabels(
         result: AggregateResult,
         groupBy: List<UUID>,
@@ -162,8 +183,6 @@ class AggregateService(
     ): AggregateResult {
         if (groupBy.isEmpty() || result.rows.isEmpty()) return result
 
-        // Una chiamata per dimensione con tutti gli id in blocco, non una
-        // per riga: con 10.000 righe la differenza è fra una query e 10.000.
         val labelsByDim: Map<UUID, Map<Long, String>> = groupBy.mapNotNull { dimId ->
             val dimensione = registryRepository.findDimensione(dimId) ?: return@mapNotNull null
             val ids = result.rows.mapNotNull { it.groupKeys[dimId] }.toSet()
@@ -208,11 +227,6 @@ class AggregateService(
         return whereClauses.joinToString(" AND ") to args
     }
 
-    /**
-     * Gli identificatori arrivano dal registry, dove Naming li ha già
-     * normalizzati alla creazione. Qui si verifica soltanto, come difesa
-     * contro SQL injection su dati preesistenti o migrati a mano.
-     */
     private fun requireIdentifier(value: String, what: String): String {
         val normalized = Naming.slug(value)
         require(normalized == value) {
@@ -232,8 +246,6 @@ class AggregateService(
         val canonicalSelections = selections.entries
             .sortedBy { it.key.toString() }
             .joinToString(";") { (dimId, values) -> "$dimId=${values.sorted().joinToString(",")}" }
-        // groupBy NON va ordinato: l'ordine delle colonne di raggruppamento
-        // è significativo (cambia la gerarchia del risultato).
         val canonicalGroupBy = groupBy.joinToString(",")
         val canonicalMetrics = metriche.map { it.id.toString() }.sorted().joinToString(",")
 

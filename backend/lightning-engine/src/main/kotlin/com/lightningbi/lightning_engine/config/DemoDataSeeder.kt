@@ -1,5 +1,6 @@
 package com.lightningbi.lightning_engine.config
 
+import com.lightningbi.lightning_engine.model.TipoAggregazione
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import com.lightningbi.lightning_engine.service.RegistryService
 import org.springframework.boot.CommandLineRunner
@@ -27,7 +28,7 @@ class DemoDataSeeder(
         registryService.linkDimensioneToArea(area.id, dimCliente.id, "cliente_id", obbligatoria = true, cardinalita = 100)
         registryService.linkDimensioneToArea(area.id, dimProdotto.id, "prodotto_id", obbligatoria = true, cardinalita = 50)
 
-        registryService.addMetrica(area.id, "fatturato", "importo", "SUM")
+        registryService.addMetrica(area.id, "fatturato", "importo", TipoAggregazione.SUM)
 
         println("DEMO AREA CREATED: areaId=${area.id}")
     }

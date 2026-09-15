@@ -39,6 +39,12 @@ class TransformService(
      * AreaDimensione.colonnaFisica e AreaMetrica.colonnaFisica. Non c'è
      * quindi nessun rimappaggio da fare qui, né a monte.
      *
+     * Le metriche con colonnaFisica nulla (COUNT senza colonna, es.
+     * COUNT(*)) non hanno un dato da leggere riga per riga: il valore lo
+     * calcola AggregateService a lettura, non viene mai caricato in
+     * ClickHouse. Vanno quindi escluse sia dalle colonne attese sia dal
+     * ciclo di scrittura della riga.
+     *
      * @return righe valide, righe scartate
      */
     fun transform(
@@ -50,12 +56,17 @@ class TransformService(
 
         if (rows.isEmpty()) return emptyList<Map<String, Any?>>() to emptyList()
 
+        // Solo le metriche che hanno davvero una colonna fisica vengono
+        // caricate riga per riga: COUNT(*) non ha nulla da leggere dalla
+        // sorgente.
+        val metricheConColonna = metriche.filter { it.colonnaFisica != null }
+
         // Verifica preventiva: se la view non espone una colonna attesa, tutte
         // le righe risulterebbero null e la tabella si riempirebbe di zeri
         // senza che nessuno se ne accorga. Meglio fallire subito e dire quale
         // colonna manca.
         val colonneDisponibili = rows.first().keys
-        val attese = dimensioni.map { it.colonnaFisica } + metriche.map { it.colonnaFisica }
+        val attese = dimensioni.map { it.colonnaFisica } + metricheConColonna.map { it.colonnaFisica!! }
         val mancanti = attese - colonneDisponibili
         require(mancanti.isEmpty()) {
             "La view non espone le colonne attese: ${mancanti.joinToString(", ")}. " +
@@ -119,10 +130,10 @@ class TransformService(
             }
 
             if (rowValid) {
-                metriche.forEach { m ->
+                metricheConColonna.forEach { m ->
                     // Le metriche sono Decimal(18,4) NOT NULL: un null va
                     // trattato come zero, non propagato.
-                    out[m.colonnaFisica] = toDecimal(row[m.colonnaFisica])
+                    out[m.colonnaFisica!!] = toDecimal(row[m.colonnaFisica])
                 }
                 valid += out
             } else {

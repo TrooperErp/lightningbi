@@ -145,7 +145,11 @@ class EtlOrchestrator(
 
             val (valid, errors) = transformService.transform(rows, dimensioni, dimensioneNomiById, metriche)
 
-            val columns = dimensioni.map { it.colonnaFisica } + metriche.map { it.colonnaFisica }
+            // Le metriche COUNT(*) senza colonnaFisica non corrispondono a nessuna
+            // colonna caricata dall'ETL: sono calcolate a lettura da AggregateService,
+            // non scritte riga per riga. Vanno escluse qui, altrimenti l'ETL tenta di
+            // scrivere/leggere una colonna che non esiste.
+            val columns = dimensioni.map { it.colonnaFisica } + metriche.mapNotNull { it.colonnaFisica }
 
             if (source.config.syncMode == SyncMode.FULL_RELOAD) {
                 loaderService.truncateAndLoad(area.tabellaFisica, valid, columns)

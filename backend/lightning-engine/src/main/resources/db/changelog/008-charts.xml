@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Configurazione dei grafici di un'Analisi.
+
+      Nessun JSON di configurazione ECharts viene salvato: la config si
+      genera a runtime dai campi sotto. Salvare JSON opaco significherebbe
+      dover migrare i dati al primo cambio di libreria o di tema.
+
+      Nessuna selezione di filtri viene salvata: il grafico legge sempre
+      le selezioni correnti della sessione, come la grid.
+
+      Nessuna foreign key, coerentemente con il resto del registry
+      (lbi_area_dimensione e lbi_area_metrica non ne hanno): l'integrità
+      referenziale è gestita a livello di service.
+    -->
+    <changeSet id="18" author="lightningbi">
+        <createTable tableName="lbi_area_chart">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true"/>
+            </column>
+            <column name="area_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="titolo" type="varchar(200)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- BAR | LINE | PIE | AREA -->
+            <column name="tipo" type="varchar(20)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Dimensione sull'asse X (o le fette, per il PIE) -->
+            <column name="group_by_dim_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Metrica misurata sull'asse Y -->
+            <column name="metrica_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <!-- DIMENSION | METRIC_DESC | METRIC_ASC -->
+            <column name="order_by" type="varchar(20)" defaultValue="DIMENSION">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Top-N. NULL = tutte le righe fino al limite di sistema -->
+            <column name="max_items" type="int"/>
+            <!-- Ordine di visualizzazione nella dashboard dell'Analisi -->
+            <column name="posizione" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="19" author="lightningbi">
+        <createIndex tableName="lbi_area_chart" indexName="idx_lbi_area_chart_area">
+            <column name="area_id"/>
+            <column name="posizione"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

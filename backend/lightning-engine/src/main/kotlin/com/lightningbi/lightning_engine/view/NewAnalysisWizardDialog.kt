@@ -30,15 +30,17 @@ import java.util.UUID
  * - Discovery-first: prima si vedono le colonne reali della sorgente
  *   (con tuple di esempio), poi si costruisce l'Analisi sopra.
  * - Solo colonna diretta, NESSUN join/lookup al volo nel wizard.
- *   Se serve incrociare più tabelle, si prepara prima una view sul
- *   database di origine con il join già fatto (portabilità: se cambia
- *   il motore DB origine, cambia solo la view).
- * - Una sorgente fisica (tabella o view sul DB origine, indistinguibili
- *   dal punto di vista di LightningBI) può alimentare più Analisi diverse.
+ * - Una sorgente fisica può alimentare più Analisi diverse.
  * - I nomi fisici NON si costruiscono qui: si passa sempre da Naming.
- * - Le dimensioni si RIUSANO se esistono già con lo stesso nome fisico:
- *   crearne di nuove ogni volta produce symbol table duplicate e rompe
- *   il concetto di dimensione conformata.
+ * - Le dimensioni si RIUSANO se esistono già con lo stesso nome fisico.
+ * - La sorgente selezionata in discovery può essere già pronta o da
+ *   generare (checkbox esplicita nel passo di conferma).
+ * - Una colonna marcata Metrica può generare PIÙ metriche con aggregazioni
+ *   diverse (es. media, minimo e massimo di lead_time_giorni nella stessa
+ *   analisi): il ruolo di una colonna non è più "una colonna = una
+ *   metrica con SUM fissa", ma "una colonna = uno o più modi di
+ *   aggregarla", scelti esplicitamente dall'utente con un nome proposto
+ *   e sempre modificabile.
  */
 class NewAnalysisWizardDialog(
     private val registryService: RegistryService,
@@ -66,11 +68,22 @@ class NewAnalysisWizardDialog(
         val sample: String
     )
 
+    /**
+     * Una singola metrica configurata su una colonna: il tipo di
+     * aggregazione scelto e il nome, proposto automaticamente ma sempre
+     * modificabile dall'utente prima di creare l'analisi.
+     */
+    private data class MetricSelection(
+        var tipo: TipoAggregazione,
+        var nome: String
+    )
+
     /** Scelta dell'utente per una colonna scoperta. */
     private data class ColumnChoice(
         val column: DiscoveredColumn,
         var included: Boolean = false,
-        var role: String = "Filtro"   // "Filtro" | "Somma"
+        var role: String = "Filtro",   // "Filtro" | "Metrica"
+        val metricSelections: MutableList<MetricSelection> = mutableListOf()
     )
 
     private var connection: Connection? = null
@@ -82,6 +95,8 @@ class NewAnalysisWizardDialog(
     private var passwordValue: String = ""
     private var reusingExistingSource: AreaSource? = null
 
+    private var useExistingSourceAsIs = false
+
     private var discoveredColumns: List<ColumnChoice> = emptyList()
     private var rawSamples: List<Map<String, Any?>> = emptyList()
 
@@ -89,6 +104,9 @@ class NewAnalysisWizardDialog(
     private var viewNameField: TextField? = null
     private var nomeAreaField: TextField? = null
     private var viewNameTouched = false
+
+    /** Riferimenti agli span di riepilogo metriche nell'header colonna, per aggiornarli senza ridisegnare la grid. */
+    private val metricSummarySpans = mutableMapOf<String, Span>()
 
     private val sqlPreviewArea = TextArea("Anteprima SQL (CREATE VIEW)").apply {
         isReadOnly = true
@@ -105,8 +123,6 @@ class NewAnalysisWizardDialog(
         isCloseOnEsc = false
         isCloseOnOutsideClick = false
 
-        // La connessione JDBC va chiusa comunque il dialog si chiuda,
-        // annullamento incluso: prima restava aperta in caso di abbandono.
         addDetachListener { closeConnectionQuietly() }
 
         add(content)
@@ -179,9 +195,6 @@ class NewAnalysisWizardDialog(
     }
 
     private fun reuseExistingSource(src: AreaSource) {
-        // Le credenziali NON persistono tra un wizard e l'altro: anche riusando
-        // una sorgente già configurata, l'utente deve ridigitare la password.
-        // Pre-compiliamo solo i campi non sensibili.
         reusingExistingSource = src
         jdbcUrlValue = src.config.jdbcUrl
         usernameValue = src.config.username
@@ -262,7 +275,7 @@ class NewAnalysisWizardDialog(
         content.add(Span("Scegli la tabella o view con i dati (es. Ordini, Vendite)").apply {
             className = "lbi-wizard-label"
         })
-        content.add(Span("Serve incrociare più tabelle? Prepara prima una view sul database di origine con il join già fatto, poi collegala qui.").apply {
+        content.add(Span("Se la view è già pronta con i nomi colonna definitivi, potrai indicarlo nel passo di conferma per usarla direttamente senza generarne una nuova.").apply {
             className = "lbi-wizard-label"
         })
 
@@ -342,6 +355,7 @@ class NewAnalysisWizardDialog(
 
     private fun showStepDiscovery() {
         content.removeAll()
+        metricSummarySpans.clear()
         content.add(Span("Seleziona le colonne da usare in questa analisi, indica il ruolo, e guarda i dati reali sotto").apply {
             className = "lbi-wizard-label"
         })
@@ -353,12 +367,38 @@ class NewAnalysisWizardDialog(
         }
 
         discoveredColumns.forEach { choice ->
+            val metricSummary = Span().apply {
+                style.set("font-size", "11px")
+                style.set("color", "var(--lbi-text-muted)")
+                isVisible = false
+            }
+            metricSummarySpans[choice.column.name] = metricSummary
+
+            val configureMetricButton = Button("Configura aggregazioni") {
+                openMetricConfigDialog(choice, metricSummary)
+            }.apply {
+                addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY)
+                isVisible = false
+            }
+
             val roleGroup = RadioButtonGroup<String>().apply {
-                setItems("Filtro", "Somma")
+                setItems("Filtro", "Metrica")
                 value = choice.role
                 isVisible = choice.included
                 addValueChangeListener {
                     choice.role = it.value
+                    val isMetrica = it.value == "Metrica"
+                    configureMetricButton.isVisible = isMetrica
+                    metricSummary.isVisible = isMetrica && choice.metricSelections.isNotEmpty()
+                    if (isMetrica && choice.metricSelections.isEmpty()) {
+                        // Al primo passaggio a Metrica si propone subito una
+                        // aggregazione di default, così la colonna non resta
+                        // "Metrica" senza nessuna metrica configurata.
+                        choice.metricSelections += MetricSelection(
+                            suggestDefaultAggregation(choice.column.name), suggestName(choice.column.name, suggestDefaultAggregation(choice.column.name))
+                        )
+                        updateMetricSummary(choice, metricSummary)
+                    }
                     updateSqlPreview()
                 }
             }
@@ -367,13 +407,14 @@ class NewAnalysisWizardDialog(
                 addValueChangeListener {
                     choice.included = it.value
                     roleGroup.isVisible = it.value
+                    val isMetrica = it.value && choice.role == "Metrica"
+                    configureMetricButton.isVisible = isMetrica
+                    metricSummary.isVisible = isMetrica && choice.metricSelections.isNotEmpty()
                     updateUpdatedAtOptions()
                     updateSqlPreview()
                 }
             }
 
-            // Nome fisico mostrato accanto a quello originale: rende evidente
-            // con cosa verrà davvero creata la colonna su ClickHouse.
             val fisico = try { Naming.column(choice.column.name) } catch (e: Exception) { "?" }
 
             val headerBox = VerticalLayout(
@@ -383,7 +424,9 @@ class NewAnalysisWizardDialog(
                     style.set("color", "var(--lbi-text-muted)")
                 },
                 checkbox,
-                roleGroup
+                roleGroup,
+                configureMetricButton,
+                metricSummary
             ).apply {
                 isPadding = false
                 isSpacing = false
@@ -405,8 +448,6 @@ class NewAnalysisWizardDialog(
 
         viewNameField = TextField("Nome view").apply {
             setWidthFull()
-            // Se l'utente lo tocca a mano, smettiamo di sovrascriverlo
-            // quando digita il nome dell'analisi.
             addValueChangeListener { if (it.isFromClient) viewNameTouched = true }
         }
 
@@ -430,23 +471,167 @@ class NewAnalysisWizardDialog(
         content.add(HorizontalLayout(backButton, nextButton).apply { className = "lbi-wizard-actions" })
     }
 
-    /** Ritorna il messaggio d'errore, o null se va tutto bene. */
+    /**
+     * Apre il dialog di configurazione delle aggregazioni per una colonna
+     * marcata Metrica. Una riga per tipo di aggregazione disponibile:
+     * checkbox per includerla, campo nome proposto e modificabile.
+     *
+     * Più aggregazioni sulla stessa colonna sono il caso normale, non
+     * un'eccezione: media, minimo e massimo dello stesso lead time nella
+     * stessa analisi sono tre metriche distinte sulla stessa colonna fisica.
+     */
+    private fun openMetricConfigDialog(choice: ColumnChoice, summarySpan: Span) {
+        val dialog = Dialog().apply {
+            headerTitle = "Aggregazioni su \"${choice.column.name}\""
+            width = "520px"
+        }
+
+        data class Row(val tipo: TipoAggregazione, val checkbox: Checkbox, val nameField: TextField)
+
+        val existing = choice.metricSelections.associateBy { it.tipo }
+        val rows = TipoAggregazione.entries.map { tipo ->
+            val preselected = existing.containsKey(tipo)
+            val nameField = TextField().apply {
+                setWidthFull()
+                value = existing[tipo]?.nome ?: suggestName(choice.column.name, tipo)
+                isEnabled = preselected
+            }
+            val checkbox = Checkbox(aggregationLabel(tipo)).apply {
+                value = preselected
+                addValueChangeListener { nameField.isEnabled = it.value }
+            }
+            Row(tipo, checkbox, nameField)
+        }
+
+        val rowsLayout = VerticalLayout().apply {
+            isPadding = false
+            rows.forEach { row ->
+                add(HorizontalLayout(row.checkbox, row.nameField).apply {
+                    isPadding = false
+                    setWidthFull()
+                    setFlexGrow(0.0, row.checkbox)
+                    setFlexGrow(1.0, row.nameField)
+                })
+            }
+        }
+
+        dialog.add(VerticalLayout(
+            Span("Seleziona una o più aggregazioni per questa colonna. Ogni aggregazione diventa una metrica separata nell'analisi.").apply {
+                className = "lbi-wizard-label"
+            },
+            rowsLayout
+        ))
+
+        val cancelButton = Button("Annulla") { dialog.close() }
+        val confirmButton = Button("Conferma") {
+            val selected = rows.filter { it.checkbox.value }
+            if (selected.isEmpty()) {
+                Notification.show("Seleziona almeno un'aggregazione, o riporta la colonna a Filtro")
+                return@Button
+            }
+            val nomiVuoti = selected.any { it.nameField.value.isNullOrBlank() }
+            if (nomiVuoti) {
+                Notification.show("Ogni aggregazione selezionata deve avere un nome")
+                return@Button
+            }
+            val duplicatiInterni = selected.map { it.nameField.value.trim() }
+                .groupingBy { it.lowercase() }.eachCount().filterValues { it > 1 }
+            if (duplicatiInterni.isNotEmpty()) {
+                Notification.show("Nomi duplicati fra le aggregazioni di questa colonna: ${duplicatiInterni.keys.joinToString(", ")}")
+                return@Button
+            }
+            // Univocità anche rispetto alle metriche già configurate su
+            // ALTRE colonne: due metriche con lo stesso nome nella stessa
+            // area si sovrascriverebbero silenziosamente nella mappa dei
+            // risultati aggregati.
+            val nomiAltrove = discoveredColumns
+                .filter { it !== choice }
+                .flatMap { it.metricSelections }
+                .map { it.nome.lowercase() }
+                .toSet()
+            val collisioneEsterna = selected.map { it.nameField.value.trim() }
+                .firstOrNull { it.lowercase() in nomiAltrove }
+            if (collisioneEsterna != null) {
+                Notification.show("Il nome \"$collisioneEsterna\" è già usato da una metrica su un'altra colonna")
+                return@Button
+            }
+
+            choice.metricSelections.clear()
+            selected.forEach { row ->
+                choice.metricSelections += MetricSelection(row.tipo, row.nameField.value.trim())
+            }
+            updateMetricSummary(choice, summarySpan)
+            updateSqlPreview()
+            dialog.close()
+        }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
+
+        dialog.footer.add(cancelButton, confirmButton)
+        dialog.open()
+    }
+
+    private fun updateMetricSummary(choice: ColumnChoice, span: Span) {
+        span.isVisible = choice.metricSelections.isNotEmpty()
+        span.text = choice.metricSelections.joinToString(", ") { "${it.nome} (${aggregationLabel(it.tipo)})" }
+    }
+
+    private fun aggregationLabel(tipo: TipoAggregazione): String = when (tipo) {
+        TipoAggregazione.SUM -> "Somma"
+        TipoAggregazione.AVG -> "Media"
+        TipoAggregazione.COUNT -> "Conteggio"
+        TipoAggregazione.COUNT_DISTINCT -> "Conteggio distinto"
+        TipoAggregazione.MIN -> "Minimo"
+        TipoAggregazione.MAX -> "Massimo"
+    }
+
+    /**
+     * Suggerisce l'aggregazione più plausibile in base al nome colonna.
+     * È solo un default proposto: l'utente lo vede subito nel dialog di
+     * configurazione e può cambiarlo prima di confermare.
+     */
+    private fun suggestDefaultAggregation(colName: String): TipoAggregazione {
+        val n = colName.lowercase()
+        val mediaHints = listOf("giorni", "tempo", "durata", "media", "pct", "percentuale", "rate")
+        return if (mediaHints.any { n.contains(it) }) TipoAggregazione.AVG else TipoAggregazione.SUM
+    }
+
+    private fun suggestName(colName: String, tipo: TipoAggregazione): String {
+        val leggibile = colName.replace('_', ' ').replaceFirstChar { it.uppercase() }
+        val prefisso = when (tipo) {
+            TipoAggregazione.SUM -> "Totale"
+            TipoAggregazione.AVG -> "Media"
+            TipoAggregazione.COUNT -> "Conteggio"
+            TipoAggregazione.COUNT_DISTINCT -> "Conteggio distinto"
+            TipoAggregazione.MIN -> "Minimo"
+            TipoAggregazione.MAX -> "Massimo"
+        }
+        return "$prefisso $leggibile"
+    }
+
     private fun validateDiscovery(): String? {
         val included = discoveredColumns.filter { it.included }
         if (included.isEmpty()) return "Seleziona almeno una colonna"
         if (included.none { it.role == "Filtro" }) return "Serve almeno un Filtro"
-        if (included.none { it.role == "Somma" }) return "Serve almeno una Somma"
+
+        val metriche = included.filter { it.role == "Metrica" }
+        if (metriche.isEmpty()) return "Serve almeno una Metrica"
+        if (metriche.any { it.metricSelections.isEmpty() }) {
+            return "Configura almeno un'aggregazione per ogni colonna marcata Metrica"
+        }
+
         if (updatedAtCombo?.value.isNullOrBlank()) return "Indica la colonna data ultima modifica"
 
-        // Due colonne diverse possono collassare sullo stesso nome fisico
-        // (es. "Cod Cliente" e "COD_CLIENTE"): va intercettato qui, non
-        // al CREATE TABLE.
         val fisici = included.map {
             try { Naming.column(it.column.name) } catch (e: Exception) { return "Colonna non utilizzabile: ${it.column.name}" }
         }
         val collisioni = fisici.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
         if (collisioni.isNotEmpty()) {
             return "Colonne che collidono dopo la normalizzazione: ${collisioni.joinToString(", ")}. Deselezionane una."
+        }
+
+        val tuttiNomiMetriche = metriche.flatMap { it.metricSelections }.map { it.nome.trim().lowercase() }
+        val duplicati = tuttiNomiMetriche.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        if (duplicati.isNotEmpty()) {
+            return "Nomi di metrica duplicati nell'analisi: ${duplicati.joinToString(", ")}"
         }
         return null
     }
@@ -459,13 +644,21 @@ class NewAnalysisWizardDialog(
         if (current != null && current in included) combo.value = current
     }
 
+    /**
+     * Aggiorna l'anteprima. Se la sorgente è già pronta così com'è, non
+     * c'è nessuna view da generare: si mostra solo cosa verrà usato.
+     */
     private fun updateSqlPreview() {
+        if (useExistingSourceAsIs) {
+            sqlPreviewArea.value = "Nessuna view da creare: verrà usata direttamente ${qualifiedSourceName()}"
+            return
+        }
         val driver = selectedDriver ?: return
         val table = selectedTable?.name ?: return
         val included = discoveredColumns.filter { it.included }
 
-        // La view deve produrre colonne con lo STESSO nome fisico usato per
-        // creare la tabella ClickHouse, altrimenti l'ETL non le trova.
+        // Ogni colonna coinvolta (filtro o base di una o più metriche) va
+        // esposta una sola volta nella view, anche se genera più metriche.
         val direct = included.mapNotNull {
             try { it.column.name to Naming.column(it.column.name) } catch (e: Exception) { null }
         }
@@ -487,6 +680,14 @@ class NewAnalysisWizardDialog(
         return if (!nome.isNullOrBlank()) Naming.viewName(nome) else "vw_lbi_nuova_analisi"
     }
 
+    /**
+     * Nome della tabella/view scelta in discovery, SENZA schema (lo schema
+     * è già salvato a parte in SourceConfig.schema).
+     */
+    private fun qualifiedSourceName(): String {
+        return selectedTable?.name ?: ""
+    }
+
     // ================= STEP 4: nome analisi + conferma =================
     private fun showStepConfirm() {
         content.removeAll()
@@ -497,7 +698,7 @@ class NewAnalysisWizardDialog(
             setWidthFull()
             addValueChangeListener { ev ->
                 val nome = ev.value
-                if (!viewNameTouched && !nome.isNullOrBlank()) {
+                if (!viewNameTouched && !nome.isNullOrBlank() && !useExistingSourceAsIs) {
                     viewNameField?.value = try { Naming.viewName(nome) } catch (e: Exception) { "" }
                 }
                 updateSqlPreview()
@@ -507,15 +708,30 @@ class NewAnalysisWizardDialog(
 
         val included = discoveredColumns.filter { it.included }
         val filtri = included.filter { it.role == "Filtro" }
-        val somme = included.filter { it.role == "Somma" }
+        val metriche = included.filter { it.role == "Metrica" }
+
+        val useExistingCheckbox = Checkbox("La sorgente selezionata è già pronta così com'è, non serve creare una nuova view").apply {
+            value = useExistingSourceAsIs
+            addValueChangeListener {
+                useExistingSourceAsIs = it.value
+                if (it.value) {
+                    viewNameField?.value = qualifiedSourceName()
+                } else if (!viewNameTouched) {
+                    viewNameField?.value = try { Naming.viewName(nomeAreaField?.value ?: "") } catch (e: Exception) { "" }
+                }
+                updateSqlPreview()
+            }
+        }
+        content.add(useExistingCheckbox)
 
         content.add(Span("Riepilogo").apply { className = "lbi-wizard-label" })
         content.add(Span("Filtri: ${filtri.joinToString(", ") { it.column.name }}"))
-        content.add(Span("Somme: ${somme.joinToString(", ") { it.column.name }}"))
+        content.add(Span(
+            "Metriche: " + metriche.joinToString("; ") { col ->
+                "${col.column.name} → " + col.metricSelections.joinToString(", ") { "${it.nome} (${aggregationLabel(it.tipo)})" }
+            }
+        ))
 
-        // Mostra quali filtri riusano una dimensione già esistente: è
-        // informazione che serve all'utente per capire se sta creando
-        // un duplicato involontario.
         val riusate = filtri.mapNotNull { f ->
             registryService.findDimensioneByNomeFisico(f.column.name)?.let { "${f.column.name} → ${it.nome}" }
         }
@@ -526,6 +742,7 @@ class NewAnalysisWizardDialog(
         }
 
         content.add(sqlPreviewArea)
+        updateSqlPreview()
 
         val backButton = Button("← Indietro") { showStepDiscovery() }
         val createButton = Button("Crea Analisi") { createAreaWithSource() }
@@ -554,22 +771,21 @@ class NewAnalysisWizardDialog(
         try {
             val included = discoveredColumns.filter { it.included }
             val filtri = included.filter { it.role == "Filtro" }
-            val somme = included.filter { it.role == "Somma" }
+            val metriche = included.filter { it.role == "Metrica" }
 
-            // I nomi fisici li decide SymbolTableService via Naming: qui si
-            // passano i nomi logici e basta.
+            // La tabella ClickHouse ha una colonna fisica per colonna
+            // sorgente coinvolta in una metrica, non una per metrica: più
+            // aggregazioni sulla stessa colonna condividono la stessa
+            // colonna fisica, l'aggregazione avviene a lettura (AggregateService).
             val tabellaFisica = symbolTableService.createAreaTable(
                 nomeArea,
                 filtri.map { it.column.name },
-                somme.map { it.column.name }
+                metriche.map { it.column.name }
             )
             tabellaCreata = tabellaFisica
 
             val area = registryService.createArea(nomeArea, tabellaFisica)
 
-            // I DirectMapping si raccolgono mentre si creano gli oggetti:
-            // prima venivano ricercati a posteriori con una query dentro un
-            // ciclo, che oltre a essere N+1 esplodeva su nomi ambigui.
             val direct = mutableListOf<DirectMapping>()
 
             filtri.forEach { f ->
@@ -579,16 +795,22 @@ class NewAnalysisWizardDialog(
                 direct += DirectMapping(dimensione.id, colonna)
             }
 
-            somme.forEach { s ->
-                val colonna = Naming.column(s.column.name)
-                val metrica = registryService.addMetrica(area.id, s.column.name, colonna, "SUM")
-                direct += DirectMapping(metrica.id, colonna)
+            metriche.forEach { m ->
+                val colonna = Naming.column(m.column.name)
+                m.metricSelections.forEach { sel ->
+                    val metrica = registryService.addMetrica(
+                        areaId = area.id,
+                        nome = sel.nome,
+                        colonnaFisica = colonna,
+                        tipoAggregazione = sel.tipo
+                    )
+                    direct += DirectMapping(metrica.id, colonna)
+                }
             }
 
-            // Se si riusa una sorgente ma l'utente ha digitato una password
-            // diversa, si salva quella nuova: prima si riusava sempre la
-            // vecchia, lasciando la config disallineata.
             val encryptedPassword = cryptoService.encrypt(passwordValue)
+
+            val viewName = if (useExistingSourceAsIs) qualifiedSourceName() else currentViewName()
 
             val config = SourceConfig(
                 jdbcUrl = jdbcUrlValue,
@@ -597,7 +819,7 @@ class NewAnalysisWizardDialog(
                 driverClassName = selectedDriver!!,
                 schema = selectedSchema,
                 mainTable = selectedTable!!.name,
-                viewName = currentViewName(),
+                viewName = viewName,
                 directMappings = direct,
                 lookups = emptyList(),
                 syncMode = SyncMode.FULL_RELOAD
@@ -615,17 +837,15 @@ class NewAnalysisWizardDialog(
                 )
             )
 
-            Notification.show(
-                "Analisi \"$nomeArea\" creata. Consegna l'SQL al DBA o crea la view automaticamente, poi verifica la sorgente da \"Sorgenti Dati\".",
-                6000, Notification.Position.MIDDLE
-            )
+            val messaggio = if (useExistingSourceAsIs) {
+                "Analisi \"$nomeArea\" creata. La sorgente è quella già esistente: premi \"Verifica sorgente\" per controllare che esponga le colonne attese."
+            } else {
+                "Analisi \"$nomeArea\" creata. Consegna l'SQL al DBA o crea la view automaticamente, poi verifica la sorgente."
+            }
+            Notification.show(messaggio, 6000, Notification.Position.MIDDLE)
             onAreaCreated()
             close()
         } catch (e: Exception) {
-            // La tabella ClickHouse non partecipa alla transazione Postgres:
-            // se il salvataggio fallisce va rimossa a mano, altrimenti resta
-            // orfana e il tentativo successivo trova una tabella già esistente
-            // con uno schema potenzialmente diverso.
             tabellaCreata?.let {
                 try { symbolTableService.dropTable(it) } catch (_: Exception) { }
             }

@@ -2,6 +2,7 @@ package com.lightningbi.lightning_engine.etl
 
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
+import java.sql.Connection
 import java.sql.Timestamp
 
 @Component
@@ -9,9 +10,21 @@ class JdbcExtractor : ExtractorPort {
 
     private val log = LoggerFactory.getLogger(JdbcExtractor::class.java)
 
-    /** Colonna tecnica che la view espone sempre, usata per il filtro incrementale. */
+    /** Colonna tecnica opzionale, usata solo per il filtro incrementale. */
     private val updatedAtAlias = "lbi_updated_at"
 
+    /**
+     * @param config deve contenere jdbcUrl, username, password, driverClassName, viewName
+     * @param lastSync timestamp da cui filtrare. Se null, o se la view non
+     *   espone lbi_updated_at, si estrae tutto (comportamento FULL_RELOAD).
+     *
+     * La colonna lbi_updated_at non è più obbligatoria. Molte view collegate
+     * a LightningBI sono view aziendali preesistenti, scritte per altri
+     * scopi molto prima che esistesse questo motore: pretendere che
+     * espongano una colonna tecnica in più le renderebbe automaticamente
+     * incompatibili. La modalità FULL_RELOAD (ricarico completo ogni volta)
+     * non ha comunque bisogno di sapere cosa è cambiato, quindi non le serve.
+     */
     override fun extract(config: Map<String, Any>, lastSync: String?): Sequence<Map<String, Any?>> {
         val jdbcUrl = config["jdbcUrl"] as String
         val username = config["username"] as String
@@ -21,33 +34,35 @@ class JdbcExtractor : ExtractorPort {
 
         Class.forName(driverClassName)
 
-        val query = "SELECT * FROM $viewName WHERE $updatedAtAlias > ?"
-
         return sequence {
             java.sql.DriverManager.getConnection(jdbcUrl, username, password).use { conn ->
+                val availableColumns = probeColumns(conn, viewName)
+                val hasUpdatedAt = updatedAtAlias in availableColumns
+
+                // Il filtro incrementale si applica solo se richiesto
+                // (lastSync non null) E la colonna esiste davvero sulla
+                // view. Una sorgente FULL_RELOAD, o anche una INCREMENTAL
+                // la cui view preesistente non ha mai avuto quella colonna,
+                // viene estratta per intero senza errori.
+                val incrementale = lastSync != null && hasUpdatedAt
+                val query = if (incrementale) {
+                    "SELECT * FROM $viewName WHERE $updatedAtAlias > ?"
+                } else {
+                    "SELECT * FROM $viewName"
+                }
+
                 conn.prepareStatement(query).use { stmt ->
                     stmt.fetchSize = 5000
-                    stmt.setTimestamp(1, Timestamp.valueOf(lastSync ?: "1900-01-01 00:00:00"))
+                    if (incrementale) {
+                        stmt.setTimestamp(1, Timestamp.valueOf(lastSync))
+                    }
                     stmt.executeQuery().use { rs ->
                         val meta = rs.metaData
 
-                        // getColumnLabel, non getColumnName.
-                        //
-                        // Su una colonna con alias (SELECT COD_CLI AS cod_cli)
-                        // getColumnName può restituire il nome della colonna
-                        // sottostante invece dell'alias, a seconda del driver:
-                        // il comportamento non è garantito dallo standard JDBC.
-                        // getColumnLabel restituisce sempre l'alias quando c'è.
-                        // Dato che l'intero mapping dell'ETL si regge sugli
-                        // alias della view, prendere il nome sbagliato
-                        // significherebbe non trovare nessuna colonna e
-                        // caricare una tabella di null.
-                        //
-                        // Il lowercase serve perché alcuni driver (SQL Server,
-                        // Oracle) possono restituire l'etichetta in maiuscolo
-                        // anche quando la view la dichiara minuscola: le chiavi
-                        // devono combaciare con colonnaFisica, che è sempre
-                        // normalizzata da Naming.
+                        // getColumnLabel, non getColumnName: vedi nota
+                        // originale, invariata. Il lowercase per far
+                        // combaciare le chiavi con colonnaFisica normalizzata
+                        // da Naming.
                         val columnLabels = (1..meta.columnCount).map {
                             meta.getColumnLabel(it).lowercase()
                         }
@@ -59,13 +74,11 @@ class JdbcExtractor : ExtractorPort {
                                         "${duplicati.joinToString(", ")}. Ogni colonna deve avere un alias univoco."
                             )
                         }
-                        if (updatedAtAlias !in columnLabels) {
-                            throw IllegalStateException(
-                                "La view $viewName non espone la colonna $updatedAtAlias, necessaria per la sincronizzazione."
-                            )
-                        }
 
-                        log.debug("Estrazione da {}: colonne {}", viewName, columnLabels)
+                        log.debug(
+                            "Estrazione da {}: colonne {}, incrementale={}",
+                            viewName, columnLabels, incrementale
+                        )
 
                         var count = 0L
                         while (rs.next()) {
@@ -79,6 +92,20 @@ class JdbcExtractor : ExtractorPort {
                         log.debug("Estrazione da {}: {} righe", viewName, count)
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * Legge le colonne esposte dalla view senza materializzare righe (WHERE
+     * 1=0), per decidere se il filtro incrementale è applicabile prima di
+     * costruire la query definitiva.
+     */
+    private fun probeColumns(conn: Connection, viewName: String): Set<String> {
+        conn.prepareStatement("SELECT * FROM $viewName WHERE 1 = 0").use { stmt ->
+            stmt.executeQuery().use { rs ->
+                val meta = rs.metaData
+                return (1..meta.columnCount).map { meta.getColumnLabel(it).lowercase() }.toSet()
             }
         }
     }

@@ -2,6 +2,7 @@ package com.lightningbi.lightning_engine.service
 
 import com.lightningbi.lightning_engine.model.AreaSource
 import com.lightningbi.lightning_engine.model.SourceStatus
+import com.lightningbi.lightning_engine.model.SyncMode
 import com.lightningbi.lightning_engine.repository.AreaSourceRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import org.slf4j.LoggerFactory
@@ -17,11 +18,13 @@ import java.util.UUID
  * come una tabella piena di zeri: la view non è mai stata creata dal DBA,
  * oppure è stata creata con alias diversi da quelli generati dal wizard.
  *
- * La logica viveva dentro ConfigSourceDialog e confrontava i NOMI LOGICI
- * di dimensioni e metriche, normalizzati con una funzione di slug locale.
- * È sbagliato da quando gli alias della view derivano dal nome della
- * COLONNA sorgente: l'unica fonte corretta è colonnaFisica nel registry,
- * che è esattamente ciò che l'ETL andrà a cercare.
+ * La colonna di sincronizzazione (lbi_updated_at) è attesa SOLO in modalità
+ * incrementale. In FULL_RELOAD non serve: si ricarica tutto ogni volta,
+ * quindi non c'è bisogno di sapere cosa è cambiato. Questo è il caso comune
+ * di view aziendali preesistenti, scritte per altri scopi molto prima che
+ * esistesse LightningBI - pretendere che espongano una colonna tecnica in
+ * più le renderebbe automaticamente incompatibili con l'analisi, forzando
+ * a riscrivere SQL già in produzione da anni solo per collegarle qui.
  */
 @Service
 class SourceVerificationService(
@@ -32,8 +35,8 @@ class SourceVerificationService(
 ) {
     private val log = LoggerFactory.getLogger(SourceVerificationService::class.java)
 
-    /** Colonna tecnica che ogni view deve esporre per il filtro incrementale. */
-    private val updatedAtAlias = "lbi_updated_at"
+    /** Colonna tecnica richiesta solo per il filtro incrementale. */
+    val updatedAtAlias = "lbi_updated_at"
 
     data class VerificationResult(
         val source: AreaSource,
@@ -44,13 +47,14 @@ class SourceVerificationService(
     /**
      * Colonne che la view deve esporre per alimentare l'area.
      * Sono le stesse chiavi che TransformService cercherà nelle righe estratte.
+     * lbi_updated_at è incluso solo se la sorgente sincronizza in modalità
+     * incrementale.
      */
-    fun expectedColumns(areaId: UUID): List<String> {
+    fun expectedColumns(areaId: UUID, syncMode: SyncMode): List<String> {
         val dimensioni = registryRepository.findDimensioniByArea(areaId).map { it.colonnaFisica }
-        val metriche = registryRepository.findMetricheByArea(areaId).map { it.colonnaFisica }
-        // distinct: una stessa colonna non può comparire due volte, ma se il
-        // registry fosse incoerente meglio non chiedere due volte la stessa.
-        return (dimensioni + metriche).distinct() + updatedAtAlias
+        val metriche = registryRepository.findMetricheByArea(areaId).mapNotNull { it.colonnaFisica }
+        val base = (dimensioni + metriche).distinct()
+        return if (syncMode == SyncMode.INCREMENTAL) base + updatedAtAlias else base
     }
 
     /** Verifica tutte le sorgenti di un'area. */
@@ -65,10 +69,9 @@ class SourceVerificationService(
      * qui non si sta configurando nulla di nuovo.
      */
     fun verify(source: AreaSource): VerificationResult {
-        val attese = expectedColumns(source.areaId)
+        val attese = expectedColumns(source.areaId, source.config.syncMode)
 
-        if (attese.size == 1) {
-            // Solo lbi_updated_at: l'area non ha dimensioni né metriche.
+        if (attese.isEmpty()) {
             return persist(source, false, "L'analisi non ha filtri né somme configurati")
         }
 
@@ -81,7 +84,10 @@ class SourceVerificationService(
                     conn, source.config.schema, source.config.viewName, attese
                 )
                 if (ok) {
-                    persist(source, true, "View ${source.config.viewName} verificata: ${attese.size} colonne attese trovate")
+                    val nota = if (source.config.syncMode == SyncMode.FULL_RELOAD)
+                        " (ricarico completo ad ogni sincronizzazione: nessuna colonna di data richiesta)"
+                    else ""
+                    persist(source, true, "View ${source.config.viewName} verificata: ${attese.size} colonne attese trovate$nota")
                 } else {
                     persist(source, false, error ?: "La view non espone tutte le colonne attese")
                 }
