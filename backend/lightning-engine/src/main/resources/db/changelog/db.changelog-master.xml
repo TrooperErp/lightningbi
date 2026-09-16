@@ -13,4 +13,5 @@
 	<include file="db/changelog/007-area-source-status.xml"/>
 	<include file="db/changelog/008-charts.xml"/>
 	<include file="db/changelog/009-metric-model.xml"/>
+	<include file="db/changelog/010-chart-metrics.xml"/>
 </databaseChangeLog>

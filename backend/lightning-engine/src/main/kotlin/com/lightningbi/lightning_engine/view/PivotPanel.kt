@@ -135,7 +135,10 @@ class PivotPanel(
     }
 
     /** Chip già posizionato in una zona: frecce per riordinare, x per rimuovere. */
+    /** Chip già posizionato in una zona: frecce per riordinare, x per rimuovere. */
     private fun buildZoneChip(field: Field, list: MutableList<Field>, index: Int): HorizontalLayout {
+        val label = Span(field.label).apply { className = "lbi-pivot-chip-label" }
+
         val upButton = Button(Icon(VaadinIcon.ARROW_UP)) {
             if (index > 0) {
                 list.removeAt(index)
@@ -143,7 +146,10 @@ class PivotPanel(
                 renderAll()
                 fireChange()
             }
-        }.apply { isEnabled = index > 0 }
+        }.apply {
+            isEnabled = index > 0
+            className = "lbi-pivot-chip-btn"
+        }
 
         val downButton = Button(Icon(VaadinIcon.ARROW_DOWN)) {
             if (index < list.size - 1) {
@@ -152,16 +158,19 @@ class PivotPanel(
                 renderAll()
                 fireChange()
             }
-        }.apply { isEnabled = index < list.size - 1 }
+        }.apply {
+            isEnabled = index < list.size - 1
+            className = "lbi-pivot-chip-btn"
+        }
 
         val removeButton = Button(Icon(VaadinIcon.CLOSE_SMALL)) {
             list.removeAt(index)
             renderAll()
             fireChange()
-        }
+        }.apply { className = "lbi-pivot-chip-btn lbi-pivot-chip-btn-remove" }
 
-        return HorizontalLayout(Span(field.label), upButton, downButton, removeButton).apply {
-            className = "lbi-pivot-zone-item"
+        return HorizontalLayout(label, upButton, downButton, removeButton).apply {
+            className = "lbi-pivot-zone-chip"
             isPadding = false
         }
     }

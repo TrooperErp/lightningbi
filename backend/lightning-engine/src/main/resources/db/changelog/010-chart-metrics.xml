@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Il grafico non salva più la propria dimensione di raggruppamento
+      (group_by_dim_id): la eredita sempre dal pivot corrente della
+      pagina, non è una scelta indipendente del grafico. Un grafico
+      salva solo COME mostrare i dati (tipo, quali metriche, ordine),
+      non COSA raggruppare - quello lo decide il pivot in quel momento.
+
+      Le metriche di un grafico sono più di una (es. costo e ricavo come
+      barre affiancate), quindi vivono in una tabella di giunzione, non
+      in una singola colonna: coerente con lbi_area_dimensione e
+      lbi_area_metrica, e permette query dirette tipo "quali grafici
+      usano questa metrica" quando si valuta l'impatto di una modifica.
+    -->
+    <changeSet id="22" author="lightningbi">
+        <createTable tableName="lbi_area_chart_metrica">
+            <column name="chart_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="metrica_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Ordine della serie nel grafico (prima barra, seconda barra...) -->
+            <column name="posizione" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey
+                tableName="lbi_area_chart_metrica"
+                columnNames="chart_id, metrica_id"/>
+    </changeSet>
+
+    <!--
+      group_by_dim_id e metrica_id (singola) non servono più: il primo
+      perché il grafico ora eredita le Righe dal pivot, il secondo perché
+      sostituito dalla tabella di giunzione appena creata.
+    -->
+    <changeSet id="23" author="lightningbi">
+        <dropColumn tableName="lbi_area_chart" columnName="group_by_dim_id"/>
+        <dropColumn tableName="lbi_area_chart" columnName="metrica_id"/>
+    </changeSet>
+
+</databaseChangeLog>

@@ -3,7 +3,9 @@ package com.lightningbi.lightning_engine.service
 import com.lightningbi.lightning_engine.model.AggregateOrder
 import com.lightningbi.lightning_engine.model.AggregateRequest
 import com.lightningbi.lightning_engine.model.AreaChart
+import com.lightningbi.lightning_engine.model.AreaChartMetrica
 import com.lightningbi.lightning_engine.model.ChartData
+import com.lightningbi.lightning_engine.model.ChartSeries
 import com.lightningbi.lightning_engine.model.ChartType
 import com.lightningbi.lightning_engine.repository.AreaChartRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
@@ -19,56 +21,74 @@ class ChartService(
 ) {
     private val log = LoggerFactory.getLogger(ChartService::class.java)
 
-    /**
-     * Oltre questa soglia un grafico smette di essere leggibile: 200 barre
-     * su uno schermo sono pixel, non informazione. È un limite di
-     * presentazione, non di sistema: il limite di AggregateService resta
-     * molto più alto per la grid.
-     */
     private val maxPunti = 100
-
-    /** Un PIE con troppe fette è illeggibile: sotto questa soglia resta usabile. */
     private val maxFettePie = 12
 
     // ===================== lettura dati =====================
 
-    /** Tutti i grafici di un'Analisi, con i dati calcolati sulle selezioni correnti. */
-    fun getChartsData(areaId: UUID, selections: Map<UUID, Set<Long>>): List<ChartData> =
-        areaChartRepository.findByArea(areaId).mapNotNull { chart ->
+    /**
+     * Tutti i grafici di un'Analisi, calcolati sulle Righe del pivot
+     * correnti e sulle selezioni della sessione.
+     *
+     * pivotRows non è più letto dal grafico stesso: il grafico non ha una
+     * propria dimensione di raggruppamento, la eredita sempre da qui. Se
+     * pivotRows è vuoto (nessuna dimensione in Righe, il caso "totale
+     * unico"), non c'è nessun asse su cui disegnare un grafico a barre o
+     * linee: la lista torna vuota, la UI mostra il messaggio invece di
+     * provare a disegnare qualcosa privo di senso.
+     */
+    fun getChartsData(
+        areaId: UUID,
+        pivotRows: List<UUID>,
+        selections: Map<UUID, Set<Long>>
+    ): List<ChartData> {
+        if (pivotRows.isEmpty()) return emptyList()
+
+        return areaChartRepository.findByArea(areaId).mapNotNull { chart ->
             try {
-                getChartData(chart, selections)
+                getChartData(chart, pivotRows, selections)
             } catch (e: Exception) {
-                // Un grafico rotto (dimensione rimossa, metrica cancellata)
-                // non deve far fallire l'intera dashboard: si logga e si
-                // mostrano gli altri.
                 log.warn("Grafico '{}' ({}) non calcolabile, escluso dalla dashboard", chart.titolo, chart.id, e)
                 null
             }
         }
+    }
 
-    /** Dati di un singolo grafico, calcolati sulle selezioni correnti della sessione. */
-    fun getChartData(chart: AreaChart, selections: Map<UUID, Set<Long>>): ChartData {
-        val metrica = registryRepository.findMetricheByArea(chart.areaId)
-            .find { it.id == chart.metricaId }
-            ?: error("Metrica ${chart.metricaId} non più presente nell'area ${chart.areaId}")
-
-        val dimensionePresente = registryRepository.findDimensioniByArea(chart.areaId)
-            .any { it.dimensioneId == chart.groupByDimId }
-        require(dimensionePresente) {
-            "Dimensione ${chart.groupByDimId} non più collegata all'area ${chart.areaId}"
+    /** Dati di un singolo grafico, calcolati sulle Righe del pivot correnti. */
+    fun getChartData(
+        chart: AreaChart,
+        pivotRows: List<UUID>,
+        selections: Map<UUID, Set<Long>>
+    ): ChartData {
+        require(pivotRows.isNotEmpty()) {
+            "Il grafico '${chart.titolo}' richiede almeno una dimensione in Righe"
         }
 
-        // Il limite effettivo è il più stretto fra quello scelto dall'utente
-        // e quello di leggibilità: un grafico che chiede 5000 punti va
-        // comunque tagliato, altrimenti il browser si pianta.
+        val chartMetriche = areaChartRepository.findMetricheByChart(chart.id)
+        require(chartMetriche.isNotEmpty()) {
+            "Il grafico '${chart.titolo}' non ha metriche configurate"
+        }
+
+        val tutteMetriche = registryRepository.findMetricheByArea(chart.areaId)
+        val metricheOrdinate = chartMetriche.mapNotNull { cm ->
+            tutteMetriche.find { it.id == cm.metricaId }
+        }
+        require(metricheOrdinate.size == chartMetriche.size) {
+            "Il grafico '${chart.titolo}' referenzia metriche non più presenti nell'area"
+        }
+
+        // Il limite di leggibilità è il più stretto fra quello scelto
+        // dall'utente e quello del tipo di grafico: una torta con 5000
+        // fette è illeggibile quanto una barra con 5000 colonne, ma la
+        // soglia di leggibilità è diversa per i due casi.
         val limiteLeggibilita = if (chart.tipo == ChartType.PIE) maxFettePie else maxPunti
         val limit = minOf(chart.maxItems ?: limiteLeggibilita, limiteLeggibilita)
 
-        // Il top-N deve essere calcolato dal database sulla metrica, non
-        // tagliando in memoria: con ordinamento per dimensione si otterrebbero
-        // le prime N in ordine alfabetico, non le N più grandi.
-        val serve = chart.maxItems != null && chart.maxItems < Int.MAX_VALUE
-        val ordinePerQuery = if (serve && chart.orderBy == AggregateOrder.DIMENSION) {
+        val ordinePerQuery = if (chart.orderBy == AggregateOrder.DIMENSION && limit < Int.MAX_VALUE) {
+            // Con top-N e ordinamento per dimensione richiesto, si estrae
+            // comunque per la prima metrica decrescente (altrimenti il
+            // taglio prenderebbe le prime N in ordine alfabetico, non le
+            // N più rilevanti), poi si riordina in memoria dopo.
             AggregateOrder.METRIC_DESC
         } else {
             chart.orderBy
@@ -78,45 +98,54 @@ class ChartService(
             AggregateRequest(
                 areaId = chart.areaId,
                 selections = selections,
-                groupBy = listOf(chart.groupByDimId),
-                metricIds = listOf(chart.metricaId),
+                groupBy = pivotRows,
+                metricIds = metricheOrdinate.map { it.id },
                 order = ordinePerQuery,
-                orderMetricId = if (ordinePerQuery != AggregateOrder.DIMENSION) chart.metricaId else null,
+                orderMetricId = if (ordinePerQuery != AggregateOrder.DIMENSION) metricheOrdinate.first().id else null,
                 limit = limit,
                 resolveLabels = true
             )
         )
 
-        // Se il top-N è stato estratto per metrica ma l'utente voleva le
-        // etichette in ordine alfabetico/cronologico, si riordina ora: sono
-        // al massimo maxPunti righe, il costo è trascurabile.
-        val rows = if (serve && chart.orderBy == AggregateOrder.DIMENSION) {
-            result.rows.sortedBy { it.labels[chart.groupByDimId] ?: "" }
+        val rows = if (ordinePerQuery != chart.orderBy) {
+            // Riordino per etichetta dopo l'estrazione per metrica, come
+            // sopra: le righe risultanti sono al massimo "limit", il costo
+            // è trascurabile.
+            result.rows.sortedBy { row -> labelFor(row, pivotRows) }
         } else {
             result.rows
         }
 
-        val labels = rows.map { row ->
-            // Se la symbol table è disallineata rispetto ai fatti l'etichetta
-            // manca: si mostra l'id grezzo invece di far sparire la barra,
-            // così il problema è visibile invece che silenzioso.
-            row.labels[chart.groupByDimId]
-                ?: row.groupKeys[chart.groupByDimId]?.let { "#$it" }
-                ?: "—"
-        }
+        val labels = rows.map { row -> labelFor(row, pivotRows) }
 
-        val values = rows.map { row ->
-            (row.values[metrica.nome] ?: java.math.BigDecimal.ZERO).toDouble()
+        // Una serie per metrica, nell'ordine dichiarato in AreaChartMetrica:
+        // è questo che permette le barre affiancate (costo/ricavo) di cui
+        // parlavamo, non una singola serie come nella versione precedente.
+        val series = metricheOrdinate.map { metrica ->
+            ChartSeries(
+                metricaNome = metrica.nome,
+                values = rows.map { row -> (row.values[metrica.nome] ?: java.math.BigDecimal.ZERO).toDouble() }
+            )
         }
 
         return ChartData(
             chart = chart,
             labels = labels,
-            values = values,
-            metricaNome = metrica.nome,
+            series = series,
             truncated = result.truncated
         )
     }
+
+    /**
+     * Etichetta composita per una riga: se le Righe del pivot hanno più di
+     * una dimensione, le etichette si concatenano (es. "Azienda 1 - 2023").
+     * Se manca l'etichetta per un value_id (symbol table disallineata), si
+     * mostra l'id grezzo invece di far sparire la barra silenziosamente.
+     */
+    private fun labelFor(row: com.lightningbi.lightning_engine.model.AggregateRow, pivotRows: List<UUID>): String =
+        pivotRows.joinToString(" - ") { dimId ->
+            row.labels[dimId] ?: row.groupKeys[dimId]?.let { "#$it" } ?: "—"
+        }
 
     // ===================== gestione configurazione =====================
 
@@ -124,48 +153,64 @@ class ChartService(
 
     fun findById(id: UUID): AreaChart? = areaChartRepository.findById(id)
 
+    fun getMetricheDelGrafico(chartId: UUID): List<AreaChartMetrica> =
+        areaChartRepository.findMetricheByChart(chartId)
+
     /**
-     * Crea un grafico validando che dimensione e metrica appartengano
-     * davvero all'area: senza FK nel registry, il controllo sta qui.
+     * Tipi di grafico ammessi in base al contesto corrente: PIE ha senso
+     * solo con esattamente una dimensione di raggruppamento e una sola
+     * metrica, altrimenti sparisce dalle opzioni proposte invece di
+     * restare selezionabile con un risultato senza senso.
+     */
+    fun tipiAmmessi(pivotRowsCount: Int, metricheCount: Int): List<ChartType> {
+        val base = listOf(ChartType.BAR, ChartType.LINE, ChartType.AREA)
+        return if (pivotRowsCount == 1 && metricheCount == 1) base + ChartType.PIE else base
+    }
+
+    /**
+     * Crea un grafico validando che le metriche appartengano davvero
+     * all'area: senza FK nel registry, il controllo sta qui.
      */
     fun create(
         areaId: UUID,
         titolo: String,
         tipo: ChartType,
-        groupByDimId: UUID,
-        metricaId: UUID,
+        metricaIds: List<UUID>,
         orderBy: AggregateOrder = AggregateOrder.DIMENSION,
         maxItems: Int? = null
     ): AreaChart {
-        validate(areaId, titolo, groupByDimId, metricaId, maxItems)
+        validate(areaId, titolo, metricaIds)
         val chart = AreaChart(
             id = UUID.randomUUID(),
             areaId = areaId,
             titolo = titolo.trim(),
             tipo = tipo,
-            groupByDimId = groupByDimId,
-            metricaId = metricaId,
             orderBy = orderBy,
             maxItems = maxItems,
             posizione = areaChartRepository.nextPosizione(areaId)
         )
-        return areaChartRepository.save(chart)
+        areaChartRepository.save(chart)
+        areaChartRepository.replaceMetriche(
+            chart.id,
+            metricaIds.mapIndexed { i, mid -> AreaChartMetrica(chart.id, mid, i) }
+        )
+        return chart
     }
 
-    fun update(chart: AreaChart): AreaChart {
-        validate(chart.areaId, chart.titolo, chart.groupByDimId, chart.metricaId, chart.maxItems)
-        return areaChartRepository.update(chart)
+    fun update(chart: AreaChart, metricaIds: List<UUID>): AreaChart {
+        validate(chart.areaId, chart.titolo, metricaIds)
+        areaChartRepository.update(chart)
+        areaChartRepository.replaceMetriche(
+            chart.id,
+            metricaIds.mapIndexed { i, mid -> AreaChartMetrica(chart.id, mid, i) }
+        )
+        return chart
     }
 
     fun delete(id: UUID): Boolean = areaChartRepository.delete(id)
 
-    /** Da chiamare quando si elimina un'Analisi: senza FK nessuno lo fa al posto nostro. */
     fun deleteByArea(areaId: UUID): Int = areaChartRepository.deleteByArea(areaId)
 
-    /**
-     * Riordina i grafici nella dashboard.
-     * Riceve gli id nell'ordine desiderato e riassegna le posizioni.
-     */
     fun reorder(areaId: UUID, idsInOrder: List<UUID>) {
         val existing = areaChartRepository.findByArea(areaId).associateBy { it.id }
         idsInOrder.forEachIndexed { index, id ->
@@ -177,15 +222,11 @@ class ChartService(
         }
     }
 
-    private fun validate(areaId: UUID, titolo: String, groupByDimId: UUID, metricaId: UUID, maxItems: Int?) {
+    private fun validate(areaId: UUID, titolo: String, metricaIds: List<UUID>) {
         require(titolo.isNotBlank()) { "Il titolo del grafico è obbligatorio" }
         require(registryRepository.findAreaById(areaId) != null) { "Analisi $areaId inesistente" }
-        require(registryRepository.findDimensioniByArea(areaId).any { it.dimensioneId == groupByDimId }) {
-            "La dimensione scelta non appartiene a questa Analisi"
-        }
-        require(registryRepository.findMetricheByArea(areaId).any { it.id == metricaId }) {
-            "La metrica scelta non appartiene a questa Analisi"
-        }
-        maxItems?.let { require(it > 0) { "Il numero massimo di elementi deve essere positivo" } }
+        require(metricaIds.isNotEmpty()) { "Il grafico deve avere almeno una metrica" }
+        val metricheArea = registryRepository.findMetricheByArea(areaId).map { it.id }.toSet()
+        require(metricaIds.all { it in metricheArea }) { "Una o più metriche non appartengono a questa Analisi" }
     }
 }

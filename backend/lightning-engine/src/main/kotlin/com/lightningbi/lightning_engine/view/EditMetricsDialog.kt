@@ -63,14 +63,14 @@ class EditMetricsDialog(
 
             addComponentColumn { metrica ->
                 HorizontalLayout(
-                    Button(Icon(VaadinIcon.EDIT)) { openEditRow(metrica) }.apply {
-                        addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL)
+                    Button("✎") { openEditRow(metrica) }.apply {
+                        addThemeVariants(ButtonVariant.LUMO_SMALL)
                     },
-                    Button(Icon(VaadinIcon.TRASH)) { confirmDelete(metrica) }.apply {
-                        addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_ERROR)
+                    Button("🗑") { confirmDelete(metrica) }.apply {
+                        addThemeVariants(ButtonVariant.LUMO_SMALL)
                     }
                 ).apply { isPadding = false }
-            }.setHeader("")
+            }.setHeader("").setAutoWidth(true).setFlexGrow(0)
         }
 
         val addButton = Button("+ Nuova metrica su colonna esistente") { openAddDialog() }
@@ -143,24 +143,27 @@ class EditMetricsDialog(
     }
 
     private fun confirmDelete(metrica: AreaMetrica) {
-        ConfirmDialog(
-            "Eliminare \"${metrica.nome}\"?",
-            "La metrica sparirà dalla griglia e dai grafici che la usano. L'operazione non è reversibile da qui.",
-            "Elimina",
-            { _ ->
-                try {
-                    registryService.deleteMetrica(metrica.id)
-                    reload()
-                    onChanged()
-                } catch (e: Exception) {
-                    Notification.show("Errore: ${e.message}", 5000, Notification.Position.MIDDLE)
-                }
-            },
-            "Annulla",
-            { _ -> }
-        ).open()
+        val dialog = Dialog().apply {
+            headerTitle = "Eliminare \"${metrica.nome}\"?"
+            width = "440px"
+        }
+        dialog.add(
+            Span("La metrica sparirà dalla griglia e dai grafici che la usano. L'operazione non è reversibile da qui.")
+        )
+        val cancelButton = Button("Annulla") { dialog.close() }
+        val confirmButton = Button("Elimina") {
+            try {
+                registryService.deleteMetrica(metrica.id)
+                reload()
+                onChanged()
+            } catch (e: Exception) {
+                Notification.show("Errore: ${e.message}", 5000, Notification.Position.MIDDLE)
+            }
+            dialog.close()
+        }
+        dialog.footer.add(cancelButton, confirmButton)
+        dialog.open()
     }
-
     // ================= Aggiunta nuova metrica =================
 
     /**

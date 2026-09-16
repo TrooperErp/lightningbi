@@ -25,6 +25,7 @@ import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.confirmdialog.ConfirmDialog
 import com.vaadin.flow.component.dialog.Dialog
 import com.vaadin.flow.component.grid.Grid
+import com.vaadin.flow.component.html.Div
 import com.vaadin.flow.component.html.Image
 import com.vaadin.flow.component.html.Span
 import com.vaadin.flow.component.listbox.MultiSelectListBox
@@ -67,6 +68,11 @@ class AssociativeExplorerView(
     private val selections = mutableMapOf<UUID, Set<Long>>()
     private val dimensionBoxes = mutableMapOf<UUID, MultiSelectListBox<Long>>()
     private val currentItems = mutableMapOf<UUID, List<Long>>()
+    private val dimensionNames = mutableMapOf<UUID, String>()
+    // Colonna fisica di ogni dimensione nell'area: serve a rigenerare
+    // l'etichetta "nome (colonna)" quando ricostruiamo le card in base al
+    // pivot, senza dover riconsultare il registry ogni volta.
+    private val dimensionColumns = mutableMapOf<UUID, String>()
 
     private var pivotRows: List<UUID> = emptyList()
     private var pivotValues: List<UUID> = emptyList()
@@ -75,13 +81,10 @@ class AssociativeExplorerView(
     private val requestCounter = AtomicLong(0)
     private val resultsGrid = Grid<AggregateRow>()
     private val filtersColumn = VerticalLayout()
+    private val activeSelectionsBar = Div().apply { className = "lbi-active-selections" }
     private val sidebar = LbiSidebarMenu()
     private val sourceStatusLabel = Span().apply { className = "lbi-source-status" }
 
-    // Stato corrente della sorgente dell'area aperta, usato per decidere
-    // quali voci del gruppo "Gestisci" in sidebar sono abilitate. Ricalcolato
-    // da refreshSourceStatus() e riletto da buildMenuGroups() ogni volta
-    // che la sidebar viene ridisegnata.
     private var sourceStatus: SourceStatus? = null
     private var hasSource: Boolean = false
 
@@ -151,7 +154,9 @@ class AssociativeExplorerView(
         }
 
         filtersColumn.className = "lbi-filters-column"
+        filtersColumn.width = "350px"
         filtersColumn.height = "100%"
+        filtersColumn.add(activeSelectionsBar)
 
         val body = HorizontalLayout(sidebar, centerArea, filtersColumn).apply {
             className = "lbi-body"
@@ -167,20 +172,11 @@ class AssociativeExplorerView(
         setFlexGrow(0.0, topMenuBar)
         setFlexGrow(1.0, body)
 
-        if (currentAreas.isNotEmpty()) {
-            switchArea(currentAreas.first().id)
-        }
+        // Nessuna analisi aperta all'avvio.
     }
 
-    // ================= Sidebar: menu "Gestisci" incluso =================
+    // ================= Sidebar =================
 
-    /**
-     * Tutte le voci di navigazione e di gestione dell'analisi vivono qui,
-     * nella sidebar - non in un menu separato sopra i risultati. Le voci
-     * di "Gestisci" sono abilitate/disabilitate in base a sourceStatus e
-     * hasSource, aggiornati da refreshSourceStatus() prima di ogni
-     * ricostruzione della sidebar.
-     */
     private fun buildMenuGroups(): List<LbiSidebarMenu.MenuGroup> {
         val groups = mutableListOf(
             LbiSidebarMenu.MenuGroup(
@@ -214,9 +210,7 @@ class AssociativeExplorerView(
             LbiSidebarMenu.MenuGroup(
                 label = "Amministrazione",
                 entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Gestione utenti") {
-                        Notification.show("Funzione in arrivo")
-                    }
+                    LbiSidebarMenu.MenuEntry("Gestione utenti") { Notification.show("Funzione in arrivo") }
                 )
             )
         )
@@ -224,9 +218,7 @@ class AssociativeExplorerView(
             LbiSidebarMenu.MenuGroup(
                 label = "Report",
                 entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Stampe") {
-                        Notification.show("Funzione in arrivo")
-                    }
+                    LbiSidebarMenu.MenuEntry("Stampe") { Notification.show("Funzione in arrivo") }
                 )
             )
         )
@@ -254,8 +246,6 @@ class AssociativeExplorerView(
             else -> "View da creare sul database di origine (${source.config.viewName})"
         }
 
-        // La sidebar va ricostruita ad ogni cambio di stato, perché le
-        // voci abilitate/disabilitate dipendono da hasSource/sourceStatus.
         sidebar.setGroups(buildMenuGroups())
     }
 
@@ -384,12 +374,7 @@ class AssociativeExplorerView(
         currentAreas = registryRepository.findAllAree()
         if (areaId == targetAreaId) {
             areaId = null
-            selections.clear()
-            dimensionBoxes.clear()
-            currentItems.clear()
-            filtersColumn.removeAll()
-            resultsGrid.setItems(emptyList())
-            resultsGrid.removeAllColumns()
+            resetAreaState()
             currentAreas.firstOrNull()?.let { switchArea(it.id) } ?: refreshSourceStatus()
         } else {
             sidebar.setGroups(buildMenuGroups())
@@ -413,7 +398,6 @@ class AssociativeExplorerView(
         super.onAttach(attachEvent)
         viewScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         refreshSourceStatus()
-        refresh()
     }
 
     override fun onDetach(detachEvent: DetachEvent) {
@@ -422,15 +406,34 @@ class AssociativeExplorerView(
         super.onDetach(detachEvent)
     }
 
-    private fun switchArea(newAreaId: UUID) {
-        areaId = newAreaId
+    private fun resetAreaState() {
         selections.clear()
         dimensionBoxes.clear()
         currentItems.clear()
+        dimensionNames.clear()
+        dimensionColumns.clear()
+        pivotRows = emptyList()
+        pivotValues = emptyList()
         filtersColumn.removeAll()
+        filtersColumn.add(activeSelectionsBar)
+        renderActiveSelections(emptyMap(), emptyMap())
         resultsGrid.setItems(emptyList())
         resultsGrid.removeAllColumns()
-        buildFilterCards(newAreaId)
+    }
+
+    private fun switchArea(newAreaId: UUID) {
+        areaId = newAreaId
+        resetAreaState()
+        // Le card filtro nascono vuote: compaiono solo quando l'utente
+        // mette una dimensione in Righe nel pivot. dimensionNames e
+        // dimensionColumns vengono comunque popolati subito, servono a
+        // costruire le card quando il pivot cambia.
+        registryRepository.findDimensioniByArea(newAreaId).forEach { ad ->
+            registryRepository.findDimensione(ad.dimensioneId)?.let { dim ->
+                dimensionNames[ad.dimensioneId] = dim.nome
+                dimensionColumns[ad.dimensioneId] = ad.colonnaFisica
+            }
+        }
         refreshPivotFields(newAreaId)
         refreshSourceStatus()
         refresh()
@@ -443,21 +446,45 @@ class AssociativeExplorerView(
         pivotPanel.setFieldsWithIds(dims, metriche)
     }
 
+    /**
+     * Richiamato dal PivotPanel ad ogni modifica di Righe/Valori.
+     *
+     * Le card filtro a destra mostrano SOLO le dimensioni presenti in
+     * Righe, mai l'intero ventaglio di dimensioni dell'area: se l'utente
+     * non ha scelto nessuna dimensione, non c'è nessuna card. Se toglie
+     * una dimensione dalle Righe, la sua card sparisce e la sua eventuale
+     * selezione viene cancellata insieme - un filtro su una dimensione che
+     * non fa più parte dell'analisi in corso non ha motivo di restare
+     * attivo silenziosamente.
+     */
     private fun onPivotChanged(rows: List<UUID>, values: List<UUID>) {
+        val removedDims = pivotRows.filter { it !in rows }
         pivotRows = rows
         pivotValues = values
-        refreshAggregatesOnly()
+
+        removedDims.forEach { selections.remove(it) }
+
+        rebuildFilterCards(rows)
+        refresh()
     }
 
-    private fun buildFilterCards(currentAreaId: UUID) {
-        val dims = registryRepository.findDimensioniByArea(currentAreaId)
-        dims.forEach { areaDim ->
-            val dimensione = registryRepository.findDimensione(areaDim.dimensioneId) ?: return@forEach
-            val dimId = areaDim.dimensioneId
+    /**
+     * Ricostruisce le card filtro da zero in base alle dimensioni
+     * correnti del pivot. Chiamata ogni volta che pivotRows cambia.
+     */
+    private fun rebuildFilterCards(rows: List<UUID>) {
+        filtersColumn.removeAll()
+        filtersColumn.add(activeSelectionsBar)
+        dimensionBoxes.clear()
+        currentItems.clear()
+
+        val dims = registryRepository.findDimensioniByArea(areaId ?: return)
+        rows.forEach { dimId ->
+            val areaDim = dims.find { it.dimensioneId == dimId } ?: return@forEach
+            val dimName = dimensionNames[dimId] ?: return@forEach
 
             val box = MultiSelectListBox<Long>()
             box.width = "100%"
-            box.height = "180px"
             box.setRenderer(neutralRenderer())
             box.addSelectionListener { event ->
                 if (!event.isFromClient) return@addSelectionListener
@@ -466,10 +493,10 @@ class AssociativeExplorerView(
             }
             dimensionBoxes[dimId] = box
 
-            val etichetta = if (dims.count { it.dimensioneId == dimId } > 1) {
-                "${dimensione.nome} (${areaDim.colonnaFisica})"
+            val etichetta = if (rows.count { dimensionNames[it] == dimName } > 1) {
+                "$dimName (${areaDim.colonnaFisica})"
             } else {
-                dimensione.nome
+                dimName
             }
 
             val title = Span(etichetta).apply { className = "lbi-filter-title" }
@@ -478,6 +505,18 @@ class AssociativeExplorerView(
         }
     }
 
+    private fun clearSelection(dimId: UUID) {
+        selections.remove(dimId)
+        dimensionBoxes[dimId]?.deselectAll()
+        refresh()
+    }
+
+    /**
+     * Refresh completo: ricalcola stati associativi SOLO per le
+     * dimensioni presenti nel pivot (pivotRows), non più per tutte le
+     * dimensioni dell'area. Se pivotRows è vuoto non c'è nessuno stato da
+     * calcolare, e la chiamata a AssociativeStateService viene saltata.
+     */
     private fun refresh() {
         val currentAreaId = areaId ?: return
         val ui = ui.orElse(null) ?: return
@@ -494,58 +533,12 @@ class AssociativeExplorerView(
             try {
                 val versions = versionService.snapshotVersions(currentAreaId)
 
-                val statesDeferred = async {
+                val states = if (rowsSnapshot.isEmpty()) {
+                    emptyMap()
+                } else {
                     associativeStateService.getStates(currentAreaId, selectionsSnapshot, versions)
+                        .filterKeys { it in rowsSnapshot }
                 }
-                val aggregatesDeferred = async {
-                    aggregateService.getAggregates(
-                        AggregateRequest(
-                            areaId = currentAreaId,
-                            selections = selectionsSnapshot,
-                            groupBy = rowsSnapshot,
-                            metricIds = valuesSnapshot,
-                            resolveLabels = true
-                        ),
-                        versions
-                    )
-                }
-                val states = statesDeferred.await()
-                val aggregates = aggregatesDeferred.await()
-
-                val labels = resolveLabels(states)
-
-                ui.access {
-                    if (myRequestId != requestCounter.get()) return@access
-                    if (areaId != currentAreaId) return@access
-                    renderStates(states, labels)
-                    renderResultsGrid(aggregates, rowsSnapshot)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                ui.access {
-                    if (myRequestId != requestCounter.get()) return@access
-                    Notification.show("Errore aggiornamento: ${e.message}", 5000, Notification.Position.BOTTOM_END)
-                }
-            }
-        }
-    }
-
-    private fun refreshAggregatesOnly() {
-        val currentAreaId = areaId ?: return
-        val ui = ui.orElse(null) ?: return
-        val scope = viewScope ?: return
-        val myRequestId = requestCounter.incrementAndGet()
-
-        val selectionsSnapshot: Map<UUID, Set<Long>> = selections
-            .filterValues { it.isNotEmpty() }
-            .mapValues { it.value.toSet() }
-        val rowsSnapshot = pivotRows
-        val valuesSnapshot = pivotValues
-
-        scope.launch {
-            try {
-                val versions = versionService.snapshotVersions(currentAreaId)
                 val aggregates = aggregateService.getAggregates(
                     AggregateRequest(
                         areaId = currentAreaId,
@@ -556,9 +549,14 @@ class AssociativeExplorerView(
                     ),
                     versions
                 )
+
+                val labels = resolveLabels(states)
+
                 ui.access {
                     if (myRequestId != requestCounter.get()) return@access
                     if (areaId != currentAreaId) return@access
+                    renderStates(states, labels)
+                    renderActiveSelections(selectionsSnapshot, labels)
                     renderResultsGrid(aggregates, rowsSnapshot)
                 }
             } catch (e: CancellationException) {
@@ -574,10 +572,41 @@ class AssociativeExplorerView(
 
     private fun resolveLabels(states: Map<UUID, DimensionState>): Map<UUID, Map<Long, String>> =
         states.mapNotNull { (dimId, state) ->
-            val dimensione = registryRepository.findDimensione(dimId) ?: return@mapNotNull null
+            val dimName = dimensionNames[dimId] ?: return@mapNotNull null
             val ids = state.verdi + state.grigi + state.selezionati
-            dimId to symbolLookupService.resolveLabels(dimensione.nome, ids)
+            dimId to symbolLookupService.resolveLabels(dimName, ids)
         }.toMap()
+
+    private fun renderActiveSelections(
+        selectionsSnapshot: Map<UUID, Set<Long>>,
+        labels: Map<UUID, Map<Long, String>>
+    ) {
+        activeSelectionsBar.removeAll()
+        selectionsSnapshot.forEach { (dimId, values) ->
+            if (values.isEmpty()) return@forEach
+            val dimName = dimensionNames[dimId] ?: return@forEach
+            val dimLabels = labels[dimId] ?: emptyMap()
+
+            values.sorted().forEach { valueId ->
+                val valueLabel = symbolLookupService.labelOrFallback(dimLabels, valueId)
+                val removeIcon = Span("×").apply {
+                    className = "lbi-active-chip-remove"
+                    addClickListener {
+                        val current = selections[dimId]?.toMutableSet() ?: return@addClickListener
+                        current.remove(valueId)
+                        if (current.isEmpty()) selections.remove(dimId) else selections[dimId] = current
+                        dimensionBoxes[dimId]?.let { box -> box.deselect(valueId) }
+                        refresh()
+                    }
+                }
+                val chip = Span().apply {
+                    className = "lbi-active-chip"
+                    add(Span("$dimName: $valueLabel"), removeIcon)
+                }
+                activeSelectionsBar.add(chip)
+            }
+        }
+    }
 
     private fun renderStates(
         states: Map<UUID, DimensionState>,
@@ -621,10 +650,10 @@ class AssociativeExplorerView(
         }
 
         rows.forEach { dimId ->
-            val dimensione = registryRepository.findDimensione(dimId)
+            val dimName = dimensionNames[dimId] ?: "?"
             resultsGrid.addColumn { row: AggregateRow ->
                 row.labels[dimId] ?: row.groupKeys[dimId]?.let { "#$it" } ?: "—"
-            }.setHeader(dimensione?.nome ?: "?").setAutoWidth(true)
+            }.setHeader(dimName).setAutoWidth(true)
         }
 
         val metricNames = result.rows.first().values.keys.toList()

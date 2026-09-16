@@ -15,6 +15,12 @@
     --lbi-header-bg: #1b1a19;
     --lbi-header-fg: #ffffff;
 
+    --lbi-sidebar-bg: #1f3a5f;
+    --lbi-sidebar-bg-hover: #2a4a75;
+    --lbi-sidebar-fg: #ffffff;
+    --lbi-sidebar-fg-muted: #a9c0dc;
+    --lbi-sidebar-border: #16304f;
+
     --lbi-accent: #6366f1;
     --lbi-accent-hover: #4338ca;
     --lbi-accent-disabled: #a5a6f0;
@@ -25,6 +31,7 @@
     --lbi-excluded-bg: #e1dfdd;
     --lbi-excluded-text: #a19f9d;
     --lbi-state-selected: #22c55e;
+    --lbi-state-selected-bg-soft: #e8f9ee;
 }
 
 [theme~="dark"] {
@@ -39,6 +46,7 @@
 
     --lbi-excluded-bg: #3b3a39;
     --lbi-excluded-text: #797775;
+    --lbi-state-selected-bg-soft: #113322;
 }
 
 html, body {
@@ -56,7 +64,6 @@ html, body {
     gap: 0;
 }
 
-/* ===== Menu top: banda nera fissa, iso command bar Dynamics ===== */
 .lbi-topmenu {
     background: var(--lbi-header-bg);
     border: none;
@@ -104,17 +111,15 @@ vaadin-menu-bar-button:hover {
     color: var(--lbi-header-fg);
 }
 
-/* ===== Body layout ===== */
 .lbi-body {
     gap: 1px;
     background: var(--lbi-border);
 }
 
-/* ===== Sidebar: pannello piatto, no bubble ===== */
 .lbi-sidebar {
-    background: var(--lbi-bg);
+    background: var(--lbi-sidebar-bg);
     border: none;
-    border-right: 1px solid var(--lbi-border);
+    border-right: 1px solid var(--lbi-sidebar-border);
     border-radius: 0;
     box-shadow: none;
     padding: 12px 0;
@@ -124,7 +129,7 @@ vaadin-menu-bar-button:hover {
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--lbi-text-muted);
+    color: var(--lbi-sidebar-fg-muted);
     font-weight: 600;
     padding: 0 16px;
 }
@@ -135,7 +140,7 @@ vaadin-menu-bar-button:hover {
     cursor: pointer;
     font-size: 13px;
     white-space: nowrap;
-    color: var(--lbi-text);
+    color: var(--lbi-sidebar-fg);
     background: transparent;
     outline: none;
     transition: background 0.1s ease, color 0.1s ease;
@@ -143,8 +148,8 @@ vaadin-menu-bar-button:hover {
 }
 
 .lbi-sidebar-item:hover {
-    background: rgba(99, 102, 241, 0.08);
-    color: var(--lbi-text);
+    background: var(--lbi-sidebar-bg-hover);
+    color: var(--lbi-sidebar-fg);
     border-left: 3px solid var(--lbi-accent);
 }
 
@@ -152,30 +157,29 @@ vaadin-menu-bar-button:hover {
 .lbi-sidebar-item:focus-visible,
 .lbi-sidebar-item:active {
     background: transparent;
-    color: var(--lbi-text);
+    color: var(--lbi-sidebar-fg);
     outline: none;
     border-left: 3px solid transparent;
 }
 
 .lbi-sidebar-item:hover:focus,
 .lbi-sidebar-item:hover:active {
-    background: rgba(99, 102, 241, 0.08);
+    background: var(--lbi-sidebar-bg-hover);
     border-left: 3px solid var(--lbi-accent);
 }
 
-/* ===== Sidebar flyout (gruppi con sottomenu a hover, stile TrooperERP) ===== */
 .flyout-item {
     position: relative;
     padding: 10px 16px;
     font-weight: 500;
     font-size: 13px;
-    color: var(--lbi-text);
+    color: var(--lbi-sidebar-fg);
     cursor: pointer;
     border-left: 3px solid transparent;
 }
 
 .flyout-item:hover {
-    background: rgba(99, 102, 241, 0.08);
+    background: var(--lbi-sidebar-bg-hover);
     border-left: 3px solid var(--lbi-accent);
 }
 
@@ -185,8 +189,8 @@ vaadin-menu-bar-button:hover {
     top: 0;
     left: 100%;
     min-width: 200px;
-    background: var(--lbi-surface);
-    border: 1px solid var(--lbi-border);
+    background: var(--lbi-sidebar-bg);
+    border: 1px solid var(--lbi-sidebar-border);
     box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.15);
     z-index: 10;
 }
@@ -199,16 +203,25 @@ vaadin-menu-bar-button:hover {
     padding: 10px 16px;
     font-weight: 400;
     font-size: 13px;
-    color: var(--lbi-text);
+    color: var(--lbi-sidebar-fg);
     white-space: nowrap;
     cursor: pointer;
 }
 
 .flyout-subentry:hover {
-    background: rgba(99, 102, 241, 0.08);
+    background: var(--lbi-sidebar-bg-hover);
 }
 
-/* ===== Centro (Risultati): pannello piatto ===== */
+.flyout-subentry-disabled {
+    color: var(--lbi-sidebar-fg-muted);
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.flyout-subentry-disabled:hover {
+    background: transparent !important;
+}
+
 .lbi-center {
     background: var(--lbi-surface);
     border: none;
@@ -227,7 +240,6 @@ vaadin-menu-bar-button:hover {
     display: block;
 }
 
-/* ===== Grid risultati: sempre bianca, stile Excel (invariato) ===== */
 .lbi-results-grid {
     background: #ffffff !important;
     border: 1px solid #d0d0d0;
@@ -254,69 +266,97 @@ vaadin-menu-bar-button:hover {
     background: #eef2ff !important;
 }
 
-/* ===== Colonna filtri (destra) ===== */
 .lbi-filters-column {
     display: flex;
     flex-direction: column;
-    gap: 1px;
-    width: 220px;
+    gap: 12px;
     overflow-y: auto;
-    background: var(--lbi-border);
+    background: var(--lbi-surface);
+    padding: 12px;
+}
+
+.lbi-active-selections {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px;
+    background: var(--lbi-state-selected-bg-soft);
+    border-radius: 8px;
+}
+
+.lbi-active-selections:empty {
+    display: none;
+}
+
+.lbi-active-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--lbi-state-selected);
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 6px 4px 10px;
+    border-radius: 20px;
+    white-space: nowrap;
+}
+
+.lbi-active-chip-remove {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.lbi-active-chip-remove:hover {
+    background: rgba(255, 255, 255, 0.4);
 }
 
 .lbi-filter-card {
-    background: var(--lbi-surface);
-    border: none;
-    border-radius: 0;
+    background: var(--lbi-surface-2);
+    border: 1px solid var(--lbi-border);
+    border-radius: 8px;
     box-shadow: none;
-    padding: 12px;
+    padding: 8px 10px;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .lbi-filter-title {
     font-size: 11px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--lbi-text-muted);
-    margin-bottom: 8px;
+    color: var(--lbi-text);
+    margin-bottom: 6px;
     display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-/* ===== ListBox filtri ===== */
-vaadin-list-box, vaadin-multi-select-list-box {
-    background: transparent;
-    border: none;
-    padding: 0;
+.state-selected,
+.state-possible,
+.state-excluded {
+    display: inline-block;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: center;
+    padding: 4px 6px;
+    border-radius: 8px;
+    font-size: 11px;
 }
 
-vaadin-item {
-    border-radius: 0;
-    margin-bottom: 2px;
-    padding: 2px 4px;
-    transition: background 0.1s ease;
-}
-
-vaadin-item:hover {
-    background: var(--lbi-surface-2);
-}
-
-/* ===== Stati valore filtro (verde selezione invariato, resto flat) ===== */
 .state-selected {
-    display: inline-flex;
-    align-items: center;
-    padding: 6px 14px;
-    border-radius: var(--lbi-radius);
     background: var(--lbi-state-selected);
     color: #ffffff;
     font-weight: 600;
-    box-shadow: none;
+    border: none;
 }
 
 .state-possible {
-    display: inline-flex;
-    align-items: center;
-    padding: 6px 14px;
-    border-radius: var(--lbi-radius);
     background: transparent;
     color: var(--lbi-text);
     font-weight: 500;
@@ -324,10 +364,6 @@ vaadin-item:hover {
 }
 
 .state-excluded {
-    display: inline-flex;
-    align-items: center;
-    padding: 6px 14px;
-    border-radius: var(--lbi-radius);
     background: var(--lbi-excluded-bg);
     color: var(--lbi-excluded-text);
     font-weight: 400;
@@ -335,15 +371,10 @@ vaadin-item:hover {
     cursor: not-allowed;
 }
 
-/* ===== Notifiche ===== */
 vaadin-notification-card {
-    border-radius: var(--lbi-radius);
+    border-radius: 8px;
 }
 
-/* ===== Grid con header custom (wizard discovery colonne) =====
-   Di default l'header della grid ha altezza fissa e taglia contenuti
-   più alti di una riga di testo (es. checkbox + radio nell'header
-   colonna). Forziamo altezza automatica. */
 .lbi-wizard-dialog vaadin-grid::part(header-row) {
     height: auto;
 }
@@ -353,11 +384,10 @@ vaadin-notification-card {
     padding: 8px 6px;
 }
 
-/* ===== Wizard Dialog ===== */
 .lbi-wizard-dialog::part(overlay) {
     background: var(--lbi-surface);
     color: var(--lbi-text);
-    border-radius: var(--lbi-radius);
+    border-radius: 8px;
     border: 1px solid var(--lbi-border);
 }
 
@@ -405,10 +435,8 @@ vaadin-notification-card {
     margin-top: 12px;
 }
 
-/* ===== Pulsanti ===== */
-/* ===== Pulsanti — SEMPRE indaco, nessuna eccezione ===== */
 vaadin-button {
-    border-radius: var(--lbi-radius) !important;
+    border-radius: 8px !important;
     font-weight: 500;
     box-shadow: none !important;
     background: var(--lbi-accent) !important;
@@ -426,9 +454,11 @@ vaadin-button[disabled] {
 }
 
 .lbi-pivot-panel {
-    border: 1px dashed var(--lbi-border);
+    border: 1px solid var(--lbi-border);
     padding: 12px;
     margin-bottom: 12px;
+    border-radius: 8px;
+    background: transparent;
 }
 
 .lbi-pivot-pool {
@@ -436,19 +466,22 @@ vaadin-button[disabled] {
     gap: 6px;
     min-height: 32px;
     padding: 8px;
-    background: var(--lbi-surface-2);
+    background: transparent;
+    border-radius: 8px;
 }
 
 .lbi-pivot-zone {
     min-height: 60px;
     border: 1px dashed var(--lbi-border);
-    padding: 6px;
-    gap: 4px;
+    padding: 8px;
+    gap: 6px;
+    border-radius: 8px;
+    background: transparent;
 }
 
 .lbi-pivot-chip {
     padding: 4px 10px;
-    border-radius: var(--lbi-radius);
+    border-radius: 8px;
     cursor: grab;
     font-size: 12px;
 }
@@ -463,19 +496,76 @@ vaadin-button[disabled] {
     border: 1px solid var(--lbi-state-selected);
 }
 
-.lbi-pivot-zone-item {
+.lbi-pivot-zone-chip {
     align-items: center;
-    gap: 4px;
-    padding: 2px 6px;
-    background: var(--lbi-surface);
+    gap: 0;
+    background: var(--lbi-surface-2);
+    border: 1px solid var(--lbi-border);
+    border-radius: 20px;
+    padding: 4px 4px 4px 14px;
+    width: fit-content;
 }
 
-.flyout-subentry-disabled {
-    color: var(--lbi-text-muted);
-    opacity: 0.5;
-    cursor: not-allowed;
+.lbi-pivot-chip-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--lbi-text);
+    margin-right: 8px;
+    white-space: nowrap;
 }
 
-.flyout-subentry-disabled:hover {
-    background: transparent !important;
+.lbi-pivot-chip-btn {
+    min-width: 24px !important;
+    width: 24px !important;
+    height: 24px !important;
+    padding: 0 !important;
+    margin: 0 2px !important;
+    border-radius: 50% !important;
+    background: var(--lbi-accent) !important;
+}
+
+.lbi-pivot-chip-btn:hover {
+    background: var(--lbi-accent-hover) !important;
+}
+
+.lbi-pivot-chip-btn[disabled] {
+    background: var(--lbi-accent-disabled) !important;
+}
+
+.lbi-pivot-chip-btn-remove {
+    background: var(--lbi-excluded-text) !important;
+}
+
+.lbi-pivot-chip-btn-remove:hover {
+    background: #8a8886 !important;
+}
+
+/* Bottoni solo-icona (edit/elimina nelle grid): l'icona Vaadin legge il
+   colore dalla variabile custom --vaadin-icon-color (fill: var(--vaadin-icon-color,
+   currentColor)), non da "color" ereditato — per questo i tentativi con
+   color/fill non funzionavano. Va sovrascritta la variabile stessa. */
+vaadin-button[theme~="icon"] {
+    background: var(--lbi-accent) !important;
+    min-width: 32px !important;
+    width: 32px !important;
+    height: 32px !important;
+    --vaadin-icon-color: #ffffff;
+}
+
+vaadin-button[theme~="icon"]:hover {
+    background: var(--lbi-accent-hover) !important;
+}
+
+vaadin-confirm-dialog-overlay::part(cancel-button),
+vaadin-confirm-dialog-overlay::part(confirm-button),
+vaadin-confirm-dialog-overlay::part(reject-button) {
+    background: var(--lbi-accent) !important;
+    color: #ffffff !important;
+    border-radius: 8px !important;
+}
+
+vaadin-confirm-dialog-overlay::part(cancel-button):hover,
+vaadin-confirm-dialog-overlay::part(confirm-button):hover,
+vaadin-confirm-dialog-overlay::part(reject-button):hover {
+    background: var(--lbi-accent-hover) !important;
 }
