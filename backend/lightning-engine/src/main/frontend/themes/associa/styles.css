@@ -455,8 +455,8 @@ vaadin-button[disabled] {
 
 .lbi-pivot-panel {
     border: 1px solid var(--lbi-border);
-    padding: 12px;
-    margin-bottom: 12px;
+    padding: 8px;
+    margin-bottom: 8px;
     border-radius: 8px;
     background: transparent;
 }
@@ -464,8 +464,8 @@ vaadin-button[disabled] {
 .lbi-pivot-pool {
     flex-wrap: wrap;
     gap: 6px;
-    min-height: 32px;
-    padding: 8px;
+    min-height: 28px;
+    padding: 6px;
     background: transparent;
     border-radius: 8px;
 }
@@ -475,9 +475,11 @@ vaadin-button[disabled] {
     flex-direction: row;
     flex-wrap: wrap;
     align-items: flex-start;
-    min-height: 60px;
+    min-height: 40px;
+    max-height: 90px;
+    overflow-y: auto;
     border: 1px dashed var(--lbi-border);
-    padding: 8px;
+    padding: 6px;
     gap: 6px;
     border-radius: 8px;
 }

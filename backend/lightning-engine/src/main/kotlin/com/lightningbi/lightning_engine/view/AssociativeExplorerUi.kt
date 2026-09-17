@@ -38,7 +38,7 @@ class AssociativeExplorerUi(
     val resultsGrid = Grid<AggregateRow>().apply {
         className = "lbi-results-grid"
         setWidthFull()
-        height = "320px"
+        height = "420px"
     }
 
     val filtersColumn = VerticalLayout().apply {
