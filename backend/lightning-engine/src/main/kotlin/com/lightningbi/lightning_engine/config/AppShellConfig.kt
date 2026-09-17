@@ -9,5 +9,5 @@ import com.vaadin.flow.server.PWA
 @PWA(name = "LightningBI", shortName = "LightningBI")
 @Push
 @Theme("associa")
-@JavaScript("context://js/echarts.min.js")
+//@JavaScript("context://js/echarts.min.js")
 class AppShellConfig : AppShellConfigurator

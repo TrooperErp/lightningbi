@@ -27,7 +27,7 @@ class EChartComponent : Div() {
 
     init {
         element.setAttribute("id", chartId)
-        style.set("width", "100%")
+        style.set("width", "480px")
         style.set("height", "320px")
     }
 
@@ -47,23 +47,27 @@ class EChartComponent : Div() {
         // configurazione con meno serie o etichette diverse.
         element.executeJs(
             """
-            const el = document.getElementById(${'$'}0);
-            const opt = ${'$'}1;
-            function tryRender() {
-            if (typeof echarts === 'undefined') {
-            setTimeout(tryRender, 50);
-            return;
+    const el = document.getElementById(${'$'}0);
+    const opt = JSON.parse(${'$'}1);
+    let attempts = 0;
+    function tryRender() {
+        attempts++;
+        if (typeof echarts === 'undefined') {
+            if (attempts < 60) {
+                setTimeout(tryRender, 50);
             }
-            if (el) {
+            return;
+        }
+        if (el) {
             let chart = echarts.getInstanceByDom(el);
             if (!chart) {
-                       chart = echarts.init(el);
-                   }
-                chart.setOption(opt, true);
-                }
+                chart = echarts.init(el);
             }
-            tryRender();
-            """.trimIndent(),
+            chart.setOption(opt, true);
+        }
+    }
+    tryRender();
+    """.trimIndent(),
             chartId, optionJson
         )
 

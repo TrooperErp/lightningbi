@@ -361,6 +361,7 @@ class AssociativeExplorerView(
 
     override fun onAttach(attachEvent: AttachEvent) {
         super.onAttach(attachEvent)
+        attachEvent.ui.page.addJavaScript("js/echarts.min.js")
         if (viewScope == null) {
             viewScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         }
@@ -419,6 +420,7 @@ class AssociativeExplorerView(
     // ================= Pivot / Filtri =================
 
     private fun onPivotChanged(rows: List<UUID>, values: List<UUID>) {
+        println("DEBUG: onPivotChanged chiamato, rows=$rows")
         val removedDims = pivotRows.filter { it !in rows }
         pivotRows = rows
         pivotValues = values

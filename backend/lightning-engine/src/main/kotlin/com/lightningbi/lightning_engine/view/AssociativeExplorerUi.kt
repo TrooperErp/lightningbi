@@ -271,11 +271,17 @@ class AssociativeExplorerUi(
         if (chartsData.isEmpty()) return
 
         chartsPanel.add(Span("Grafici").apply { className = "lbi-section-title" })
+
+        val grid = HorizontalLayout().apply {
+            className = "lbi-charts-grid"
+            isPadding = false
+        }
         chartsData.forEach { chartData ->
             val chartComponent = EChartComponent()
-            chartsPanel.add(chartComponent)
+            grid.add(chartComponent)
             chartComponent.render(chartData)
         }
+        chartsPanel.add(grid)
     }
 
     fun clearAll() {
