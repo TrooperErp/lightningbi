@@ -7,9 +7,9 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout
 /**
  * Sidebar di navigazione stile TrooperERP/Dynamics 365: gruppi con
  * flyout a sottomenu (hover). Disaccoppiata dalla view che la usa:
- * riceve solo etichette e callback, non conosce AssociativeExplorerView
+ * riceve solo etichette e callback, non conosce le view specifiche
  * né i service applicativi. Se questo componente si rompe, non rompe
- * la logica dell'analisi associativa.
+ * la logica delle pagine che lo usano.
  *
  * MenuEntry supporta uno stato enabled/disabled: serve alle voci del
  * gruppo "Gestisci" (Verifica sorgente, Sincronizza, ecc.), il cui stato
@@ -17,6 +17,11 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout
  * verificata non può sincronizzare, per esempio. Una entry disabilitata
  * resta visibile ma non cliccabile, con stile visivo attenuato: l'utente
  * vede sempre cosa esiste, capisce perché non può usarlo ora.
+ *
+ * MenuGroup supporta uno stato active: indica in quale PAGINA ci si
+ * trova (es. "Grafici" attivo quando la route corrente è /charts/...),
+ * non quale sottovoce è stata cliccata l'ultima volta - è un concetto di
+ * posizione, non di cronologia.
  */
 class LbiSidebarMenu : VerticalLayout() {
 
@@ -25,7 +30,11 @@ class LbiSidebarMenu : VerticalLayout() {
         val enabled: Boolean = true,
         val onClick: () -> Unit
     )
-    data class MenuGroup(val label: String, val entries: List<MenuEntry>)
+    data class MenuGroup(
+        val label: String,
+        val entries: List<MenuEntry>,
+        val active: Boolean = false
+    )
 
     init {
         className = "lbi-sidebar"
@@ -44,7 +53,7 @@ class LbiSidebarMenu : VerticalLayout() {
 
     private fun buildFlyoutGroup(group: MenuGroup): Div {
         val item = Div().apply {
-            className = "flyout-item"
+            className = if (group.active) "flyout-item flyout-item-active" else "flyout-item"
             add(Span(group.label))
         }
 
@@ -55,8 +64,6 @@ class LbiSidebarMenu : VerticalLayout() {
                 if (entry.enabled) {
                     addClickListener { entry.onClick() }
                 }
-                // Le entry disabilitate non hanno click listener: anche
-                // se qualcosa forzasse un click via JS, non farebbero nulla.
             }
             submenu.add(subEntry)
         }

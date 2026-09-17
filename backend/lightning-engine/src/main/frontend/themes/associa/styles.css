@@ -471,12 +471,15 @@ vaadin-button[disabled] {
 }
 
 .lbi-pivot-zone {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
     min-height: 60px;
     border: 1px dashed var(--lbi-border);
     padding: 8px;
     gap: 6px;
     border-radius: 8px;
-    background: transparent;
 }
 
 .lbi-pivot-chip {
@@ -504,6 +507,7 @@ vaadin-button[disabled] {
     border-radius: 20px;
     padding: 4px 4px 4px 14px;
     width: fit-content;
+    flex: 0 0 auto;
 }
 
 .lbi-pivot-chip-label {
@@ -568,4 +572,47 @@ vaadin-confirm-dialog-overlay::part(cancel-button):hover,
 vaadin-confirm-dialog-overlay::part(confirm-button):hover,
 vaadin-confirm-dialog-overlay::part(reject-button):hover {
     background: var(--lbi-accent-hover) !important;
+}
+.flyout-item-active {
+    background: var(--lbi-sidebar-bg-hover);
+    border-left: 3px solid var(--lbi-accent);
+}
+.lbi-chart-type-gallery {
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.lbi-chart-type-gallery {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.lbi-chart-type-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 110px;
+    height: 110px;
+    padding: 8px;
+    border: none;
+    border-radius: 12px;
+    background: rgba(250, 249, 248, 0.6);
+    backdrop-filter: blur(6px);
+    cursor: pointer;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+    transition: box-shadow 0.15s ease, transform 0.15s ease, background 0.15s ease;
+}
+
+.lbi-chart-type-card:hover {
+    background: rgba(250, 249, 248, 0.85);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
 }

@@ -13,11 +13,30 @@ import java.util.UUID
  * metrica - con più dimensioni o più metriche va tolto dalle opzioni,
  * non semplicemente sconsigliato.
  */
+/**
+ * Tipi di grafico supportati.
+ *
+ * Non tutti sono sempre proponibili: tipiAmmessi() in ChartService filtra
+ * questa lista in base al contesto corrente (quante dimensioni sono in
+ * Righe nel pivot, quante metriche il grafico ha scelto).
+ *
+ * SCATTER e RADAR hanno un contratto diverso dagli altri: usano le
+ * metriche stesse come assi (SCATTER) o come raggi (RADAR), non la
+ * dimensione di raggruppamento come asse X. MAP richiede che la
+ * dimensione scelta contenga nomi geografici riconoscibili - questo il
+ * sistema non può verificarlo in anticipo, quindi resta sempre proposta
+ * ma può fallire a runtime se i valori non sono nomi di stati/regioni.
+ */
 enum class ChartType {
     BAR,
+    BAR_HORIZONTAL,
     LINE,
+    AREA,
     PIE,
-    AREA
+    DONUT,
+    SCATTER,
+    RADAR,
+    MAP
 }
 
 /**

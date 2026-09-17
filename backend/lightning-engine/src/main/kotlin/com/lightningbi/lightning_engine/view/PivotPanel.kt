@@ -16,15 +16,6 @@ import java.util.UUID
  * Pannello pivot stile Excel: due zone (Righe, Valori) su cui trascinare i
  * campi dell'area. Ogni cambiamento richiama onChange con il nuovo stato,
  * che AssociativeExplorerView usa per rilanciare AggregateService.
- *
- * Non gestisce la zona Colonne (pivot orizzontale) né subtotali: il motore
- * (AggregateService) non li supporta oggi, e non sono necessari per il
- * caso d'uso principale (raggruppare per una o più dimensioni, vedere
- * metriche aggregate).
- *
- * L'ordine in Righe è significativo (cambia la gerarchia del risultato):
- * si riordina con le frecce, non con drag interno, perché il drag&drop
- * nativo di Vaadin non offre riordino fluido dentro una stessa zona.
  */
 class PivotPanel(
     private val onChange: (rows: List<UUID>, values: List<UUID>) -> Unit
@@ -57,33 +48,53 @@ class PivotPanel(
         setupDropTarget(valuesBox, isRowZone = false)
     }
 
-    /** Ricostruisce il pannello per una nuova area: pool pieno, zone vuote. */
-    fun setFields(dimensioni: List<Pair<AreaDimensione, String>>, metriche: List<AreaMetrica>) {
-        allFields = dimensioni.map { (_, nome) -> Field(UUID.randomUUID(), nome, isMetric = false) } +
-                metriche.map { Field(it.id, it.nome, isMetric = true) }
-        // Nota: le dimensioni non hanno un UUID stabile univoco per colonna
-        // qui - il chiamante sostituisce l'id reale (dimensioneId) prima
-        // di costruire i Field, vedi buildFieldsFor in AssociativeExplorerView.
-        rowFields.clear()
-        valueFields.clear()
-        renderAll()
-    }
-
     /**
      * Variante con id reali: usata da AssociativeExplorerView, che conosce
      * gli id veri di dimensioni e metriche (dimensioneId, metrica.id).
+     *
+     * Applica il default (tutte le metriche in Valori, nessuna dimensione
+     * in Righe). Se c'è uno stato da ripristinare dopo aver chiamato
+     * questo metodo, usare restoreState(): setFieldsWithIds da sola
+     * cancellerebbe sempre qualunque configurazione precedente.
      */
     fun setFieldsWithIds(dimensioni: List<Pair<UUID, String>>, metriche: List<Pair<UUID, String>>) {
         allFields = dimensioni.map { (id, nome) -> Field(id, nome, isMetric = false) } +
                 metriche.map { (id, nome) -> Field(id, nome, isMetric = true) }
         rowFields.clear()
         valueFields.clear()
-        // Default ragionevole: tutte le metriche in Valori, nessuna dimensione
-        // in Righe - equivale al comportamento "vecchio" (totale unico),
-        // così chi non tocca il pivot vede lo stesso risultato di prima.
         valueFields.addAll(allFields.filter { it.isMetric })
         renderAll()
         fireChange()
+    }
+
+    /**
+     * Ripristina una configurazione specifica di Righe/Valori, al posto
+     * del default che setFieldsWithIds applica sempre. Da chiamare SUBITO
+     * DOPO setFieldsWithIds, quando esiste uno stato di lavoro salvato da
+     * riportare (es. tornando da un'altra pagina): senza questo metodo,
+     * il pannello mostrerebbe sempre lo stato "vuoto, tutte le metriche in
+     * Valori" indipendentemente da cosa l'utente aveva impostato prima di
+     * uscire, perché quella era l'unica via per popolare rowFields/
+     * valueFields.
+     *
+     * Gli id non più presenti in allFields (es. una dimensione rimossa
+     * nel frattempo) vengono scartati silenziosamente, non causano errore:
+     * lo stato salvato può riferirsi a un momento precedente a modifiche
+     * dell'area.
+     */
+    fun restoreState(rowIds: List<UUID>, valueIds: List<UUID>) {
+        val byId = allFields.associateBy { it.id }
+
+        rowFields.clear()
+        rowFields.addAll(rowIds.mapNotNull { byId[it] })
+
+        valueFields.clear()
+        valueFields.addAll(valueIds.mapNotNull { byId[it] })
+
+        renderAll()
+        // Nessun fireChange() qui: il chiamante (switchArea) già gestisce
+        // il refresh() dopo il ripristino, chiamare onChange qui
+        // duplicherebbe il ricalcolo appena fatto per la stessa richiesta.
     }
 
     private fun setupDropTarget(zone: VerticalLayout, isRowZone: Boolean) {
@@ -92,10 +103,6 @@ class PivotPanel(
             val fieldId = event.dragData.orElse(null) as? UUID ?: return@addDropListener
             val field = allFields.find { it.id == fieldId } ?: return@addDropListener
 
-            // Una dimensione va in Righe, una metrica va in Valori: il
-            // drop nella zona sbagliata è ignorato silenziosamente invece
-            // di dare un errore - l'utente capisce dal fatto che non
-            // succede nulla, senza interruzioni fastidiose.
             if (isRowZone && field.isMetric) return@addDropListener
             if (!isRowZone && !field.isMetric) return@addDropListener
 
@@ -134,8 +141,6 @@ class PivotPanel(
         return chip
     }
 
-    /** Chip già posizionato in una zona: frecce per riordinare, x per rimuovere. */
-    /** Chip già posizionato in una zona: frecce per riordinare, x per rimuovere. */
     private fun buildZoneChip(field: Field, list: MutableList<Field>, index: Int): HorizontalLayout {
         val label = Span(field.label).apply { className = "lbi-pivot-chip-label" }
 

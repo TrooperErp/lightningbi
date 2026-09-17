@@ -156,15 +156,41 @@ class ChartService(
     fun getMetricheDelGrafico(chartId: UUID): List<AreaChartMetrica> =
         areaChartRepository.findMetricheByChart(chartId)
 
+
     /**
-     * Tipi di grafico ammessi in base al contesto corrente: PIE ha senso
-     * solo con esattamente una dimensione di raggruppamento e una sola
-     * metrica, altrimenti sparisce dalle opzioni proposte invece di
-     * restare selezionabile con un risultato senza senso.
+     * Tipi di grafico ammessi in base al contesto corrente.
+     *
+     * - PIE/DONUT: solo con esattamente una dimensione e una metrica,
+     *   altrimenti il risultato non ha interpretazione sensata.
+     * - SCATTER: richiede almeno due metriche, perché usa due metriche
+     *   come assi X/Y invece della dimensione di raggruppamento.
+     * - RADAR: richiede almeno tre metriche sulla stessa categoria,
+     *   con una o due non c'è una forma poligonale da disegnare.
+     * - MAP: sempre proposta quando c'è almeno una dimensione, perché il
+     *   sistema non può verificare in anticipo se i suoi valori sono nomi
+     *   geografici riconoscibili - se non lo sono, fallisce a runtime con
+     *   un messaggio esplicito invece di essere preventivamente vietata.
+     * - BAR/BAR_HORIZONTAL/LINE/AREA: nessun vincolo oltre al minimo
+     *   comune (almeno una dimensione, almeno una metrica).
      */
     fun tipiAmmessi(pivotRowsCount: Int, metricheCount: Int): List<ChartType> {
-        val base = listOf(ChartType.BAR, ChartType.LINE, ChartType.AREA)
-        return if (pivotRowsCount == 1 && metricheCount == 1) base + ChartType.PIE else base
+        if (pivotRowsCount == 0 || metricheCount == 0) return emptyList()
+
+        val tipi = mutableListOf(ChartType.BAR, ChartType.BAR_HORIZONTAL, ChartType.LINE, ChartType.AREA)
+
+        if (pivotRowsCount == 1 && metricheCount == 1) {
+            tipi += ChartType.PIE
+            tipi += ChartType.DONUT
+        }
+        if (metricheCount >= 2) {
+            tipi += ChartType.SCATTER
+        }
+        if (metricheCount >= 3) {
+            tipi += ChartType.RADAR
+        }
+        tipi += ChartType.MAP
+
+        return tipi
     }
 
     /**

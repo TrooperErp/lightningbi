@@ -1,17 +1,14 @@
 package com.lightningbi.lightning_engine.view
 
 import com.lightningbi.lightning_engine.etl.EtlOrchestrator
-import com.lightningbi.lightning_engine.model.AggregateRequest
-import com.lightningbi.lightning_engine.model.AggregateResult
-import com.lightningbi.lightning_engine.model.AggregateRow
 import com.lightningbi.lightning_engine.model.Area
 import com.lightningbi.lightning_engine.model.SourceStatus
 import com.lightningbi.lightning_engine.repository.AreaSourceRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import com.lightningbi.lightning_engine.service.AggregateService
 import com.lightningbi.lightning_engine.service.AssociativeStateService
+import com.lightningbi.lightning_engine.service.ChartService
 import com.lightningbi.lightning_engine.service.CryptoService
-import com.lightningbi.lightning_engine.service.DimensionState
 import com.lightningbi.lightning_engine.service.MetadataService
 import com.lightningbi.lightning_engine.service.RegistryService
 import com.lightningbi.lightning_engine.service.SourceVerificationService
@@ -22,253 +19,215 @@ import com.lightningbi.lightning_engine.service.ViewSqlGenerator
 import com.vaadin.flow.component.AttachEvent
 import com.vaadin.flow.component.DetachEvent
 import com.vaadin.flow.component.button.Button
-import com.vaadin.flow.component.confirmdialog.ConfirmDialog
 import com.vaadin.flow.component.dialog.Dialog
-import com.vaadin.flow.component.grid.Grid
-import com.vaadin.flow.component.html.Div
-import com.vaadin.flow.component.html.Image
 import com.vaadin.flow.component.html.Span
-import com.vaadin.flow.component.listbox.MultiSelectListBox
 import com.vaadin.flow.component.notification.Notification
-import com.vaadin.flow.component.orderedlayout.FlexComponent
-import com.vaadin.flow.component.orderedlayout.HorizontalLayout
 import com.vaadin.flow.component.orderedlayout.VerticalLayout
 import com.vaadin.flow.component.textfield.TextArea
-import com.vaadin.flow.data.renderer.ComponentRenderer
+import com.vaadin.flow.router.AfterNavigationEvent
+import com.vaadin.flow.router.AfterNavigationObserver
+import com.vaadin.flow.router.BeforeEvent
+import com.vaadin.flow.router.HasUrlParameter
+import com.vaadin.flow.router.OptionalParameter
 import com.vaadin.flow.router.Route
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
+/**
+ * Controller/Presenter: decide COSA succede quando, orchestrando Data
+ * (query) e Ui (disegno). Non fa query direttamente (usa data), non
+ * costruisce componenti Vaadin direttamente oltre a quelli necessari
+ * per i propri dialog (wizard, conferme) - il grosso del disegno vive
+ * in AssociativeExplorerUi.
+ *
+ * @Route("associative") risponde sia a /associative sia a
+ * /associative/{id}. setParameter() si limita a memorizzare il
+ * parametro; afterNavigation() (che gira dopo che la navigazione è
+ * completamente avvenuta) innesca il vero caricamento.
+ */
 @Route("associative")
 class AssociativeExplorerView(
-    private val associativeStateService: AssociativeStateService,
-    private val aggregateService: AggregateService,
-    private val versionService: VersionService,
     private val registryRepository: RegistryRepository,
     private val registryService: RegistryService,
     private val symbolTableService: SymbolTableService,
-    private val symbolLookupService: SymbolLookupService,
     private val areaSourceRepository: AreaSourceRepository,
-    private val sourceVerificationService: SourceVerificationService,
-    private val etlOrchestrator: EtlOrchestrator,
     private val cryptoService: CryptoService,
     private val metadataService: MetadataService,
-    private val viewSqlGenerator: ViewSqlGenerator
-) : VerticalLayout() {
+    private val viewSqlGenerator: ViewSqlGenerator,
+    associativeStateService: AssociativeStateService,
+    aggregateService: AggregateService,
+    chartService: ChartService,
+    versionService: VersionService,
+    symbolLookupService: SymbolLookupService,
+    sourceVerificationService: SourceVerificationService,
+    etlOrchestrator: EtlOrchestrator
+) : VerticalLayout(), HasUrlParameter<String>, AfterNavigationObserver {
+
+    private val data = AssociativeExplorerData(
+        registryRepository, areaSourceRepository, sourceVerificationService,
+        associativeStateService, aggregateService, chartService,
+        versionService, symbolLookupService, etlOrchestrator
+    )
+
+    private val ui = AssociativeExplorerUi(
+        onFilterSelectionChanged = { dimId, values -> onFilterSelectionChanged(dimId, values) },
+        onRemoveSelection = { dimId, valueId -> onRemoveSelection(dimId, valueId) },
+        onPivotChanged = { rows, values -> onPivotChanged(rows, values) }
+    )
 
     private var areaId: UUID? = null
+    private var pendingParameter: String? = null
 
     private val selections = mutableMapOf<UUID, Set<Long>>()
-    private val dimensionBoxes = mutableMapOf<UUID, MultiSelectListBox<Long>>()
-    private val currentItems = mutableMapOf<UUID, List<Long>>()
     private val dimensionNames = mutableMapOf<UUID, String>()
-    // Colonna fisica di ogni dimensione nell'area: serve a rigenerare
-    // l'etichetta "nome (colonna)" quando ricostruiamo le card in base al
-    // pivot, senza dover riconsultare il registry ogni volta.
     private val dimensionColumns = mutableMapOf<UUID, String>()
 
     private var pivotRows: List<UUID> = emptyList()
     private var pivotValues: List<UUID> = emptyList()
-    private val pivotPanel = PivotPanel { rows, values -> onPivotChanged(rows, values) }
 
     private val requestCounter = AtomicLong(0)
-    private val resultsGrid = Grid<AggregateRow>()
-    private val filtersColumn = VerticalLayout()
-    private val activeSelectionsBar = Div().apply { className = "lbi-active-selections" }
-    private val sidebar = LbiSidebarMenu()
-    private val sourceStatusLabel = Span().apply { className = "lbi-source-status" }
+
+    private lateinit var shell: LbiAppShell
 
     private var sourceStatus: SourceStatus? = null
     private var hasSource: Boolean = false
 
     private var viewScope: CoroutineScope? = null
-    private var isDark = false
     private var currentAreas: List<Area> = emptyList()
 
     init {
-        className = "lbi-app"
         setSizeFull()
         isPadding = false
         isSpacing = false
 
-        currentAreas = registryRepository.findAllAree()
+        currentAreas = data.findAllAree()
 
-        val logoImage = Image("images/logo.png", "LightningBI").apply { className = "lbi-logo-img" }
-        val logoSpan = Span("LightningBI").apply { className = "lbi-logo" }
-        val logoContainer = HorizontalLayout(logoImage, logoSpan).apply {
-            className = "lbi-logo-container"
-            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
-            isSpacing = true
+        shell = LbiAppShell(buildMenuGroups(), ui.root)
+        add(shell)
+        setFlexGrow(1.0, shell)
+    }
+
+    override fun setParameter(event: BeforeEvent, @OptionalParameter parameter: String?) {
+        pendingParameter = parameter
+    }
+
+    override fun afterNavigation(event: AfterNavigationEvent) {
+        val requestedId = pendingParameter?.let {
+            try { UUID.fromString(it) } catch (e: IllegalArgumentException) { null }
         }
-
-        val themeToggle = Button("Dark").apply {
-            className = "lbi-theme-toggle"
-            addClickListener {
-                isDark = !isDark
-                element.executeJs(
-                    "document.documentElement.setAttribute('theme', \$0)",
-                    if (isDark) "dark" else ""
-                )
-                text = if (isDark) "Light" else "Dark"
-            }
+        if (requestedId != null) {
+            switchArea(requestedId)
+        } else if (currentAreas.isNotEmpty() && areaId == null) {
+            switchArea(currentAreas.first().id)
         }
-
-        val topMenuBar = HorizontalLayout(logoContainer, themeToggle).apply {
-            className = "lbi-topmenu"
-            justifyContentMode = FlexComponent.JustifyContentMode.BETWEEN
-            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
-            setWidthFull()
-        }
-
-        sidebar.setGroups(buildMenuGroups())
-
-        resultsGrid.className = "lbi-results-grid"
-        resultsGrid.setSizeFull()
-
-        val statusRow = HorizontalLayout(sourceStatusLabel).apply {
-            className = "lbi-action-bar"
-            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
-            isPadding = false
-            setWidthFull()
-        }
-
-        val centerArea = VerticalLayout(
-            statusRow,
-            pivotPanel,
-            Span("Risultati").apply { className = "lbi-section-title" },
-            resultsGrid
-        ).apply {
-            className = "lbi-center"
-            setSizeFull()
-            isPadding = true
-            setFlexGrow(0.0, statusRow)
-            setFlexGrow(0.0, pivotPanel)
-            setFlexGrow(1.0, resultsGrid)
-        }
-
-        filtersColumn.className = "lbi-filters-column"
-        filtersColumn.width = "350px"
-        filtersColumn.height = "100%"
-        filtersColumn.add(activeSelectionsBar)
-
-        val body = HorizontalLayout(sidebar, centerArea, filtersColumn).apply {
-            className = "lbi-body"
-            setSizeFull()
-            isPadding = false
-            isSpacing = true
-            setFlexGrow(0.0, sidebar)
-            setFlexGrow(1.0, centerArea)
-            setFlexGrow(0.0, filtersColumn)
-        }
-
-        add(topMenuBar, body)
-        setFlexGrow(0.0, topMenuBar)
-        setFlexGrow(1.0, body)
-
-        // Nessuna analisi aperta all'avvio.
     }
 
     // ================= Sidebar =================
 
     private fun buildMenuGroups(): List<LbiSidebarMenu.MenuGroup> {
-        val groups = mutableListOf(
+        val currentAreaId = areaId
+        return listOf(
             LbiSidebarMenu.MenuGroup(
                 label = "Analisi",
                 entries = currentAreas.map { area ->
                     LbiSidebarMenu.MenuEntry(area.nome) { switchArea(area.id) }
-                } + LbiSidebarMenu.MenuEntry("+ Nuova analisi") { openNewAnalysisWizard() }
-            )
-        )
-
-        if (areaId != null) {
-            val verificaEnabled = hasSource
-            val sincronizzaEnabled = hasSource && sourceStatus == SourceStatus.VERIFIED
-            val sqlEnabled = hasSource
-
-            groups.add(
-                LbiSidebarMenu.MenuGroup(
-                    label = "Gestisci",
-                    entries = listOf(
-                        LbiSidebarMenu.MenuEntry("Verifica sorgente", enabled = verificaEnabled) { verifySource() },
-                        LbiSidebarMenu.MenuEntry("Mostra SQL view", enabled = sqlEnabled) { showViewSql() },
-                        LbiSidebarMenu.MenuEntry("Sincronizza", enabled = sincronizzaEnabled) { runEtl() },
-                        LbiSidebarMenu.MenuEntry("Modifica metriche") { openEditMetrics() },
-                        LbiSidebarMenu.MenuEntry("Elimina analisi") { confirmDeleteArea() }
-                    )
-                )
-            )
-        }
-
-        groups.add(
+                } + LbiSidebarMenu.MenuEntry("+ Nuova analisi") { openNewAnalysisWizard() },
+                active = true
+            ),
             LbiSidebarMenu.MenuGroup(
-                label = "Amministrazione",
+                label = "Gestisci",
                 entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Gestione utenti") { Notification.show("Funzione in arrivo") }
+                    LbiSidebarMenu.MenuEntry("Verifica sorgente", enabled = hasSource) { verifySource() },
+                    LbiSidebarMenu.MenuEntry("Mostra SQL view", enabled = hasSource) { showViewSql() },
+                    LbiSidebarMenu.MenuEntry("Sincronizza", enabled = hasSource && sourceStatus == SourceStatus.VERIFIED) { runEtl() },
+                    LbiSidebarMenu.MenuEntry("Modifica metriche", enabled = currentAreaId != null) { openEditMetrics() },
+                    LbiSidebarMenu.MenuEntry("Elimina analisi", enabled = currentAreaId != null) { confirmDeleteArea() }
                 )
-            )
-        )
-        groups.add(
+            ),
+            LbiSidebarMenu.MenuGroup(
+                label = "Grafici",
+                entries = listOf(
+                    LbiSidebarMenu.MenuEntry("Gestisci grafici", enabled = currentAreaId != null) {
+                        navigateToCharts(currentAreaId)
+                    }
+                )
+            ),
             LbiSidebarMenu.MenuGroup(
                 label = "Report",
-                entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Stampe") { Notification.show("Funzione in arrivo") }
-                )
+                entries = listOf(LbiSidebarMenu.MenuEntry("Stampe") { Notification.show("Funzione in arrivo") })
+            ),
+            LbiSidebarMenu.MenuGroup(
+                label = "Amministrazione",
+                entries = listOf(LbiSidebarMenu.MenuEntry("Gestione utenti") { Notification.show("Funzione in arrivo") })
             )
         )
-        return groups
     }
+
+    private fun refreshSidebar() {
+        shell.updateMenuGroups(buildMenuGroups())
+    }
+
+    private fun navigateToCharts(currentAreaId: UUID?) {
+        if (currentAreaId == null) return
+        AnalysisWorkStateHolder.save(
+            AnalysisWorkState(currentAreaId, pivotRows, pivotValues, selections.toMap())
+        )
+        getUI().ifPresent { it.navigate(ChartsView::class.java, currentAreaId.toString()) }
+    }
+
+    // ================= Sorgente =================
 
     private fun refreshSourceStatus() {
         val currentAreaId = areaId
         if (currentAreaId == null) {
             hasSource = false
             sourceStatus = null
-            sourceStatusLabel.text = ""
-            sidebar.setGroups(buildMenuGroups())
+            ui.setSourceStatusText("")
+            refreshSidebar()
             return
         }
 
-        val source = areaSourceRepository.findByArea(currentAreaId).firstOrNull()
+        val source = data.findSourceByArea(currentAreaId)
         hasSource = source != null
         sourceStatus = source?.status
 
-        sourceStatusLabel.text = when {
-            source == null -> "Nessuna sorgente collegata"
-            source.status == SourceStatus.VERIFIED -> "Sorgente verificata: ${source.config.viewName}"
-            source.status == SourceStatus.ERROR -> "Sorgente in errore: ${source.errorDetail ?: "causa non registrata"}"
-            else -> "View da creare sul database di origine (${source.config.viewName})"
-        }
-
-        sidebar.setGroups(buildMenuGroups())
+        ui.setSourceStatusText(
+            when {
+                source == null -> "Nessuna sorgente collegata"
+                source.status == SourceStatus.VERIFIED -> "Sorgente verificata: ${source.config.viewName}"
+                source.status == SourceStatus.ERROR -> "Sorgente in errore: ${source.errorDetail ?: "causa non registrata"}"
+                else -> "View da creare sul database di origine (${source.config.viewName})"
+            }
+        )
+        refreshSidebar()
     }
 
     private fun verifySource() {
         val currentAreaId = areaId ?: return
-        val ui = ui.orElse(null) ?: return
+        val vaadinUi = getUI().orElse(null) ?: return
         val scope = viewScope ?: return
 
-        sourceStatusLabel.text = "Verifica in corso..."
+        ui.setSourceStatusText("Verifica in corso...")
 
         scope.launch {
             val results = try {
-                sourceVerificationService.verifyArea(currentAreaId)
+                data.verifySource(currentAreaId)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                ui.access {
+                vaadinUi.access {
                     Notification.show("Verifica fallita: ${e.message}", 6000, Notification.Position.MIDDLE)
                     refreshSourceStatus()
                 }
                 return@launch
             }
-            ui.access {
+            vaadinUi.access {
                 if (areaId != currentAreaId) return@access
                 val failed = results.firstOrNull { !it.ok }
                 if (failed != null) {
@@ -283,20 +242,20 @@ class AssociativeExplorerView(
 
     private fun runEtl() {
         val currentAreaId = areaId ?: return
-        val ui = ui.orElse(null) ?: return
+        val vaadinUi = getUI().orElse(null) ?: return
         val scope = viewScope ?: return
-        val sources = areaSourceRepository.findByArea(currentAreaId)
+        val sources = data.findSourcesByArea(currentAreaId)
         if (sources.isEmpty()) {
             Notification.show("Nessuna sorgente da sincronizzare")
             return
         }
 
-        sourceStatusLabel.text = "Sincronizzazione in corso..."
+        ui.setSourceStatusText("Sincronizzazione in corso...")
 
         scope.launch {
             try {
-                sources.forEach { etlOrchestrator.runForArea(currentAreaId, it) }
-                ui.access {
+                sources.forEach { data.runEtl(currentAreaId, it) }
+                vaadinUi.access {
                     if (areaId != currentAreaId) return@access
                     Notification.show("Sincronizzazione completata", 4000, Notification.Position.BOTTOM_END)
                     refreshSourceStatus()
@@ -305,7 +264,7 @@ class AssociativeExplorerView(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                ui.access {
+                vaadinUi.access {
                     Notification.show(
                         "Sincronizzazione fallita: ${e.message ?: e::class.simpleName}",
                         8000, Notification.Position.MIDDLE
@@ -318,9 +277,9 @@ class AssociativeExplorerView(
 
     private fun showViewSql() {
         val currentAreaId = areaId ?: return
-        val source = areaSourceRepository.findByArea(currentAreaId).firstOrNull() ?: return
+        val source = data.findSourceByArea(currentAreaId) ?: return
 
-        val attese = sourceVerificationService.expectedColumns(currentAreaId, source.config.syncMode)
+        val attese = data.expectedColumns(currentAreaId, source.config.syncMode)
         val dialog = Dialog().apply {
             className = "lbi-wizard-dialog"
             headerTitle = "View attesa: ${source.config.viewName}"
@@ -343,6 +302,8 @@ class AssociativeExplorerView(
         dialog.open()
     }
 
+    // ================= Metriche / Eliminazione =================
+
     private fun openEditMetrics() {
         val currentAreaId = areaId ?: return
         EditMetricsDialog(currentAreaId, registryService) {
@@ -355,14 +316,18 @@ class AssociativeExplorerView(
         val currentAreaId = areaId ?: return
         val areaNome = currentAreas.find { it.id == currentAreaId }?.nome ?: "questa analisi"
 
-        ConfirmDialog(
-            "Eliminare \"$areaNome\"?",
-            "L'analisi, le sue metriche, i collegamenti alle dimensioni e i dati caricati verranno rimossi. L'operazione non è reversibile.",
-            "Elimina",
-            { _ -> performDeleteArea(currentAreaId) },
-            "Annulla",
-            { _ -> }
-        ).open()
+        val dialog = Dialog().apply {
+            headerTitle = "Eliminare \"$areaNome\"?"
+            width = "440px"
+        }
+        dialog.add(Span("L'analisi, le sue metriche, i collegamenti alle dimensioni e i dati caricati verranno rimossi. L'operazione non è reversibile."))
+        val cancelButton = Button("Annulla") { dialog.close() }
+        val confirmButton = Button("Elimina") {
+            performDeleteArea(currentAreaId)
+            dialog.close()
+        }
+        dialog.footer.add(cancelButton, confirmButton)
+        dialog.open()
     }
 
     private fun performDeleteArea(targetAreaId: UUID) {
@@ -371,33 +336,34 @@ class AssociativeExplorerView(
         } catch (e: Exception) {
             Notification.show("Errore durante l'eliminazione: ${e.message}", 8000, Notification.Position.MIDDLE)
         }
-        currentAreas = registryRepository.findAllAree()
+        currentAreas = data.findAllAree()
         if (areaId == targetAreaId) {
             areaId = null
             resetAreaState()
             currentAreas.firstOrNull()?.let { switchArea(it.id) } ?: refreshSourceStatus()
         } else {
-            sidebar.setGroups(buildMenuGroups())
+            refreshSidebar()
         }
         Notification.show("Analisi eliminata", 4000, Notification.Position.BOTTOM_END)
     }
-
-    // ================= Wizard =================
 
     private fun openNewAnalysisWizard() {
         NewAnalysisWizardDialog(
             registryService, registryRepository, symbolTableService,
             areaSourceRepository, cryptoService, metadataService, viewSqlGenerator
         ) {
-            currentAreas = registryRepository.findAllAree()
-            currentAreas.lastOrNull()?.let { switchArea(it.id) } ?: sidebar.setGroups(buildMenuGroups())
+            currentAreas = data.findAllAree()
+            currentAreas.lastOrNull()?.let { switchArea(it.id) } ?: refreshSidebar()
         }.open()
     }
 
+    // ================= Ciclo di vita =================
+
     override fun onAttach(attachEvent: AttachEvent) {
         super.onAttach(attachEvent)
-        viewScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        refreshSourceStatus()
+        if (viewScope == null) {
+            viewScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        }
     }
 
     override fun onDetach(detachEvent: DetachEvent) {
@@ -406,275 +372,129 @@ class AssociativeExplorerView(
         super.onDetach(detachEvent)
     }
 
+    // ================= Cambio area =================
+
     private fun resetAreaState() {
         selections.clear()
-        dimensionBoxes.clear()
-        currentItems.clear()
         dimensionNames.clear()
         dimensionColumns.clear()
         pivotRows = emptyList()
         pivotValues = emptyList()
-        filtersColumn.removeAll()
-        filtersColumn.add(activeSelectionsBar)
-        renderActiveSelections(emptyMap(), emptyMap())
-        resultsGrid.setItems(emptyList())
-        resultsGrid.removeAllColumns()
+        ui.clearAll()
     }
 
     private fun switchArea(newAreaId: UUID) {
         areaId = newAreaId
         resetAreaState()
-        // Le card filtro nascono vuote: compaiono solo quando l'utente
-        // mette una dimensione in Righe nel pivot. dimensionNames e
-        // dimensionColumns vengono comunque popolati subito, servono a
-        // costruire le card quando il pivot cambia.
-        registryRepository.findDimensioniByArea(newAreaId).forEach { ad ->
-            registryRepository.findDimensione(ad.dimensioneId)?.let { dim ->
+
+        data.findDimensioniByArea(newAreaId).forEach { ad ->
+            data.findDimensione(ad.dimensioneId)?.let { dim ->
                 dimensionNames[ad.dimensioneId] = dim.nome
                 dimensionColumns[ad.dimensioneId] = ad.colonnaFisica
             }
         }
         refreshPivotFields(newAreaId)
         refreshSourceStatus()
+
+        val saved = AnalysisWorkStateHolder.read()
+        if (saved != null && saved.areaId == newAreaId) {
+            pivotRows = saved.pivotRows
+            pivotValues = saved.pivotValues
+            selections.putAll(saved.selections)
+            ui.pivotPanel.restoreState(pivotRows, pivotValues)
+            rebuildFilterCards(pivotRows)
+            AnalysisWorkStateHolder.clear()
+        }
+
         refresh()
     }
 
     private fun refreshPivotFields(currentAreaId: UUID) {
-        val dims = registryRepository.findDimensioniByArea(currentAreaId)
-            .mapNotNull { ad -> registryRepository.findDimensione(ad.dimensioneId)?.let { ad.dimensioneId to it.nome } }
-        val metriche = registryRepository.findMetricheByArea(currentAreaId).map { it.id to it.nome }
-        pivotPanel.setFieldsWithIds(dims, metriche)
+        val dims = data.findDimensioniByArea(currentAreaId)
+            .mapNotNull { ad -> data.findDimensione(ad.dimensioneId)?.let { ad.dimensioneId to it.nome } }
+        val metriche = data.findMetricheByArea(currentAreaId).map { it.id to it.nome }
+        ui.pivotPanel.setFieldsWithIds(dims, metriche)
     }
 
-    /**
-     * Richiamato dal PivotPanel ad ogni modifica di Righe/Valori.
-     *
-     * Le card filtro a destra mostrano SOLO le dimensioni presenti in
-     * Righe, mai l'intero ventaglio di dimensioni dell'area: se l'utente
-     * non ha scelto nessuna dimensione, non c'è nessuna card. Se toglie
-     * una dimensione dalle Righe, la sua card sparisce e la sua eventuale
-     * selezione viene cancellata insieme - un filtro su una dimensione che
-     * non fa più parte dell'analisi in corso non ha motivo di restare
-     * attivo silenziosamente.
-     */
+    // ================= Pivot / Filtri =================
+
     private fun onPivotChanged(rows: List<UUID>, values: List<UUID>) {
         val removedDims = pivotRows.filter { it !in rows }
         pivotRows = rows
         pivotValues = values
-
         removedDims.forEach { selections.remove(it) }
-
         rebuildFilterCards(rows)
         refresh()
     }
 
-    /**
-     * Ricostruisce le card filtro da zero in base alle dimensioni
-     * correnti del pivot. Chiamata ogni volta che pivotRows cambia.
-     */
     private fun rebuildFilterCards(rows: List<UUID>) {
-        filtersColumn.removeAll()
-        filtersColumn.add(activeSelectionsBar)
-        dimensionBoxes.clear()
-        currentItems.clear()
-
-        val dims = registryRepository.findDimensioniByArea(areaId ?: return)
-        rows.forEach { dimId ->
-            val areaDim = dims.find { it.dimensioneId == dimId } ?: return@forEach
-            val dimName = dimensionNames[dimId] ?: return@forEach
-
-            val box = MultiSelectListBox<Long>()
-            box.width = "100%"
-            box.setRenderer(neutralRenderer())
-            box.addSelectionListener { event ->
-                if (!event.isFromClient) return@addSelectionListener
-                selections[dimId] = event.value.toSet()
-                refresh()
-            }
-            dimensionBoxes[dimId] = box
-
-            val etichetta = if (rows.count { dimensionNames[it] == dimName } > 1) {
-                "$dimName (${areaDim.colonnaFisica})"
-            } else {
-                dimName
-            }
-
-            val title = Span(etichetta).apply { className = "lbi-filter-title" }
-            val card = VerticalLayout(title, box).apply { className = "lbi-filter-card" }
-            filtersColumn.add(card)
-        }
+        ui.rebuildFilterCards(
+            rows = rows,
+            dimensionNames = dimensionNames,
+            columnFor = { dimId -> dimensionColumns[dimId] },
+            countSameName = { name -> rows.count { dimensionNames[it] == name } }
+        )
     }
 
-    private fun clearSelection(dimId: UUID) {
-        selections.remove(dimId)
-        dimensionBoxes[dimId]?.deselectAll()
+    private fun onFilterSelectionChanged(dimId: UUID, values: Set<Long>) {
+        selections[dimId] = values
         refresh()
     }
 
+    private fun onRemoveSelection(dimId: UUID, valueId: Long) {
+        val current = selections[dimId]?.toMutableSet() ?: return
+        current.remove(valueId)
+        if (current.isEmpty()) selections.remove(dimId) else selections[dimId] = current
+        ui.deselectValue(dimId, valueId)
+        refresh()
+    }
+
+    // ================= Refresh =================
+
     /**
-     * Refresh completo: ricalcola stati associativi SOLO per le
-     * dimensioni presenti nel pivot (pivotRows), non più per tutte le
-     * dimensioni dell'area. Se pivotRows è vuoto non c'è nessuno stato da
-     * calcolare, e la chiamata a AssociativeStateService viene saltata.
+     * Punto unico di ricalcolo. Apre il dialog di caricamento, delega a
+     * data.refresh() il lavoro vero (query), poi delega a ui.render*()
+     * il disegno del risultato. Non fa mai query né costruisce
+     * componenti direttamente: coordina solo.
      */
     private fun refresh() {
         val currentAreaId = areaId ?: return
-        val ui = ui.orElse(null) ?: return
+        val vaadinUi = getUI().orElse(null) ?: return
         val scope = viewScope ?: return
         val myRequestId = requestCounter.incrementAndGet()
 
-        val selectionsSnapshot: Map<UUID, Set<Long>> = selections
-            .filterValues { it.isNotEmpty() }
-            .mapValues { it.value.toSet() }
+        ui.loadingDialog.open()
+
+        val selectionsSnapshot = selections.filterValues { it.isNotEmpty() }.mapValues { it.value.toSet() }
         val rowsSnapshot = pivotRows
         val valuesSnapshot = pivotValues
 
         scope.launch {
             try {
-                val versions = versionService.snapshotVersions(currentAreaId)
+                val result = data.refresh(currentAreaId, rowsSnapshot, valuesSnapshot, selectionsSnapshot, dimensionNames)
+                println("DEBUG: refresh completato, righe aggregati=${result.aggregates.rows.size}, grafici=${result.chartsData.size}")
 
-                val states = if (rowsSnapshot.isEmpty()) {
-                    emptyMap()
-                } else {
-                    associativeStateService.getStates(currentAreaId, selectionsSnapshot, versions)
-                        .filterKeys { it in rowsSnapshot }
-                }
-                val aggregates = aggregateService.getAggregates(
-                    AggregateRequest(
-                        areaId = currentAreaId,
-                        selections = selectionsSnapshot,
-                        groupBy = rowsSnapshot,
-                        metricIds = valuesSnapshot,
-                        resolveLabels = true
-                    ),
-                    versions
-                )
-
-                val labels = resolveLabels(states)
-
-                ui.access {
+                vaadinUi.access {
                     if (myRequestId != requestCounter.get()) return@access
                     if (areaId != currentAreaId) return@access
-                    renderStates(states, labels)
-                    renderActiveSelections(selectionsSnapshot, labels)
-                    renderResultsGrid(aggregates, rowsSnapshot)
+                    println("DEBUG: prima di renderStates")
+                    ui.renderStates(result.states, result.labels, data::labelOrFallback)
+                    println("DEBUG: prima di renderResultsGrid")
+                    ui.renderResultsGrid(result.aggregates, rowsSnapshot, dimensionNames)
+                    println("DEBUG: prima di renderCharts")
+                    ui.renderCharts(result.chartsData, rowsSnapshot)
+                    println("DEBUG: dopo renderCharts, tutto ok")
+                    ui.loadingDialog.close()
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                ui.access {
+                vaadinUi.access {
                     if (myRequestId != requestCounter.get()) return@access
+                    ui.loadingDialog.close()
                     Notification.show("Errore aggiornamento: ${e.message}", 5000, Notification.Position.BOTTOM_END)
                 }
             }
         }
-    }
-
-    private fun resolveLabels(states: Map<UUID, DimensionState>): Map<UUID, Map<Long, String>> =
-        states.mapNotNull { (dimId, state) ->
-            val dimName = dimensionNames[dimId] ?: return@mapNotNull null
-            val ids = state.verdi + state.grigi + state.selezionati
-            dimId to symbolLookupService.resolveLabels(dimName, ids)
-        }.toMap()
-
-    private fun renderActiveSelections(
-        selectionsSnapshot: Map<UUID, Set<Long>>,
-        labels: Map<UUID, Map<Long, String>>
-    ) {
-        activeSelectionsBar.removeAll()
-        selectionsSnapshot.forEach { (dimId, values) ->
-            if (values.isEmpty()) return@forEach
-            val dimName = dimensionNames[dimId] ?: return@forEach
-            val dimLabels = labels[dimId] ?: emptyMap()
-
-            values.sorted().forEach { valueId ->
-                val valueLabel = symbolLookupService.labelOrFallback(dimLabels, valueId)
-                val removeIcon = Span("×").apply {
-                    className = "lbi-active-chip-remove"
-                    addClickListener {
-                        val current = selections[dimId]?.toMutableSet() ?: return@addClickListener
-                        current.remove(valueId)
-                        if (current.isEmpty()) selections.remove(dimId) else selections[dimId] = current
-                        dimensionBoxes[dimId]?.let { box -> box.deselect(valueId) }
-                        refresh()
-                    }
-                }
-                val chip = Span().apply {
-                    className = "lbi-active-chip"
-                    add(Span("$dimName: $valueLabel"), removeIcon)
-                }
-                activeSelectionsBar.add(chip)
-            }
-        }
-    }
-
-    private fun renderStates(
-        states: Map<UUID, DimensionState>,
-        labels: Map<UUID, Map<Long, String>>
-    ) {
-        states.forEach { (dimId, state) ->
-            val box = dimensionBoxes[dimId] ?: return@forEach
-            val dimLabels = labels[dimId] ?: emptyMap()
-
-            val allValues = (state.verdi + state.grigi + state.selezionati)
-                .distinct()
-                .sortedBy { symbolLookupService.labelOrFallback(dimLabels, it) }
-
-            if (currentItems[dimId] != allValues) {
-                box.setItems(allValues)
-                currentItems[dimId] = allValues
-            }
-
-            box.setRenderer(ComponentRenderer { valueId ->
-                Span(symbolLookupService.labelOrFallback(dimLabels, valueId)).apply {
-                    className = when {
-                        valueId in state.selezionati -> "state-selected"
-                        valueId in state.verdi -> "state-possible"
-                        else -> "state-excluded"
-                    }
-                }
-            })
-
-            if (box.value != state.selezionati) {
-                box.value = state.selezionati
-            }
-        }
-    }
-
-    private fun renderResultsGrid(result: AggregateResult, rows: List<UUID>) {
-        resultsGrid.removeAllColumns()
-
-        if (result.rows.isEmpty()) {
-            resultsGrid.setItems(emptyList())
-            return
-        }
-
-        rows.forEach { dimId ->
-            val dimName = dimensionNames[dimId] ?: "?"
-            resultsGrid.addColumn { row: AggregateRow ->
-                row.labels[dimId] ?: row.groupKeys[dimId]?.let { "#$it" } ?: "—"
-            }.setHeader(dimName).setAutoWidth(true)
-        }
-
-        val metricNames = result.rows.first().values.keys.toList()
-        metricNames.forEach { name ->
-            resultsGrid.addColumn { row: AggregateRow -> row.values[name]?.toString() ?: "" }
-                .setHeader(name)
-                .setAutoWidth(true)
-        }
-
-        resultsGrid.setItems(result.rows)
-
-        if (result.truncated) {
-            val messaggio = if (rows.isEmpty())
-                "Risultato troncato: troppe righe da mostrare"
-            else
-                "Troppe combinazioni da mostrare: prova a togliere una dimensione dalle Righe"
-            Notification.show(messaggio, 5000, Notification.Position.BOTTOM_END)
-        }
-    }
-
-    private fun neutralRenderer() = ComponentRenderer<Span, Long> { valueId ->
-        Span(valueId.toString()).apply { className = "state-possible" }
     }
 }

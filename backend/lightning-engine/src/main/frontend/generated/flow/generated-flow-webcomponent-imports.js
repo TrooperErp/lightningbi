@@ -11,8 +11,11 @@ import 'react';
 injectGlobalWebcomponentCss($cssFromFile_0.toString());
 const loadOnDemand = (key) => {
   const pending = [];
+  if (key === '6200366fed7c7273360acb3003ed785a36114178aa190b855ed43428396b8f51') {
+    pending.push(import('./chunks/chunk-0b63ac148de4a2d05db30d79054817da5a4426280a29c387b895385ff3de9b5b.js'));
+  }
   if (key === '20177c7fbddc3cbb2ad8a9de8f440f79cb12c66b35bf4a53949539ad577e04da') {
-    pending.push(import('./chunks/chunk-ca96ee1983d42a413eb299d14235bd8c1a193e662f3201aae7581498a7e167a1.js'));
+    pending.push(import('./chunks/chunk-0b63ac148de4a2d05db30d79054817da5a4426280a29c387b895385ff3de9b5b.js'));
   }
   return Promise.all(pending);
 }
