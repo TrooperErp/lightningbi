@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Una dimensione collegata ad un'area può essere un valore numerico
+      già significativo di per sé (es. mese_numero, trimestre_numero),
+      non una categoria da tradurre tramite symbol table. Finora
+      TransformService trattava ogni dimensione allo stesso modo,
+      passando il valore stringa per getOrCreateIds e assegnando un id
+      sequenziale in ordine di prima apparizione: per una colonna già
+      numerica questo produce uno shift silenzioso (es. mese "9" letto
+      per primo diventa id=1, sfalsando ogni mese successivo), un bug
+      reale scoperto confrontando i dati ClickHouse con la sorgente.
+
+      valore_grezzo=true dice a TransformService di scrivere il valore
+      numerico diretto (raw.toLong()) invece di passare da
+      SymbolLookupService.getOrCreateIds per questa colonna. Di
+      conseguenza la sua label non passa da resolveLabels (che cerca
+      nella symbol table, inesistente per questi valori) ma da
+      DimensionFormatters, con fallback al numero grezzo se nessun
+      formatter è registrato per quella colonna.
+
+      Default false: ogni dimensione esistente resta categorica come
+      oggi, comportamento invariato finché non marcata esplicitamente.
+    -->
+    <changeSet id="24" author="lightningbi">
+        <addColumn tableName="lbi_area_dimensione">
+            <column name="valore_grezzo" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

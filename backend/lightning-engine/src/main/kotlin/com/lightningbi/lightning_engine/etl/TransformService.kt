@@ -13,58 +13,22 @@ class TransformService(
 ) {
     private val log = LoggerFactory.getLogger(TransformService::class.java)
 
-    /**
-     * Id riservato al valore mancante.
-     *
-     * Le colonne dimensione su ClickHouse sono UInt32 NOT NULL: scriverci
-     * null fa fallire l'insert. Serve quindi un id che rappresenti
-     * esplicitamente "nessun valore", distinto da qualunque id reale.
-     * Le symbol table partono da 1 (max(value_id) + 1 con tabella vuota),
-     * quindi lo zero è libero per costruzione.
-     *
-     * Conseguenza per l'interfaccia: lo zero comparirà fra i valori
-     * selezionabili di una dimensione non obbligatoria. Va risolto in
-     * etichetta come "(non definito)" al momento della visualizzazione.
-     */
     companion object {
         const val NULL_VALUE_ID = 0L
         const val NULL_VALUE_LABEL = "(non definito)"
     }
 
-    /**
-     * Converte le righe estratte dalla view in righe pronte per ClickHouse.
-     *
-     * Le chiavi in ingresso sono già i nomi delle colonne fisiche: la view
-     * espone gli alias normalizzati da Naming, che coincidono con
-     * AreaDimensione.colonnaFisica e AreaMetrica.colonnaFisica. Non c'è
-     * quindi nessun rimappaggio da fare qui, né a monte.
-     *
-     * Le metriche con colonnaFisica nulla (COUNT senza colonna, es.
-     * COUNT(*)) non hanno un dato da leggere riga per riga: il valore lo
-     * calcola AggregateService a lettura, non viene mai caricato in
-     * ClickHouse. Vanno quindi escluse sia dalle colonne attese sia dal
-     * ciclo di scrittura della riga.
-     *
-     * @return righe valide, righe scartate
-     */
     fun transform(
         rows: List<Map<String, Any?>>,
         dimensioni: List<AreaDimensione>,
-        dimensioneNomiById: Map<String, String>, // dimensione_id -> nome logico dimensione
+        dimensioneNomiById: Map<String, String>,
         metriche: List<AreaMetrica>
     ): Pair<List<Map<String, Any?>>, List<Map<String, Any?>>> {
 
         if (rows.isEmpty()) return emptyList<Map<String, Any?>>() to emptyList()
 
-        // Solo le metriche che hanno davvero una colonna fisica vengono
-        // caricate riga per riga: COUNT(*) non ha nulla da leggere dalla
-        // sorgente.
         val metricheConColonna = metriche.filter { it.colonnaFisica != null }
 
-        // Verifica preventiva: se la view non espone una colonna attesa, tutte
-        // le righe risulterebbero null e la tabella si riempirebbe di zeri
-        // senza che nessuno se ne accorga. Meglio fallire subito e dire quale
-        // colonna manca.
         val colonneDisponibili = rows.first().keys
         val attese = dimensioni.map { it.colonnaFisica } + metricheConColonna.map { it.colonnaFisica!! }
         val mancanti = attese - colonneDisponibili
@@ -73,12 +37,18 @@ class TransformService(
                     "Colonne trovate: ${colonneDisponibili.joinToString(", ")}"
         }
 
+        // Le dimensioni a valore grezzo (es. mese_numero) non passano da
+        // symbol table: il loro valore è già l'id da scrivere. Vanno
+        // escluse dal calcolo di idMaps, che serve solo alle dimensioni
+        // categoriche (colonnePerDimensione sotto).
+        val dimensioniCategoriche = dimensioni.filterNot { it.valoreGrezzo }
+
         // Una stessa dimensione può comparire più volte nella stessa area con
         // ruoli diversi (data ordine e data consegna entrambe sulla dimensione
         // Tempo). I valori vanno quindi raccolti per NOME DIMENSIONE unendo
         // tutte le colonne che vi puntano, non per colonna: altrimenti si
         // farebbero due lookup concorrenti sulla stessa symbol table.
-        val colonnePerDimensione: Map<String, List<String>> = dimensioni
+        val colonnePerDimensione: Map<String, List<String>> = dimensioniCategoriche
             .mapNotNull { ad ->
                 val nome = dimensioneNomiById[ad.dimensioneId.toString()] ?: return@mapNotNull null
                 nome to ad.colonnaFisica
@@ -108,6 +78,31 @@ class TransformService(
                 }
                 val raw = row[ad.colonnaFisica]?.toString()?.takeIf { it.isNotBlank() }
 
+                if (ad.valoreGrezzo) {
+                    // Valore già numerico: scritto diretto, nessun lookup
+                    // in symbol table. Un valore non parsabile come Long
+                    // scarta la riga invece di scrivere un numero a caso.
+                    if (raw == null) {
+                        if (ad.obbligatoria) {
+                            rowValid = false
+                            break
+                        }
+                        out[ad.colonnaFisica] = NULL_VALUE_ID
+                    } else {
+                        val numero = raw.toLongOrNull()
+                        if (numero == null) {
+                            log.warn(
+                                "Valore '{}' non numerico per la dimensione a valore grezzo '{}': riga scartata",
+                                raw, nome
+                            )
+                            rowValid = false
+                            break
+                        }
+                        out[ad.colonnaFisica] = numero
+                    }
+                    continue
+                }
+
                 if (raw == null) {
                     if (ad.obbligatoria) {
                         rowValid = false
@@ -131,8 +126,6 @@ class TransformService(
 
             if (rowValid) {
                 metricheConColonna.forEach { m ->
-                    // Le metriche sono Decimal(18,4) NOT NULL: un null va
-                    // trattato come zero, non propagato.
                     out[m.colonnaFisica!!] = toDecimal(row[m.colonnaFisica])
                 }
                 valid += out
@@ -147,12 +140,6 @@ class TransformService(
         return valid to errors
     }
 
-    /**
-     * Le metriche arrivano dal driver come tipi diversi a seconda del DB
-     * (BigDecimal, Double, Long, o String su qualche driver). ClickHouse
-     * vuole un Decimal: si normalizza qui invece di sperare che il driver
-     * di destinazione accetti qualunque cosa.
-     */
     private fun toDecimal(value: Any?): BigDecimal = when (value) {
         null -> BigDecimal.ZERO
         is BigDecimal -> value

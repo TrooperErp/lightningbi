@@ -34,7 +34,8 @@ class RegistryRepositoryImpl(
                 UUID.fromString(rs.getString("dimensione_id")),
                 rs.getString("colonna_fisica"),
                 rs.getBoolean("obbligatoria"),
-                rs.getObject("cardinalita_stimata") as Long?
+                rs.getObject("cardinalita_stimata") as Long?,
+                rs.getBoolean("valore_grezzo")
             ) },
             areaId
         )
@@ -115,8 +116,8 @@ class RegistryRepositoryImpl(
 
     override fun saveAreaDimensione(ad: AreaDimensione) {
         jdbcTemplate.update(
-            "INSERT INTO lbi_area_dimensione (area_id, dimensione_id, colonna_fisica, obbligatoria, cardinalita_stimata) VALUES (?, ?, ?, ?, ?)",
-            ad.areaId, ad.dimensioneId, ad.colonnaFisica, ad.obbligatoria, ad.cardinalitaStimata
+            "INSERT INTO lbi_area_dimensione (area_id, dimensione_id, colonna_fisica, obbligatoria, cardinalita_stimata, valore_grezzo) VALUES (?, ?, ?, ?, ?, ?)",
+            ad.areaId, ad.dimensioneId, ad.colonnaFisica, ad.obbligatoria, ad.cardinalitaStimata, ad.valoreGrezzo
         )
     }
 

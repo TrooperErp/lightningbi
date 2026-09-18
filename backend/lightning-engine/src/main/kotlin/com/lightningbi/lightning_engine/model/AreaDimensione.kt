@@ -22,7 +22,20 @@ data class AreaDimensione(
     val dimensioneId: UUID,
     val colonnaFisica: String,
     val obbligatoria: Boolean,
-    val cardinalitaStimata: Long?
+    val cardinalitaStimata: Long?,
+    /**
+     * true se il valore della colonna è già un numero significativo di
+     * per sé (es. mese_numero, trimestre_numero), non una categoria da
+     * tradurre tramite symbol table. TransformService scrive il valore
+     * grezzo diretto invece di passare da SymbolLookupService.
+     * getOrCreateIds, che per una colonna già numerica produrrebbe uno
+     * shift silenzioso (id sequenziale in ordine di prima apparizione,
+     * scollegato dal valore reale).
+     *
+     * Default false: ogni dimensione resta categorica come oggi finché
+     * non marcata esplicitamente al momento del collegamento.
+     */
+    val valoreGrezzo: Boolean = false
 )
 
 /** Come aggregare la colonna. COUNT non richiede che colonnaFisica sia valorizzata. */

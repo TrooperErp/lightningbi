@@ -69,10 +69,11 @@ class RegistryService(
         dimensioneId: UUID,
         colonnaFisica: String,
         obbligatoria: Boolean,
-        cardinalita: Long?
+        cardinalita: Long?,
+        valoreGrezzo: Boolean = false
     ) {
         registryRepository.saveAreaDimensione(
-            AreaDimensione(areaId, dimensioneId, Naming.column(colonnaFisica), obbligatoria, cardinalita)
+            AreaDimensione(areaId, dimensioneId, Naming.column(colonnaFisica), obbligatoria, cardinalita, valoreGrezzo)
         )
         registryRepository.bumpVersion()
     }
@@ -189,16 +190,19 @@ class RegistryService(
      * dove la tabella non esiste ancora), questo presume la tabella già
      * creata e la alterà in place - usarlo SOLO per aree esistenti.
      */
+
     @Transactional("postgresTransactionManager")
     fun linkDimensioneToExistingArea(
         areaId: UUID,
         dimensioneId: UUID,
         colonnaFisica: String,
         obbligatoria: Boolean,
-        cardinalita: Long? = null
+        cardinalita: Long? = null,
+        valoreGrezzo: Boolean = false
     ) {
         val area = registryRepository.findAreaById(areaId) ?: error("Area $areaId non trovata")
         symbolTableService.addColumnToAreaTable(area.tabellaFisica, colonnaFisica)
-        linkDimensioneToArea(areaId, dimensioneId, colonnaFisica, obbligatoria, cardinalita)
+        linkDimensioneToArea(areaId, dimensioneId, colonnaFisica, obbligatoria, cardinalita, valoreGrezzo)
     }
+
 }
