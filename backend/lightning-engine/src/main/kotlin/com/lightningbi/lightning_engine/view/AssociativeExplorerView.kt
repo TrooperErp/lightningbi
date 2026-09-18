@@ -425,7 +425,7 @@ class AssociativeExplorerView(
             pivotValues = saved.pivotValues
             selections.putAll(saved.selections)
             ui.pivotPanel.restoreState(pivotRows, pivotColumns, pivotValues)
-            rebuildFilterCards(pivotRows)
+            rebuildFilterCards(pivotRows, pivotColumns)
             AnalysisWorkStateHolder.clear()
         }
 
@@ -448,16 +448,17 @@ class AssociativeExplorerView(
         pivotColumns = columns
         pivotValues = values
         removedDims.forEach { selections.remove(it) }
-        rebuildFilterCards(rows)
+        rebuildFilterCards(rows, columns)
         refresh()
     }
 
-    private fun rebuildFilterCards(rows: List<UUID>) {
+    private fun rebuildFilterCards(rows: List<UUID>, columns: List<UUID>) {
+        val allDims = rows + columns
         ui.rebuildFilterCards(
-            rows = rows,
+            rows = allDims,
             dimensionNames = dimensionNames,
             columnFor = { dimId -> dimensionColumns[dimId] },
-            countSameName = { name -> rows.count { dimensionNames[it] == name } }
+            countSameName = { name -> allDims.count { dimensionNames[it] == name } }
         )
     }
 

@@ -97,11 +97,11 @@ class AssociativeExplorerData(
     ): RefreshResult {
         val versions = versionService.snapshotVersions(areaId)
 
-        val states = if (pivotRows.isEmpty()) {
+        val states = if (pivotRows.isEmpty() && pivotColumns.isEmpty()) {
             emptyMap()
         } else {
             associativeStateService.getStates(areaId, selections, versions)
-                .filterKeys { it in pivotRows }
+                .filterKeys { it in pivotRows || it in pivotColumns }
         }
 
         val aggregates = aggregateService.getAggregates(

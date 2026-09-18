@@ -37,7 +37,7 @@ class AssociativeStateService(
     private val log = LoggerFactory.getLogger(AssociativeStateService::class.java)
     private val cacheTtl = Duration.ofHours(6)
     private val domainCacheTtl = Duration.ofHours(24)
-    private val querySemaphore = Semaphore(4)
+    private val querySemaphore = Semaphore(10)
 
     suspend fun getStates(areaId: UUID, selections: Map<UUID, Set<Long>>): Map<UUID, DimensionState> =
         getStates(areaId, selections, versionService.snapshotVersions(areaId))
