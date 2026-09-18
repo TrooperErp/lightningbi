@@ -44,11 +44,10 @@ server:
 
 logging:
   level:
-    root: INFO
-    com.lightningbi: DEBUG
-    org.springframework.security: DEBUG
-    org.flywaydb: INFO
-    liquibase: INFO
+    root: WARN
+    com.lightningbi: INFO
+    org.springframework.security: WARN
+    com.lightningbi.lightning_engine.timing: DEBUG
 
 ---
 # ============ DEV ============

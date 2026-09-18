@@ -47,6 +47,7 @@ class AssociativeStateService(
         selections: Map<UUID, Set<Long>>,
         versions: VersionSnapshot
     ): Map<UUID, DimensionState> {
+        val startTotal = System.currentTimeMillis()
         val dims = registryRepository.findDimensioniByArea(areaId)
         val validDimIds = dims.map { it.dimensioneId }.toSet()
 
@@ -54,19 +55,29 @@ class AssociativeStateService(
             .filterKeys { it in validDimIds }
             .filterValues { it.isNotEmpty() }
 
+        val cardinalitaSelezione = cleanSelections.values.sumOf { it.size }
         val cacheKey = buildCacheKey(areaId, cleanSelections, versions)
 
         val cached = safeGet(cacheKey)
         if (cached != null) {
             try {
-                return deserialize(cached)
+                val result = deserialize(cached)
+                TimingRecorder.recordTotalCompute(
+                    areaId, dims.size, cardinalitaSelezione,
+                    System.currentTimeMillis() - startTotal, cacheHit = true
+                )
+                return result
             } catch (e: Exception) {
                 log.warn("Cache deserialization failed for key $cacheKey, recomputing", e)
             }
         }
 
-        val computed = computeStates(areaId, dims, cleanSelections, versions.dataVersion)
+        val computed = computeStates(areaId, dims, cleanSelections, versions.dataVersion, areaId)
         safeSet(cacheKey, serialize(computed))
+        TimingRecorder.recordTotalCompute(
+            areaId, dims.size, cardinalitaSelezione,
+            System.currentTimeMillis() - startTotal, cacheHit = false
+        )
         return computed
     }
 
@@ -74,34 +85,39 @@ class AssociativeStateService(
         areaId: UUID,
         dims: List<AreaDimensione>,
         selections: Map<UUID, Set<Long>>,
-        dataVersion: Long
+        dataVersion: Long,
+        areaIdForLogging: UUID
     ): Map<UUID, DimensionState> = coroutineScope {
         val area = registryRepository.findAreaById(areaId) ?: error("Area not found: $areaId")
         val dimById = dims.associateBy { it.dimensioneId }
 
         dims.map { dim ->
             async {
+                val waitStart = System.currentTimeMillis()
                 querySemaphore.withPermit {
+                    val waitMs = System.currentTimeMillis() - waitStart
                     val omitSelf = selections.filterKeys { it != dim.dimensioneId }
+                    val filtroSize = omitSelf.values.sumOf { it.size }
 
-                    // Il dominio è l'insieme dei valori PRESENTI IN QUEST'AREA,
-                    // non tutti i valori della symbol table.
-                    //
-                    // La symbol table di una dimensione è globale e condivisa
-                    // fra tutte le aree che la riusano (dimensione conformata).
-                    // Prendere di lì l'insieme "tutti" faceva comparire come
-                    // verdi valori che in quest'area non hanno nessuna riga:
-                    // l'utente li cliccava e otteneva zero risultati, cioè
-                    // esattamente ciò che il modello associativo deve impedire.
                     val dominio = areaDomainCached(area.tabellaFisica, dim.colonnaFisica, dataVersion)
 
+                    val queryStart = System.currentTimeMillis()
                     val verdi = if (omitSelf.isEmpty()) dominio
                     else withContext(Dispatchers.IO) {
                         queryDistinct(area.tabellaFisica, dim.colonnaFisica, omitSelf, dimById)
                     }
+                    val queryMs = System.currentTimeMillis() - queryStart
 
-                    // Una selezione su una dimensione la cui riga è poi stata
-                    // esclusa da altri filtri non deve restare nei verdi.
+                    TimingRecorder.recordDimensionQuery(
+                        areaId = areaIdForLogging,
+                        dimensioneNome = dim.colonnaFisica,
+                        dominioSize = dominio.size,
+                        filtroSize = filtroSize,
+                        tempoAttesaSemaforoMs = waitMs,
+                        tempoQueryMs = queryMs,
+                        cacheHit = omitSelf.isEmpty() // nessuna query DISTINCT lanciata: il dominio (già cachato) è servito com'è
+                    )
+
                     val selezionati = (selections[dim.dimensioneId] ?: emptySet()).intersect(dominio)
 
                     dim.dimensioneId to DimensionState(
