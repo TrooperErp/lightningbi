@@ -78,7 +78,7 @@ class AssociativeExplorerView(
     private val ui = AssociativeExplorerUi(
         onFilterSelectionChanged = { dimId, values -> onFilterSelectionChanged(dimId, values) },
         onRemoveSelection = { dimId, valueId -> onRemoveSelection(dimId, valueId) },
-        onPivotChanged = { rows, values -> onPivotChanged(rows, values) }
+        onPivotChanged = { rows, columns, values -> onPivotChanged(rows, columns, values) }
     )
 
     private var areaId: UUID? = null
@@ -89,6 +89,7 @@ class AssociativeExplorerView(
     private val dimensionColumns = mutableMapOf<UUID, String>()
 
     private var pivotRows: List<UUID> = emptyList()
+    private var pivotColumns: List<UUID> = emptyList()
     private var pivotValues: List<UUID> = emptyList()
 
     private val requestCounter = AtomicLong(0)
@@ -146,6 +147,7 @@ class AssociativeExplorerView(
                     LbiSidebarMenu.MenuEntry("Verifica sorgente", enabled = hasSource) { verifySource() },
                     LbiSidebarMenu.MenuEntry("Mostra SQL view", enabled = hasSource) { showViewSql() },
                     LbiSidebarMenu.MenuEntry("Sincronizza", enabled = hasSource && sourceStatus == SourceStatus.VERIFIED) { runEtl() },
+                    LbiSidebarMenu.MenuEntry("Modifica dimensioni", enabled = currentAreaId != null) { openEditDimensions() },
                     LbiSidebarMenu.MenuEntry("Modifica metriche", enabled = currentAreaId != null) { openEditMetrics() },
                     LbiSidebarMenu.MenuEntry("Elimina analisi", enabled = currentAreaId != null) { confirmDeleteArea() }
                 )
@@ -176,7 +178,13 @@ class AssociativeExplorerView(
     private fun navigateToCharts(currentAreaId: UUID?) {
         if (currentAreaId == null) return
         AnalysisWorkStateHolder.save(
-            AnalysisWorkState(currentAreaId, pivotRows, pivotValues, selections.toMap())
+            AnalysisWorkState(
+                areaId = currentAreaId,
+                pivotRows = pivotRows,
+                pivotColumns = pivotColumns,
+                pivotValues = pivotValues,
+                selections = selections.toMap()
+            )
         )
         getUI().ifPresent { it.navigate(ChartsView::class.java, currentAreaId.toString()) }
     }
@@ -301,7 +309,19 @@ class AssociativeExplorerView(
         dialog.footer.add(Button("Chiudi") { dialog.close() })
         dialog.open()
     }
-
+    private fun openEditDimensions() {
+        val currentAreaId = areaId ?: return
+        EditDimensionsDialog(
+            areaId = currentAreaId,
+            registryService = registryService,
+            areaSourceRepository = areaSourceRepository,
+            cryptoService = cryptoService,
+            metadataService = metadataService
+        ) {
+            refreshPivotFields(currentAreaId)
+            refresh()
+        }.open()
+    }
     // ================= Metriche / Eliminazione =================
 
     private fun openEditMetrics() {
@@ -380,6 +400,7 @@ class AssociativeExplorerView(
         dimensionNames.clear()
         dimensionColumns.clear()
         pivotRows = emptyList()
+        pivotColumns = emptyList()
         pivotValues = emptyList()
         ui.clearAll()
     }
@@ -400,9 +421,10 @@ class AssociativeExplorerView(
         val saved = AnalysisWorkStateHolder.read()
         if (saved != null && saved.areaId == newAreaId) {
             pivotRows = saved.pivotRows
+            pivotColumns = saved.pivotColumns
             pivotValues = saved.pivotValues
             selections.putAll(saved.selections)
-            ui.pivotPanel.restoreState(pivotRows, pivotValues)
+            ui.pivotPanel.restoreState(pivotRows, pivotColumns, pivotValues)
             rebuildFilterCards(pivotRows)
             AnalysisWorkStateHolder.clear()
         }
@@ -419,10 +441,11 @@ class AssociativeExplorerView(
 
     // ================= Pivot / Filtri =================
 
-    private fun onPivotChanged(rows: List<UUID>, values: List<UUID>) {
-        println("DEBUG: onPivotChanged chiamato, rows=$rows")
-        val removedDims = pivotRows.filter { it !in rows }
+    private fun onPivotChanged(rows: List<UUID>, columns: List<UUID>, values: List<UUID>) {
+        println("DEBUG: onPivotChanged chiamato, rows=$rows, columns=$columns")
+        val removedDims = (pivotRows + pivotColumns).filter { it !in rows && it !in columns }
         pivotRows = rows
+        pivotColumns = columns
         pivotValues = values
         removedDims.forEach { selections.remove(it) }
         rebuildFilterCards(rows)
@@ -458,6 +481,12 @@ class AssociativeExplorerView(
      * data.refresh() il lavoro vero (query), poi delega a ui.render*()
      * il disegno del risultato. Non fa mai query né costruisce
      * componenti direttamente: coordina solo.
+     *
+     * NOTA: pivotColumns non è ancora passato a data.refresh()/
+     * AggregateService - il calcolo dell'asse Colonne non è ancora
+     * cablato lato backend. Il pivot UI accetta già il drag&drop su
+     * Colonne, ma finché AggregateService non aggrega su due assi il
+     * risultato ignora pivotColumns.
      */
     private fun refresh() {
         val currentAreaId = areaId ?: return
@@ -469,11 +498,12 @@ class AssociativeExplorerView(
 
         val selectionsSnapshot = selections.filterValues { it.isNotEmpty() }.mapValues { it.value.toSet() }
         val rowsSnapshot = pivotRows
+        val columnsSnapshot = pivotColumns
         val valuesSnapshot = pivotValues
 
         scope.launch {
             try {
-                val result = data.refresh(currentAreaId, rowsSnapshot, valuesSnapshot, selectionsSnapshot, dimensionNames)
+                val result = data.refresh(currentAreaId, rowsSnapshot, columnsSnapshot, valuesSnapshot, selectionsSnapshot, dimensionNames)
                 println("DEBUG: refresh completato, righe aggregati=${result.aggregates.rows.size}, grafici=${result.chartsData.size}")
 
                 vaadinUi.access {
@@ -482,7 +512,7 @@ class AssociativeExplorerView(
                     println("DEBUG: prima di renderStates")
                     ui.renderStates(result.states, result.labels, data::labelOrFallback)
                     println("DEBUG: prima di renderResultsGrid")
-                    ui.renderResultsGrid(result.aggregates, rowsSnapshot, dimensionNames)
+                    ui.renderResultsGrid(result.aggregates, result.rowHierarchy, rowsSnapshot, dimensionNames)
                     println("DEBUG: prima di renderCharts")
                     ui.renderCharts(result.chartsData, rowsSnapshot)
                     println("DEBUG: dopo renderCharts, tutto ok")

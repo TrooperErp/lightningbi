@@ -13,22 +13,29 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout
 import java.util.UUID
 
 /**
- * Pannello pivot stile Excel: due zone (Righe, Valori) su cui trascinare i
- * campi dell'area. Ogni cambiamento richiama onChange con il nuovo stato,
- * che AssociativeExplorerView usa per rilanciare AggregateService.
+ * Pannello pivot stile Excel: tre zone (Righe, Colonne, Valori) su cui
+ * trascinare i campi dell'area. Righe e Colonne accettano solo dimensioni,
+ * Valori solo metriche. Ogni cambiamento richiama onChange con il nuovo
+ * stato, che AssociativeExplorerView usa per rilanciare AggregateService.
+ *
+ * Colonne è l'asse che permette confronti tipo "Fatturato per Mese,
+ * spaccato per Anno" (Mese in Righe, Anno in Colonne, Fatturato in
+ * Valori) — lo stesso pattern delle pivot table Excel/Qlik.
  */
 class PivotPanel(
-    private val onChange: (rows: List<UUID>, values: List<UUID>) -> Unit
+    private val onChange: (rows: List<UUID>, columns: List<UUID>, values: List<UUID>) -> Unit
 ) : VerticalLayout() {
 
     private data class Field(val id: UUID, val label: String, val isMetric: Boolean)
 
     private var allFields: List<Field> = emptyList()
     private val rowFields = mutableListOf<Field>()
+    private val columnFields = mutableListOf<Field>()
     private val valueFields = mutableListOf<Field>()
 
     private val poolBox = HorizontalLayout().apply { className = "lbi-pivot-pool"; isPadding = false }
     private val rowsBox = VerticalLayout().apply { className = "lbi-pivot-zone"; isPadding = false }
+    private val columnsBox = VerticalLayout().apply { className = "lbi-pivot-zone"; isPadding = false }
     private val valuesBox = VerticalLayout().apply { className = "lbi-pivot-zone"; isPadding = false }
 
     init {
@@ -36,31 +43,36 @@ class PivotPanel(
         className = "lbi-pivot-panel"
 
         add(
-            Span("Campi disponibili (trascina in Righe o Valori)").apply { className = "lbi-wizard-label" },
+            Span("Campi disponibili (trascina in Righe, Colonne o Valori)").apply { className = "lbi-wizard-label" },
             poolBox,
             HorizontalLayout(
                 VerticalLayout(Span("Righe").apply { className = "lbi-wizard-label" }, rowsBox).apply { isPadding = false },
+                VerticalLayout(Span("Colonne").apply { className = "lbi-wizard-label" }, columnsBox).apply { isPadding = false },
                 VerticalLayout(Span("Valori").apply { className = "lbi-wizard-label" }, valuesBox).apply { isPadding = false }
             ).apply { isPadding = false; setWidthFull() }
         )
 
-        setupDropTarget(rowsBox, isRowZone = true)
-        setupDropTarget(valuesBox, isRowZone = false)
+        setupDropTarget(rowsBox, zoneType = Zone.ROWS)
+        setupDropTarget(columnsBox, zoneType = Zone.COLUMNS)
+        setupDropTarget(valuesBox, zoneType = Zone.VALUES)
     }
+
+    private enum class Zone { ROWS, COLUMNS, VALUES }
 
     /**
      * Variante con id reali: usata da AssociativeExplorerView, che conosce
      * gli id veri di dimensioni e metriche (dimensioneId, metrica.id).
      *
      * Applica il default (tutte le metriche in Valori, nessuna dimensione
-     * in Righe). Se c'è uno stato da ripristinare dopo aver chiamato
-     * questo metodo, usare restoreState(): setFieldsWithIds da sola
-     * cancellerebbe sempre qualunque configurazione precedente.
+     * in Righe o Colonne). Se c'è uno stato da ripristinare dopo aver
+     * chiamato questo metodo, usare restoreState(): setFieldsWithIds da
+     * sola cancellerebbe sempre qualunque configurazione precedente.
      */
     fun setFieldsWithIds(dimensioni: List<Pair<UUID, String>>, metriche: List<Pair<UUID, String>>) {
         allFields = dimensioni.map { (id, nome) -> Field(id, nome, isMetric = false) } +
                 metriche.map { (id, nome) -> Field(id, nome, isMetric = true) }
         rowFields.clear()
+        columnFields.clear()
         valueFields.clear()
         valueFields.addAll(allFields.filter { it.isMetric })
         renderAll()
@@ -68,25 +80,28 @@ class PivotPanel(
     }
 
     /**
-     * Ripristina una configurazione specifica di Righe/Valori, al posto
-     * del default che setFieldsWithIds applica sempre. Da chiamare SUBITO
-     * DOPO setFieldsWithIds, quando esiste uno stato di lavoro salvato da
-     * riportare (es. tornando da un'altra pagina): senza questo metodo,
-     * il pannello mostrerebbe sempre lo stato "vuoto, tutte le metriche in
-     * Valori" indipendentemente da cosa l'utente aveva impostato prima di
-     * uscire, perché quella era l'unica via per popolare rowFields/
-     * valueFields.
+     * Ripristina una configurazione specifica di Righe/Colonne/Valori, al
+     * posto del default che setFieldsWithIds applica sempre. Da chiamare
+     * SUBITO DOPO setFieldsWithIds, quando esiste uno stato di lavoro
+     * salvato da riportare (es. tornando da un'altra pagina): senza questo
+     * metodo, il pannello mostrerebbe sempre lo stato "vuoto, tutte le
+     * metriche in Valori" indipendentemente da cosa l'utente aveva
+     * impostato prima di uscire, perché quella era l'unica via per
+     * popolare rowFields/columnFields/valueFields.
      *
      * Gli id non più presenti in allFields (es. una dimensione rimossa
      * nel frattempo) vengono scartati silenziosamente, non causano errore:
      * lo stato salvato può riferirsi a un momento precedente a modifiche
      * dell'area.
      */
-    fun restoreState(rowIds: List<UUID>, valueIds: List<UUID>) {
+    fun restoreState(rowIds: List<UUID>, columnIds: List<UUID>, valueIds: List<UUID>) {
         val byId = allFields.associateBy { it.id }
 
         rowFields.clear()
         rowFields.addAll(rowIds.mapNotNull { byId[it] })
+
+        columnFields.clear()
+        columnFields.addAll(columnIds.mapNotNull { byId[it] })
 
         valueFields.clear()
         valueFields.addAll(valueIds.mapNotNull { byId[it] })
@@ -97,16 +112,23 @@ class PivotPanel(
         // duplicherebbe il ricalcolo appena fatto per la stessa richiesta.
     }
 
-    private fun setupDropTarget(zone: VerticalLayout, isRowZone: Boolean) {
+    private fun setupDropTarget(zone: VerticalLayout, zoneType: Zone) {
         val dropTarget = DropTarget.create(zone)
         dropTarget.addDropListener { event ->
             val fieldId = event.dragData.orElse(null) as? UUID ?: return@addDropListener
             val field = allFields.find { it.id == fieldId } ?: return@addDropListener
 
-            if (isRowZone && field.isMetric) return@addDropListener
-            if (!isRowZone && !field.isMetric) return@addDropListener
+            // Righe e Colonne accettano solo dimensioni, Valori solo metriche.
+            when (zoneType) {
+                Zone.ROWS, Zone.COLUMNS -> if (field.isMetric) return@addDropListener
+                Zone.VALUES -> if (!field.isMetric) return@addDropListener
+            }
 
-            val target = if (isRowZone) rowFields else valueFields
+            val target = when (zoneType) {
+                Zone.ROWS -> rowFields
+                Zone.COLUMNS -> columnFields
+                Zone.VALUES -> valueFields
+            }
             if (field !in target) {
                 target.add(field)
                 renderAll()
@@ -117,13 +139,18 @@ class PivotPanel(
 
     private fun renderAll() {
         poolBox.removeAll()
-        allFields.filter { it !in rowFields && it !in valueFields }.forEach { field ->
+        allFields.filter { it !in rowFields && it !in columnFields && it !in valueFields }.forEach { field ->
             poolBox.add(buildDraggableChip(field))
         }
 
         rowsBox.removeAll()
         rowFields.forEachIndexed { index, field ->
             rowsBox.add(buildZoneChip(field, rowFields, index))
+        }
+
+        columnsBox.removeAll()
+        columnFields.forEachIndexed { index, field ->
+            columnsBox.add(buildZoneChip(field, columnFields, index))
         }
 
         valuesBox.removeAll()
@@ -181,6 +208,6 @@ class PivotPanel(
     }
 
     private fun fireChange() {
-        onChange(rowFields.map { it.id }, valueFields.map { it.id })
+        onChange(rowFields.map { it.id }, columnFields.map { it.id }, valueFields.map { it.id })
     }
 }

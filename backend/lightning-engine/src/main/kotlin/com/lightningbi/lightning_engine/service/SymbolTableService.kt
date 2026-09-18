@@ -81,6 +81,27 @@ class SymbolTableService(
         )
         return tabellaFisica
     }
+    /**
+     * Aggiunge una colonna dimensione alla tabella fatti di un'area già
+     * esistente, per collegare una dimensione dopo la creazione (vedi
+     * EditDimensionsDialog). createAreaTable() gira una sola volta: con
+     * IF NOT EXISTS, chiamarlo di nuovo su una tabella già creata non
+     * aggiunge le colonne mancanti, serve un ALTER TABLE esplicito.
+     *
+     * Tipo fisso a UInt32, coerente con ogni altra colonna dimensione
+     * (vedi TransformService: le dimensioni sono sempre UInt32 NOT NULL,
+     * con 0 riservato al valore "non definito"). Se un domani servirà
+     * aggiungere anche metriche dopo la creazione, va scritto un metodo
+     * gemello con Decimal(18,4), non generalizzato qui: i due casi hanno
+     * vincoli di NOT NULL/default diversi che meritano di restare
+     * espliciti.
+     */
+    fun addColumnToAreaTable(tabellaFisica: String, colonnaFisica: String) {
+        val colonna = Naming.column(colonnaFisica)
+        jdbcTemplate.execute(
+            "ALTER TABLE $tabellaFisica ADD COLUMN IF NOT EXISTS $colonna UInt32 DEFAULT 0"
+        )
+    }
 
     /** Elimina una tabella. Usato per ripulire artefatti orfani dopo un rollback. */
     fun dropTable(tableName: String) {

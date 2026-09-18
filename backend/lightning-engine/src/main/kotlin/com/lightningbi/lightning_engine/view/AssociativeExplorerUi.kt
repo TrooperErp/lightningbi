@@ -1,9 +1,8 @@
 package com.lightningbi.lightning_engine.view
 
 import com.lightningbi.lightning_engine.model.AggregateResult
-import com.lightningbi.lightning_engine.model.AggregateRow
 import com.lightningbi.lightning_engine.model.ChartData
-import com.vaadin.flow.component.grid.Grid
+import com.lightningbi.lightning_engine.service.PivotEngine
 import com.vaadin.flow.component.html.Div
 import com.vaadin.flow.component.html.Span
 import com.vaadin.flow.component.listbox.MultiSelectListBox
@@ -13,8 +12,13 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout
 import com.vaadin.flow.component.orderedlayout.Scroller
 import com.vaadin.flow.component.orderedlayout.VerticalLayout
 import com.vaadin.flow.component.progressbar.ProgressBar
+import com.vaadin.flow.component.treegrid.TreeGrid
+import com.vaadin.flow.data.provider.hierarchy.TreeData
+import com.vaadin.flow.data.provider.hierarchy.TreeDataProvider
 import com.vaadin.flow.data.renderer.ComponentRenderer
 import com.lightningbi.lightning_engine.service.DimensionState
+import java.text.NumberFormat
+import java.util.Locale
 import java.util.UUID
 
 /**
@@ -27,15 +31,21 @@ import java.util.UUID
  * molte righe non devono costringere l'utente a scrollare oltre per
  * trovare i grafici, che restano sempre visibili in un'area fissa sotto
  * la griglia, non condivisa con lo stesso Scroller.
+ *
+ * resultsGrid è un TreeGrid: le Righe del pivot (es. Agente > Mese)
+ * arrivano già come gerarchia pronta da AggregateService.buildRowHierarchy
+ * (stesso principio di Excel/Qlik: il motore di aggregazione produce la
+ * struttura, la UI si limita a disegnarla con espandi/collassa). Nessuna
+ * logica di raggruppamento vive qui.
  */
 class AssociativeExplorerUi(
     private val onFilterSelectionChanged: (dimId: UUID, values: Set<Long>) -> Unit,
     private val onRemoveSelection: (dimId: UUID, valueId: Long) -> Unit,
-    private val onPivotChanged: (rows: List<UUID>, values: List<UUID>) -> Unit
+    private val onPivotChanged: (rows: List<UUID>, columns: List<UUID>, values: List<UUID>) -> Unit
 ) {
-    val pivotPanel = PivotPanel { rows, values -> onPivotChanged(rows, values) }
+    val pivotPanel = PivotPanel { rows, columns, values -> onPivotChanged(rows, columns, values) }
 
-    val resultsGrid = Grid<AggregateRow>().apply {
+    val resultsGrid = TreeGrid<PivotEngine.PivotNode>().apply {
         className = "lbi-results-grid"
         setWidthFull()
         height = "420px"
@@ -70,6 +80,16 @@ class AssociativeExplorerUi(
 
     private val dimensionBoxes = mutableMapOf<UUID, MultiSelectListBox<Long>>()
     private val currentItems = mutableMapOf<UUID, List<Long>>()
+
+    /**
+     * Formattazione italiana per le metriche numeriche in griglia:
+     * punto per le migliaia, virgola per i decimali, sempre 2 cifre
+     * decimali fisse (es. 1.234,50).
+     */
+    private val itNumberFormat = NumberFormat.getNumberInstance(Locale.ITALY).apply {
+        minimumFractionDigits = 2
+        maximumFractionDigits = 2
+    }
 
     val root: HorizontalLayout
 
@@ -225,29 +245,55 @@ class AssociativeExplorerUi(
         }
     }
 
-    fun renderResultsGrid(result: AggregateResult, rows: List<UUID>, dimensionNames: Map<UUID, String>) {
+    /**
+     * Disegna il TreeGrid a partire dalla gerarchia già costruita da
+     * AggregateService.buildRowHierarchy (rowHierarchy): un nodo per ogni
+     * livello di "rows" (es. Agente > Mese), con espandi/collassa nativo
+     * di Vaadin TreeGrid. "result" resta necessario solo per derivare
+     * l'insieme completo delle chiavi metrica/colonna da mostrare come
+     * colonne (allValueKeys) e per il messaggio di troncamento.
+     */
+    fun renderResultsGrid(
+        result: AggregateResult,
+        rowHierarchy: List<PivotEngine.PivotNode>,
+        rows: List<UUID>,
+        dimensionNames: Map<UUID, String>
+    ) {
         resultsGrid.removeAllColumns()
 
-        if (result.rows.isEmpty()) {
-            resultsGrid.setItems(emptyList())
+        if (rowHierarchy.isEmpty()) {
+            resultsGrid.setDataProvider(TreeDataProvider(TreeData()))
             return
         }
 
-        rows.forEach { dimId ->
-            val dimName = dimensionNames[dimId] ?: "?"
-            resultsGrid.addColumn { row: AggregateRow ->
-                row.labels[dimId] ?: row.groupKeys[dimId]?.let { "#$it" } ?: "—"
-            }.setHeader(dimName).setAutoWidth(true)
-        }
+        val treeData = TreeData<PivotEngine.PivotNode>()
+        addNodesRecursively(treeData, null, rowHierarchy)
+        resultsGrid.setDataProvider(TreeDataProvider(treeData))
 
-        val metricNames = result.rows.first().values.keys.toList()
-        metricNames.forEach { name ->
-            resultsGrid.addColumn { row: AggregateRow -> row.values[name]?.toString() ?: "" }
-                .setHeader(name)
+        // Colonna gerarchica: mostra la label del nodo (Agente, poi Mese
+        // nei figli) con la freccia di espansione nativa di TreeGrid.
+        val rowHeader = rows.mapNotNull { dimensionNames[it] }.joinToString(" / ").ifEmpty { "Righe" }
+        resultsGrid.addHierarchyColumn { node -> node.label }
+            .setHeader(rowHeader)
+            .setAutoWidth(true)
+
+        // Con columnBy valorizzato le chiavi sono "Metrica|v1|v2..." invece
+        // di "Metrica" semplice: l'intestazione mostra la chiave intera per
+        // ora (leggibile, es. "Fatturato|2025"). Annidamento visivo vero
+        // (intestazioni multi-riga stile Excel) resta un miglioramento
+        // futuro - Vaadin Grid non supporta header multi-livello nativamente
+        // senza componenti custom.
+        //
+        // Le chiavi si prendono dall'intero albero (nodi foglia E
+        // intermedi), non solo da result.rows: i nodi intermedi possono
+        // avere un sottoinsieme di chiavi (solo le metriche sommabili,
+        // vedi PivotEngine.sumChildValues) e vanno comunque mostrate.
+        val allValueKeys = collectAllValueKeys(rowHierarchy)
+        allValueKeys.forEach { key ->
+            resultsGrid.addColumn { node -> formatMetricValue(node.values[key]) }
+                .setHeader(key.replace("|", " · "))
                 .setAutoWidth(true)
         }
-
-        resultsGrid.setItems(result.rows)
 
         if (result.truncated) {
             val messaggio = if (rows.isEmpty())
@@ -256,6 +302,44 @@ class AssociativeExplorerUi(
                 "Troppe combinazioni da mostrare: prova a togliere una dimensione dalle Righe"
             Notification.show(messaggio, 5000, Notification.Position.BOTTOM_END)
         }
+    }
+
+    private fun addNodesRecursively(
+        treeData: TreeData<PivotEngine.PivotNode>,
+        parent: PivotEngine.PivotNode?,
+        nodes: List<PivotEngine.PivotNode>
+    ) {
+        treeData.addItems(parent, nodes)
+        nodes.forEach { node ->
+            if (node.children.isNotEmpty()) {
+                addNodesRecursively(treeData, node, node.children)
+            }
+        }
+    }
+
+    private fun collectAllValueKeys(nodes: List<PivotEngine.PivotNode>): List<String> {
+        val keys = LinkedHashSet<String>()
+        fun visit(list: List<PivotEngine.PivotNode>) {
+            list.forEach { node ->
+                keys.addAll(node.values.keys)
+                if (node.children.isNotEmpty()) visit(node.children)
+            }
+        }
+        visit(nodes)
+        return keys.toList()
+    }
+
+    /**
+     * Formatta un valore metrica in stile italiano: punto per le migliaia,
+     * virgola per i decimali, sempre 2 cifre decimali fisse. Se il valore
+     * non è numerico (es. già stringa non convertibile), torna il toString
+     * grezzo come fallback per non far sparire il dato.
+     */
+    private fun formatMetricValue(value: Any?): String = when (value) {
+        null -> ""
+        is Number -> itNumberFormat.format(value)
+        is String -> value.toDoubleOrNull()?.let { itNumberFormat.format(it) } ?: value
+        else -> value.toString()
     }
 
     /** Un EChartComponent per grafico, sostituisce il vecchio placeholder testuale. */
@@ -288,7 +372,7 @@ class AssociativeExplorerUi(
         filtersColumn.removeAll()
         filtersColumn.add(activeSelectionsBar)
         activeSelectionsBar.removeAll()
-        resultsGrid.setItems(emptyList())
+        resultsGrid.setDataProvider(TreeDataProvider(TreeData()))
         resultsGrid.removeAllColumns()
         chartsPanel.removeAll()
         dimensionBoxes.clear()

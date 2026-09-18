@@ -181,4 +181,24 @@ class RegistryService(
         val collisione = esistenti.any { it.nome.equals(nome, ignoreCase = true) && it.id != escludiId }
         require(!collisione) { "Esiste già una metrica chiamata \"$nome\" in questa area" }
     }
+
+    /**
+     * Collega una dimensione a un'area già esistente, aggiungendo anche
+     * la colonna fisica sulla tabella fatti ClickHouse se non c'è già.
+     * A differenza di linkDimensioneToArea (usato anche in creazione area,
+     * dove la tabella non esiste ancora), questo presume la tabella già
+     * creata e la alterà in place - usarlo SOLO per aree esistenti.
+     */
+    @Transactional("postgresTransactionManager")
+    fun linkDimensioneToExistingArea(
+        areaId: UUID,
+        dimensioneId: UUID,
+        colonnaFisica: String,
+        obbligatoria: Boolean,
+        cardinalita: Long? = null
+    ) {
+        val area = registryRepository.findAreaById(areaId) ?: error("Area $areaId non trovata")
+        symbolTableService.addColumnToAreaTable(area.tabellaFisica, colonnaFisica)
+        linkDimensioneToArea(areaId, dimensioneId, colonnaFisica, obbligatoria, cardinalita)
+    }
 }

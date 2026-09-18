@@ -32,6 +32,8 @@ import '@vaadin/multi-select-combo-box/src/vaadin-multi-select-combo-box.js';
 import 'Frontend/generated/jar-resources/dndConnector.js';
 import '@vaadin/icons/vaadin-iconset.js';
 import '@vaadin/icon/src/vaadin-icon.js';
+import '@vaadin/grid/src/vaadin-grid-tree-toggle.js';
+import 'Frontend/generated/jar-resources/treeGridConnector.ts';
 import '@vaadin/progress-bar/src/vaadin-progress-bar.js';
 import '@vaadin/scroller/src/vaadin-scroller.js';
 import '@vaadin/list-box/src/vaadin-list-box.js';

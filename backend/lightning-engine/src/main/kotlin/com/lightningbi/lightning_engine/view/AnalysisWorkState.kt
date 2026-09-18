@@ -18,6 +18,7 @@ import java.util.UUID
 data class AnalysisWorkState(
     val areaId: UUID,
     val pivotRows: List<UUID>,
+    val pivotColumns: List<UUID> = emptyList(),
     val pivotValues: List<UUID>,
     val selections: Map<UUID, Set<Long>>
 )

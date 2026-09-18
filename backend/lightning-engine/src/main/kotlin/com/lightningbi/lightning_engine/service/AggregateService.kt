@@ -15,6 +15,7 @@ import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.security.MessageDigest
 import java.time.Duration
 import java.util.HexFormat
@@ -47,6 +48,11 @@ class AggregateService(
             .filterKeys { it in validDimIds }
             .filterValues { it.isNotEmpty() }
         val cleanGroupBy = req.groupBy.filter { it in validDimIds }.distinct()
+        // columnBy è ammesso a N dimensioni (stile Qlik: annidamento per
+        // livelli, ordine = ordine della lista). Nessun limite a 1: un
+        // limite artificiale rende lo strumento inservibile per analisi
+        // che domani vorranno più di un livello (es. Anno > Trimestre).
+        val cleanColumnBy = req.columnBy.filter { it in validDimIds && it !in cleanGroupBy }.distinct()
 
         val metriche = if (req.metricIds.isEmpty()) tutteMetriche
         else tutteMetriche.filter { it.id in req.metricIds.toSet() }
@@ -61,7 +67,7 @@ class AggregateService(
 
         val effectiveLimit = (req.limit ?: rowLimit).coerceIn(1, rowLimit)
 
-        val cacheKey = buildCacheKey(req, cleanSelections, cleanGroupBy, metriche, effectiveLimit, versions)
+        val cacheKey = buildCacheKey(req, cleanSelections, cleanGroupBy, cleanColumnBy, metriche, effectiveLimit, versions)
 
         safeGet(cacheKey)?.let { cached ->
             try {
@@ -71,16 +77,26 @@ class AggregateService(
             }
         }
 
-        var result = computeAggregates(
+        // Query piatta: una riga per ogni combinazione (groupBy × columnBy).
+        // Il pivot vero (righe → colonne annidate) avviene dopo, in Kotlin:
+        // più semplice da mantenere e indipendente dal motore SQL sotto.
+        var flat = computeFlatAggregates(
             table = area.tabellaFisica,
             selections = cleanSelections,
             groupBy = cleanGroupBy,
+            columnBy = cleanColumnBy,
             dimById = dimById,
             metriche = metriche,
-            order = req.order,
+            order = if (cleanColumnBy.isEmpty()) req.order else null, // l'order SQL vale solo senza pivot
             orderMetrica = orderMetrica,
-            limit = effectiveLimit
+            limit = if (cleanColumnBy.isEmpty()) effectiveLimit else rowLimit
         )
+
+        var result = if (cleanColumnBy.isEmpty()) {
+            flat
+        } else {
+            pivotByColumns(flat, cleanGroupBy, cleanColumnBy, dimById, metriche, req.showVariationPercent, effectiveLimit)
+        }
 
         if (req.resolveLabels || req.order == AggregateOrder.DIMENSION) {
             result = withLabels(result, cleanGroupBy, dimById)
@@ -96,10 +112,52 @@ class AggregateService(
         return result
     }
 
-    private fun computeAggregates(
+    /**
+     * Costruisce la gerarchia per l'asse Righe (Agente > Mese, o
+     * qualunque lista di dimensioni in "groupBy"), a partire da un
+     * AggregateResult già calcolato da getAggregates() sulla stessa area.
+     * Esattamente come Excel/Qlik: l'aggregazione produce la struttura
+     * gerarchica pronta, la UI (TreeGrid) si limita a disegnarla.
+     *
+     * Richiede che il risultato passato abbia resolveLabels=true (le
+     * label già risolte in ogni riga), altrimenti l'ordinamento e le
+     * etichette dei nodi userebbero l'id grezzo come fallback.
+     */
+    fun buildRowHierarchy(
+        areaId: UUID,
+        result: AggregateResult,
+        groupBy: List<UUID>,
+        metricIds: List<UUID>
+    ): List<PivotEngine.PivotNode> {
+        if (groupBy.isEmpty() || result.rows.isEmpty()) return emptyList()
+
+        val tutteMetriche = registryRepository.findMetricheByArea(areaId)
+        val metriche = if (metricIds.isEmpty()) tutteMetriche
+        else tutteMetriche.filter { it.id in metricIds.toSet() }
+
+        val dimensioni = registryRepository.findDimensioniByArea(areaId)
+        val colonnaFisicaByDim = dimensioni.associate { it.dimensioneId to it.colonnaFisica }
+
+        fun labelFor(dimId: UUID, valueId: Long): String {
+            val colonna = colonnaFisicaByDim[dimId]
+            if (colonna != null) {
+                DimensionFormatters.formatOrNull(colonna, valueId)?.let { return it }
+            }
+            return result.rows.firstOrNull { it.groupKeys[dimId] == valueId }?.labels?.get(dimId) ?: "#$valueId"
+        }
+
+        val dims = registryRepository.findDimensioniByArea(areaId)
+        val dimByIdLocal = dims.associateBy { it.dimensioneId }
+        return PivotEngine.buildHierarchy(result.rows, groupBy, metriche, ::labelFor) { dimId -> dimByIdLocal[dimId]?.colonnaFisica }
+    }
+
+    // ================= Query piatta =================
+
+    private fun computeFlatAggregates(
         table: String,
         selections: Map<UUID, Set<Long>>,
         groupBy: List<UUID>,
+        columnBy: List<UUID>,
         dimById: Map<UUID, AreaDimensione>,
         metriche: List<AreaMetrica>,
         order: AggregateOrder?,
@@ -120,7 +178,8 @@ class AggregateService(
             m.colonnaFisica?.let { requireIdentifier(it, "metric column") }
         }
 
-        val groupCols = groupBy.mapNotNull { dimById[it]?.colonnaFisica }
+        val allGroupDims = groupBy + columnBy
+        val groupCols = allGroupDims.mapNotNull { dimById[it]?.colonnaFisica }
         groupCols.forEach { requireIdentifier(it, "group column") }
 
         val (where, args) = buildWhere(selections, dimById)
@@ -141,7 +200,7 @@ class AggregateService(
         val sql = "SELECT ${selectCols.joinToString(",")} FROM $t $whereClause $groupClause $orderClause LIMIT ${limit + 1}"
 
         val rawRows = jdbcTemplate.query(sql, { rs, _ ->
-            val groupKeys = groupBy.zip(groupCols).associate { (dimId, col) -> dimId to rs.getLong(col) }
+            val groupKeys = allGroupDims.zip(groupCols).associate { (dimId, col) -> dimId to rs.getLong(col) }
             val values = metricAliases.associate { (m, alias) ->
                 m.nome to (rs.getBigDecimal(alias) ?: BigDecimal.ZERO)
             }
@@ -150,6 +209,132 @@ class AggregateService(
 
         val truncated = rawRows.size > limit
         return AggregateResult(if (truncated) rawRows.take(limit) else rawRows, truncated)
+    }
+
+    /**
+     * Trasforma le righe piatte (una per combinazione groupBy × columnBy)
+     * in righe pivot (una per combinazione groupBy, con le colonne di
+     * columnBy annidate dentro le chiavi di "values").
+     *
+     * Usa PivotEngine.buildHierarchy sul SOLO asse columnBy per ogni
+     * gruppo di groupBy: stesso motore ricorsivo generico usato (o da
+     * usare) anche per l'asse Righe in TreeGrid, nessuna logica duplicata
+     * per "come annidare N dimensioni".
+     */
+    private fun pivotByColumns(
+        flat: AggregateResult,
+        groupBy: List<UUID>,
+        columnBy: List<UUID>,
+        dimById: Map<UUID, AreaDimensione>,
+        metriche: List<AreaMetrica>,
+        showVariationPercent: Boolean,
+        limit: Int
+    ): AggregateResult {
+        if (flat.rows.isEmpty()) return flat
+
+        val colonnaFisicaByDim: Map<UUID, String> = columnBy.associateWith { dimId ->
+            dimById[dimId]?.colonnaFisica ?: ""
+        }
+        val labelsByColumnDim: Map<UUID, Map<Long, String>> = columnBy.associateWith { dimId ->
+            val dimensione = registryRepository.findDimensione(dimId) ?: return@associateWith emptyMap()
+            val ids = flat.rows.mapNotNull { it.groupKeys[dimId] }.toSet()
+            symbolLookupService.resolveLabels(dimensione.nome, ids)
+        }
+
+        fun labelFor(dimId: UUID, valueId: Long): String {
+            val colonna = colonnaFisicaByDim[dimId]
+            if (colonna != null) {
+                DimensionFormatters.formatOrNull(colonna, valueId)?.let { return it }
+            }
+            return labelsByColumnDim[dimId]?.get(valueId) ?: "#$valueId"
+        }
+
+        val grouped = flat.rows.groupBy { row -> groupBy.associateWith { row.groupKeys[it] } }
+
+        val pivotRows = grouped.entries.take(limit).map { (groupKeyPartial, flatRowsInGroup) ->
+            val groupKeys = groupKeyPartial.mapNotNull { (dimId, v) -> v?.let { dimId to it } }.toMap()
+
+            // Alberatura del solo asse columnBy per questo gruppo di righe:
+            // ogni percorso radice→foglia è una combinazione di valori di
+            // columnBy, esattamente come prima ma ora via motore condiviso.
+            val tree = PivotEngine.buildHierarchy(flatRowsInGroup, columnBy, metriche, ::labelFor) { dimId -> dimById[dimId]?.colonnaFisica }
+            val leafPaths = PivotEngine.flattenLeafPaths(tree)
+
+            val values = mutableMapOf<String, BigDecimal>()
+            leafPaths.forEach { (path, node) ->
+                val suffix = path.joinToString("|")
+                metriche.forEach { m ->
+                    val v = node.values[m.nome] ?: BigDecimal.ZERO
+                    values["${m.nome}|$suffix"] = v
+                }
+            }
+
+            if (showVariationPercent && columnBy.isNotEmpty()) {
+                addVariationColumns(values, flatRowsInGroup, columnBy, metriche, ::labelFor)
+            }
+
+            AggregateRow(groupKeys = groupKeys, values = values)
+        }
+
+        return AggregateResult(pivotRows, flat.truncated || grouped.size > limit)
+    }
+
+    /**
+     * Aggiunge a "values" (in place) le colonne di variazione percentuale
+     * fra coppie di valori consecutivi dell'ultimo livello di columnBy,
+     * ordinati per label. Chiave generata: "nomeMetrica|...livelliEsterni|
+     * labelPrecedente→labelCorrente|Variaz.%".
+     *
+     * "Consecutivo" è per posizione nell'ordinamento alfabetico delle
+     * label del livello più interno, a parità degli eventuali livelli
+     * esterni - così "Anno=2025,Trim=Q4" si confronta con
+     * "Anno=2026,Trim=Q1" solo se sono effettivamente adiacenti in
+     * quell'ordinamento, non forzatamente anno-su-anno.
+     */
+    private fun addVariationColumns(
+        values: MutableMap<String, BigDecimal>,
+        flatRowsInGroup: List<AggregateRow>,
+        columnBy: List<UUID>,
+        metriche: List<AreaMetrica>,
+        labelFor: (UUID, Long) -> String
+    ) {
+        val outerDims = columnBy.dropLast(1)
+        val innerDim = columnBy.last()
+
+        // Raggruppa per combinazione dei livelli esterni (se presenti),
+        // poi ordina il livello interno per label dentro ogni gruppo.
+        val byOuter = flatRowsInGroup.groupBy { row ->
+            outerDims.map { dimId -> row.groupKeys[dimId]?.let { labelFor(dimId, it) } ?: "—" }
+        }
+
+        byOuter.forEach { (outerLabels, rowsInOuter) ->
+            val ordered = rowsInOuter.sortedBy { row ->
+                row.groupKeys[innerDim]?.let { labelFor(innerDim, it) } ?: ""
+            }
+            for (i in 1 until ordered.size) {
+                val prevRow = ordered[i - 1]
+                val currRow = ordered[i]
+                val prevLabel = prevRow.groupKeys[innerDim]?.let { labelFor(innerDim, it) } ?: continue
+                val currLabel = currRow.groupKeys[innerDim]?.let { labelFor(innerDim, it) } ?: continue
+
+                metriche.forEach { m ->
+                    val prevVal = prevRow.values[m.nome] ?: BigDecimal.ZERO
+                    val currVal = currRow.values[m.nome] ?: BigDecimal.ZERO
+                    val variation = if (prevVal.compareTo(BigDecimal.ZERO) == 0) {
+                        null // divisione per zero: nessuna variazione calcolabile, colonna omessa per questa coppia
+                    } else {
+                        currVal.subtract(prevVal)
+                            .divide(prevVal, 6, RoundingMode.HALF_UP)
+                            .multiply(BigDecimal(100))
+                    }
+                    if (variation != null) {
+                        val outerPrefix = if (outerLabels.isEmpty()) "" else outerLabels.joinToString("|") + "|"
+                        val key = "${m.nome}|${outerPrefix}$prevLabel→$currLabel|Variaz.%"
+                        values[key] = variation
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -239,6 +424,7 @@ class AggregateService(
         req: AggregateRequest,
         selections: Map<UUID, Set<Long>>,
         groupBy: List<UUID>,
+        columnBy: List<UUID>,
         metriche: List<AreaMetrica>,
         limit: Int,
         versions: VersionSnapshot
@@ -247,17 +433,20 @@ class AggregateService(
             .sortedBy { it.key.toString() }
             .joinToString(";") { (dimId, values) -> "$dimId=${values.sorted().joinToString(",")}" }
         val canonicalGroupBy = groupBy.joinToString(",")
+        val canonicalColumnBy = columnBy.joinToString(",")
         val canonicalMetrics = metriche.map { it.id.toString() }.sorted().joinToString(",")
 
         val raw = buildString {
             append(req.areaId); append('|')
             append(canonicalSelections); append('|')
             append(canonicalGroupBy); append('|')
+            append(canonicalColumnBy); append('|')
             append(canonicalMetrics); append('|')
             append(req.order); append('|')
             append(req.orderMetricId); append('|')
             append(limit); append('|')
             append(req.resolveLabels); append('|')
+            append(req.showVariationPercent); append('|')
             append(versions.registryVersion); append('|')
             append(versions.dataVersion)
         }

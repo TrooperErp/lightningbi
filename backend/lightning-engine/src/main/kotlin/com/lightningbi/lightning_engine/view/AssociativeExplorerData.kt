@@ -18,6 +18,8 @@ import com.lightningbi.lightning_engine.service.SourceVerificationService
 import com.lightningbi.lightning_engine.service.SymbolLookupService
 import com.lightningbi.lightning_engine.service.VersionService
 import com.lightningbi.lightning_engine.etl.EtlOrchestrator
+import com.lightningbi.lightning_engine.service.PivotEngine
+
 import java.util.UUID
 
 /**
@@ -47,6 +49,7 @@ class AssociativeExplorerData(
     data class RefreshResult(
         val states: Map<UUID, DimensionState>,
         val aggregates: AggregateResult,
+        val rowHierarchy: List<PivotEngine.PivotNode>,
         val chartsData: List<ChartData>,
         val labels: Map<UUID, Map<Long, String>>
     )
@@ -87,6 +90,7 @@ class AssociativeExplorerData(
     suspend fun refresh(
         areaId: UUID,
         pivotRows: List<UUID>,
+        pivotColumns: List<UUID>,
         pivotValues: List<UUID>,
         selections: Map<UUID, Set<Long>>,
         dimensionNames: Map<UUID, String>
@@ -105,17 +109,24 @@ class AssociativeExplorerData(
                 areaId = areaId,
                 selections = selections,
                 groupBy = pivotRows,
+                columnBy = pivotColumns,
                 metricIds = pivotValues,
                 resolveLabels = true
             ),
             versions
         )
-
+        val rowHierarchy = aggregateService.buildRowHierarchy(areaId, aggregates, pivotRows, pivotValues)
         val chartsData = chartService.getChartsData(areaId, pivotRows, selections)
 
         val labels = resolveLabels(states, dimensionNames)
 
-        return RefreshResult(states, aggregates, chartsData, labels)
+        return RefreshResult(
+            states = states,
+            aggregates = aggregates,
+            rowHierarchy = rowHierarchy,
+            chartsData = chartsData,
+            labels = labels
+        )
     }
 
     private fun resolveLabels(
