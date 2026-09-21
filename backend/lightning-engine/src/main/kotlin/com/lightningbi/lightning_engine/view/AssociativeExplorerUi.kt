@@ -5,7 +5,6 @@ import com.lightningbi.lightning_engine.model.ChartData
 import com.lightningbi.lightning_engine.service.PivotEngine
 import com.vaadin.flow.component.html.Div
 import com.vaadin.flow.component.html.Span
-import com.vaadin.flow.component.listbox.MultiSelectListBox
 import com.vaadin.flow.component.notification.Notification
 import com.vaadin.flow.component.orderedlayout.FlexComponent
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout
@@ -15,7 +14,6 @@ import com.vaadin.flow.component.progressbar.ProgressBar
 import com.vaadin.flow.component.treegrid.TreeGrid
 import com.vaadin.flow.data.provider.hierarchy.TreeData
 import com.vaadin.flow.data.provider.hierarchy.TreeDataProvider
-import com.vaadin.flow.data.renderer.ComponentRenderer
 import com.lightningbi.lightning_engine.service.DimensionState
 import java.text.NumberFormat
 import java.util.Locale
@@ -37,6 +35,13 @@ import java.util.UUID
  * (stesso principio di Excel/Qlik: il motore di aggregazione produce la
  * struttura, la UI si limita a disegnarla con espandi/collassa). Nessuna
  * logica di raggruppamento vive qui.
+ *
+ * Le card verde/grigio/escluso sono Span cliccabili dentro un Div puro a
+ * griglia CSS (.lbi-filter-grid), non più MultiSelectListBox (il suo
+ * layout interno/shadow DOM non era sovrascrivibile per ottenere due
+ * colonne per riga) né Checkbox (introdotti per errore in un passaggio
+ * intermedio, mai richiesti: l'aspetto voluto è il pulsante colorato
+ * pieno, non un quadratino con etichetta a fianco).
  */
 class AssociativeExplorerUi(
     private val onFilterSelectionChanged: (dimId: UUID, values: Set<Long>) -> Unit,
@@ -48,12 +53,12 @@ class AssociativeExplorerUi(
     val resultsGrid = TreeGrid<PivotEngine.PivotNode>().apply {
         className = "lbi-results-grid"
         setWidthFull()
-        height = "420px"
+        height = "560px"
     }
 
     val filtersColumn = VerticalLayout().apply {
         className = "lbi-filters-column"
-        width = "300px"
+        width = "420px"
         height = "100%"
     }
 
@@ -78,7 +83,13 @@ class AssociativeExplorerUi(
         )
     }
 
-    private val dimensionBoxes = mutableMapOf<UUID, MultiSelectListBox<Long>>()
+    /** Per ogni dimensione, il Div-griglia dove vengono aggiunti gli Span cliccabili. */
+    private val filterGrids = mutableMapOf<UUID, Div>()
+
+    /** Per ogni dimensione, mappa valueId -> Span, per leggere/scrivere selezioni e stati via className. */
+    private val dimensionSpans = mutableMapOf<UUID, MutableMap<Long, Span>>()
+
+    /** Ultimo insieme di valori disegnati per dimensione, per evitare di ricostruire la griglia se non è cambiato. */
     private val currentItems = mutableMapOf<UUID, List<Long>>()
 
     /**
@@ -107,7 +118,8 @@ class AssociativeExplorerUi(
         // in un'area fissa sotto, sempre visibili senza dover scrollare.
         val scrollableGrid = Scroller(resultsGrid).apply {
             setWidthFull()
-            height = "320px"
+            height = "560px"
+            style.set("flex-shrink", "0")
         }
 
         val centerArea = VerticalLayout(
@@ -128,7 +140,7 @@ class AssociativeExplorerUi(
         }
 
         root = HorizontalLayout(centerArea, filtersColumn).apply {
-            setSizeFull()
+            width = "100%"
             isPadding = false
             isSpacing = true
             setFlexGrow(1.0, centerArea)
@@ -140,48 +152,62 @@ class AssociativeExplorerUi(
         sourceStatusLabel.text = text
     }
 
+    /**
+     * Ricostruisce le card filtro per le dimensioni in Righe e in
+     * Colonne, in due gruppi affiancati. Ogni card contiene un Div a
+     * griglia (2 colonne) di Span cliccabili, popolato in seguito da
+     * renderStates quando arrivano gli stati verde/grigio/escluso.
+     */
     fun rebuildFilterCards(
-        rows: List<UUID>,
+        rowDims: List<UUID>,
+        columnDims: List<UUID>,
         dimensionNames: Map<UUID, String>,
         columnFor: (UUID) -> String?,
         countSameName: (String) -> Int
     ) {
         filtersColumn.removeAll()
         filtersColumn.add(activeSelectionsBar)
-        dimensionBoxes.clear()
+        filterGrids.clear()
+        dimensionSpans.clear()
         currentItems.clear()
 
-        rows.forEach { dimId ->
-            val dimName = dimensionNames[dimId] ?: return@forEach
+        val allDims = rowDims + columnDims
 
-            val box = MultiSelectListBox<Long>()
-            box.width = "100%"
-            box.setRenderer(neutralRenderer())
-            box.addSelectionListener { event ->
-                if (!event.isFromClient) return@addSelectionListener
-                onFilterSelectionChanged(dimId, event.value.toSet())
-            }
-            dimensionBoxes[dimId] = box
+        val rowsGroup = VerticalLayout().apply { isPadding = false; className = "lbi-filter-group" }
+        val columnsGroup = VerticalLayout().apply { isPadding = false; className = "lbi-filter-group" }
+
+        fun buildCard(dimId: UUID): VerticalLayout? {
+            val dimName = dimensionNames[dimId] ?: return null
+
+            val grid = Div().apply { className = "lbi-filter-grid" }
+            filterGrids[dimId] = grid
+            dimensionSpans[dimId] = mutableMapOf()
 
             val colonna = columnFor(dimId)
-            val etichetta = if (countSameName(dimName) > 1 && colonna != null) {
-                "$dimName ($colonna)"
-            } else {
-                dimName
-            }
+            val etichetta = if (countSameName(dimName) > 1 && colonna != null) "$dimName ($colonna)" else dimName
 
             val title = Span(etichetta).apply { className = "lbi-filter-title" }
-            val card = VerticalLayout(title, box).apply { className = "lbi-filter-card" }
-            filtersColumn.add(card)
+            return VerticalLayout(title, grid).apply { className = "lbi-filter-card" }
         }
+
+        rowDims.forEach { dimId -> buildCard(dimId)?.let { rowsGroup.add(it) } }
+        columnDims.forEach { dimId -> buildCard(dimId)?.let { columnsGroup.add(it) } }
+
+        val groupsRow = HorizontalLayout(rowsGroup, columnsGroup).apply {
+            isPadding = false
+            setWidthFull()
+            setFlexGrow(1.0, rowsGroup)
+            setFlexGrow(1.0, columnsGroup)
+        }
+        filtersColumn.add(groupsRow)
     }
 
     fun deselectValue(dimId: UUID, valueId: Long) {
-        dimensionBoxes[dimId]?.deselect(valueId)
+        dimensionSpans[dimId]?.get(valueId)?.className = "state-possible"
     }
 
     fun deselectAll(dimId: UUID) {
-        dimensionBoxes[dimId]?.deselectAll()
+        dimensionSpans[dimId]?.values?.forEach { it.className = "state-possible" }
     }
 
     fun renderActiveSelections(
@@ -211,36 +237,73 @@ class AssociativeExplorerUi(
         }
     }
 
+    /**
+     * Popola/aggiorna le griglie di Span con gli stati correnti.
+     * Ricostruisce gli Span solo se l'insieme di valori è cambiato (nuova
+     * sincronizzazione, nuovo dominio); altrimenti si limita ad
+     * aggiornare la className (colore) degli Span esistenti, per non
+     * perdere focus/scroll dell'utente ad ogni click.
+     *
+     * Il click su uno Span calcola la nuova selezione leggendo la
+     * className CORRENTE (prima del cambio) per sapere se quel valore
+     * era già selezionato, e la inverte: non serve stato separato, la
+     * className stessa è la fonte di verità per "selezionato o no" nel
+     * momento del click, aggiornata poi da questa stessa funzione al
+     * giro di refresh successivo.
+     */
     fun renderStates(
         states: Map<UUID, DimensionState>,
         labels: Map<UUID, Map<Long, String>>,
-        labelOrFallback: (Map<Long, String>, Long?) -> String
-    ) {
+        labelOrFallback: (Map<Long, String>, Long?) -> String,
+        colonnaFisicaFor: (UUID) -> String? = { null }
+    )  {
         states.forEach { (dimId, state) ->
-            val box = dimensionBoxes[dimId] ?: return@forEach
+            val grid = filterGrids[dimId] ?: return@forEach
+            val spanMap = dimensionSpans[dimId] ?: return@forEach
             val dimLabels = labels[dimId] ?: emptyMap()
 
+            val colonna = colonnaFisicaFor(dimId)
+            val naturalOrder = colonna != null && com.lightningbi.lightning_engine.service.DimensionSortOrders.usesNaturalOrder(colonna)
             val allValues = (state.verdi + state.grigi + state.selezionati)
                 .distinct()
-                .sortedBy { labelOrFallback(dimLabels, it) }
+                .let { values -> if (naturalOrder) values.sorted() else values.sortedBy { labelOrFallback(dimLabels, it) } }
 
             if (currentItems[dimId] != allValues) {
-                box.setItems(allValues)
+                grid.removeAll()
+                spanMap.clear()
+                allValues.forEach { valueId ->
+                    val fullLabel = colonna?.let { com.lightningbi.lightning_engine.service.DimensionFormatters.formatOrNull(it, valueId) } ?: labelOrFallback(dimLabels, valueId)
+                    val shortLabel = if (fullLabel.length > 6) fullLabel.take(6) + "…" else fullLabel
+                    val span = Span(shortLabel).apply {
+                        element.setAttribute("title", fullLabel)
+                        addClickListener {
+                            val isCurrentlySelected = className == "state-selected"
+                            val selectedNow = spanMap.filterValues { it.className == "state-selected" }.keys.toMutableSet()
+                            if (isCurrentlySelected) selectedNow.remove(valueId) else selectedNow.add(valueId)
+                            onFilterSelectionChanged(dimId, selectedNow)
+                        }
+                    }
+                    spanMap[valueId] = span
+                    grid.add(span)
+                }
                 currentItems[dimId] = allValues
             }
 
-            box.setRenderer(ComponentRenderer { valueId ->
-                Span(labelOrFallback(dimLabels, valueId)).apply {
-                    className = when {
-                        valueId in state.selezionati -> "state-selected"
-                        valueId in state.verdi -> "state-possible"
-                        else -> "state-excluded"
-                    }
+            spanMap.forEach { (valueId, span) ->
+                val stateClass = when {
+                    valueId in state.selezionati -> "state-selected"
+                    valueId in state.verdi -> "state-possible"
+                    else -> "state-excluded"
                 }
-            })
-
-            if (box.value != state.selezionati) {
-                box.value = state.selezionati
+                span.className = stateClass
+                val (bg, color, border) = when (stateClass) {
+                    "state-selected" -> Triple("#22c55e", "#ffffff", "none")
+                    "state-possible" -> Triple("transparent", "#201f1e", "1px solid #e1dfdd")
+                    else -> Triple("#e1dfdd", "#a19f9d", "none")
+                }
+                span.style.set("background", bg)
+                span.style.set("color", color)
+                span.style.set("border", border)
             }
         }
     }
@@ -270,29 +333,21 @@ class AssociativeExplorerUi(
         addNodesRecursively(treeData, null, rowHierarchy)
         resultsGrid.setDataProvider(TreeDataProvider(treeData))
 
-        // Colonna gerarchica: mostra la label del nodo (Agente, poi Mese
-        // nei figli) con la freccia di espansione nativa di TreeGrid.
         val rowHeader = rows.mapNotNull { dimensionNames[it] }.joinToString(" / ").ifEmpty { "Righe" }
         resultsGrid.addHierarchyColumn { node -> node.label }
             .setHeader(rowHeader)
-            .setAutoWidth(true)
+            .setWidth("220px")
+            .setFlexGrow(0)
 
-        // Con columnBy valorizzato le chiavi sono "Metrica|v1|v2..." invece
-        // di "Metrica" semplice: l'intestazione mostra la chiave intera per
-        // ora (leggibile, es. "Fatturato|2025"). Annidamento visivo vero
-        // (intestazioni multi-riga stile Excel) resta un miglioramento
-        // futuro - Vaadin Grid non supporta header multi-livello nativamente
-        // senza componenti custom.
-        //
-        // Le chiavi si prendono dall'intero albero (nodi foglia E
-        // intermedi), non solo da result.rows: i nodi intermedi possono
-        // avere un sottoinsieme di chiavi (solo le metriche sommabili,
-        // vedi PivotEngine.sumChildValues) e vanno comunque mostrate.
         val allValueKeys = collectAllValueKeys(rowHierarchy)
         allValueKeys.forEach { key ->
+            val parts = key.split("|")
+            val headerText = if (parts.size > 1) parts.drop(1).joinToString(" · ") else key
             resultsGrid.addColumn { node -> formatMetricValue(node.values[key]) }
-                .setHeader(key.replace("|", " · "))
-                .setAutoWidth(true)
+                .setHeader(headerText)
+                .setTooltipGenerator { key.replace("|", " · ") }
+                .setWidth("120px")
+                .setFlexGrow(0)
         }
 
         if (result.truncated) {
@@ -375,11 +430,8 @@ class AssociativeExplorerUi(
         resultsGrid.setDataProvider(TreeDataProvider(TreeData()))
         resultsGrid.removeAllColumns()
         chartsPanel.removeAll()
-        dimensionBoxes.clear()
+        filterGrids.clear()
+        dimensionSpans.clear()
         currentItems.clear()
-    }
-
-    private fun neutralRenderer() = ComponentRenderer<Span, Long> { valueId ->
-        Span(valueId.toString()).apply { className = "state-possible" }
     }
 }

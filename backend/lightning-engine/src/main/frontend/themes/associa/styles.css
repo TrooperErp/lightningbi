@@ -59,9 +59,10 @@ html, body {
 }
 
 .lbi-app {
-    background: transparent;
+    background: var(--lbi-surface);
     padding: 0;
     gap: 0;
+    width: 100%;
 }
 
 .lbi-topmenu {
@@ -112,8 +113,11 @@ vaadin-menu-bar-button:hover {
 }
 
 .lbi-body {
+    display: flex;
+    align-items: stretch;
     gap: 1px;
-    background: var(--lbi-border);
+    background: var(--lbi-surface);
+    min-height: 100vh;
 }
 
 .lbi-sidebar {
@@ -123,6 +127,8 @@ vaadin-menu-bar-button:hover {
     border-radius: 0;
     box-shadow: none;
     padding: 12px 0;
+    min-height: 100%;
+    align-self: stretch;
 }
 
 .lbi-sidebar-title {
@@ -170,6 +176,8 @@ vaadin-menu-bar-button:hover {
 
 .flyout-item {
     position: relative;
+    width: 100%;
+    box-sizing: border-box;
     padding: 10px 16px;
     font-weight: 500;
     font-size: 13px;
@@ -245,14 +253,18 @@ vaadin-menu-bar-button:hover {
     border: 1px solid #d0d0d0;
     border-radius: 0;
     overflow: hidden;
+    font-size: 12px;
+    --lumo-size-m: 30px;
 }
 
 .lbi-results-grid::part(header-cell) {
     background: #f3f2f1 !important;
     color: #1a1a1a !important;
     font-weight: 600;
+    font-size: 11px;
     border-bottom: 1px solid #c0c0c0;
     border-right: 1px solid #e0e0e0;
+    padding: 4px 8px;
 }
 
 .lbi-results-grid::part(cell) {
@@ -260,6 +272,7 @@ vaadin-menu-bar-button:hover {
     color: #1a1a1a !important;
     border-bottom: 1px solid #e5e5e5;
     border-right: 1px solid #e5e5e5;
+    padding: 2px 8px;
 }
 
 .lbi-results-grid::part(row):hover::part(cell) {
@@ -273,6 +286,14 @@ vaadin-menu-bar-button:hover {
     overflow-y: auto;
     background: var(--lbi-surface);
     padding: 12px;
+    width: 420px;
+}
+
+.lbi-filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 200px;
 }
 
 .lbi-active-selections {
@@ -337,38 +358,29 @@ vaadin-menu-bar-button:hover {
     text-overflow: ellipsis;
 }
 
-.state-selected,
-.state-possible,
-.state-excluded {
-    display: inline-block;
+/* Card verde/grigio/escluso: Span cliccabili dentro un Div puro a
+   griglia CSS, due colonne fisse. Non più MultiSelectListBox né
+   Checkbox: solo elementi semplici (span) su cui abbiamo controllo
+   diretto, senza combattere layout interni di componenti Vaadin. */
+.lbi-filter-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    width: 100%;
+}
+
+.lbi-filter-grid span {
+    display: block;
     width: 100%;
     box-sizing: border-box;
     text-align: center;
-    padding: 4px 6px;
-    border-radius: 8px;
-    font-size: 11px;
-}
-
-.state-selected {
-    background: var(--lbi-state-selected);
-    color: #ffffff;
-    font-weight: 600;
-    border: none;
-}
-
-.state-possible {
-    background: transparent;
-    color: var(--lbi-text);
-    font-weight: 500;
-    border: 1px solid var(--lbi-border);
-}
-
-.state-excluded {
-    background: var(--lbi-excluded-bg);
-    color: var(--lbi-excluded-text);
-    font-weight: 400;
-    opacity: 0.7;
-    cursor: not-allowed;
+    padding: 4px 4px;
+    border-radius: 4px;
+    font-size: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
 }
 
 vaadin-notification-card {
@@ -462,7 +474,9 @@ vaadin-button[disabled] {
 }
 
 .lbi-pivot-pool {
-    flex-wrap: wrap;
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
     gap: 6px;
     min-height: 28px;
     padding: 6px;
@@ -489,6 +503,8 @@ vaadin-button[disabled] {
     border-radius: 8px;
     cursor: grab;
     font-size: 12px;
+    white-space: nowrap;
+    flex: 0 0 auto;
 }
 
 .lbi-pivot-chip-dim {
@@ -546,10 +562,6 @@ vaadin-button[disabled] {
     background: #8a8886 !important;
 }
 
-/* Bottoni solo-icona (edit/elimina nelle grid): l'icona Vaadin legge il
-   colore dalla variabile custom --vaadin-icon-color (fill: var(--vaadin-icon-color,
-   currentColor)), non da "color" ereditato — per questo i tentativi con
-   color/fill non funzionavano. Va sovrascritta la variabile stessa. */
 vaadin-button[theme~="icon"] {
     background: var(--lbi-accent) !important;
     min-width: 32px !important;
@@ -579,12 +591,6 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
     background: var(--lbi-sidebar-bg-hover);
     border-left: 3px solid var(--lbi-accent);
 }
-.lbi-chart-type-gallery {
-    flex-wrap: wrap;
-    gap: 12px;
-    margin-bottom: 20px;
-}
-
 .lbi-chart-type-gallery {
     display: flex;
     flex-direction: row;
@@ -623,4 +629,9 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
     flex-direction: row;
     flex-wrap: wrap;
     gap: 16px;
+}
+.lbi-charts-panel {
+    background: var(--lbi-surface);
+    width: 100%;
+    box-sizing: border-box;
 }

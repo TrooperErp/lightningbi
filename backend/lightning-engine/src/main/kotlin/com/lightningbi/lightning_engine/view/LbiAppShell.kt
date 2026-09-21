@@ -27,7 +27,7 @@ class LbiAppShell(
 
     init {
         className = "lbi-app"
-        setSizeFull()
+        width = "100%"
         isPadding = false
         isSpacing = false
 
@@ -62,7 +62,7 @@ class LbiAppShell(
 
         val body = HorizontalLayout(sidebar, centerContent).apply {
             className = "lbi-body"
-            setSizeFull()
+            width = "100%"
             isPadding = false
             isSpacing = true
             setFlexGrow(0.0, sidebar)

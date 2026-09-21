@@ -454,12 +454,15 @@ class AssociativeExplorerView(
 
     private fun rebuildFilterCards(rows: List<UUID>, columns: List<UUID>) {
         val allDims = rows + columns
-        ui.rebuildFilterCards(
-            rows = allDims,
-            dimensionNames = dimensionNames,
-            columnFor = { dimId -> dimensionColumns[dimId] },
-            countSameName = { name -> allDims.count { dimensionNames[it] == name } }
-        )
+
+            ui.rebuildFilterCards(
+                rowDims = rows,
+                columnDims = columns,
+                dimensionNames = dimensionNames,
+                columnFor = { dimId -> dimensionColumns[dimId] },
+                countSameName = { name -> (rows + columns).count { dimensionNames[it] == name } }
+            )
+
     }
 
     private fun onFilterSelectionChanged(dimId: UUID, values: Set<Long>) {
@@ -511,7 +514,7 @@ class AssociativeExplorerView(
                     if (myRequestId != requestCounter.get()) return@access
                     if (areaId != currentAreaId) return@access
                     println("DEBUG: prima di renderStates")
-                    ui.renderStates(result.states, result.labels, data::labelOrFallback)
+                    ui.renderStates(result.states, result.labels, data::labelOrFallback) { dimId -> dimensionColumns[dimId] }
                     println("DEBUG: prima di renderResultsGrid")
                     ui.renderResultsGrid(result.aggregates, result.rowHierarchy, rowsSnapshot, dimensionNames)
                     println("DEBUG: prima di renderCharts")
