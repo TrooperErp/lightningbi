@@ -4,6 +4,7 @@ import com.lightningbi.lightning_engine.model.AggregateOrder
 import com.lightningbi.lightning_engine.model.AggregateRequest
 import com.lightningbi.lightning_engine.model.AreaChart
 import com.lightningbi.lightning_engine.model.AreaChartMetrica
+import com.lightningbi.lightning_engine.model.AreaMetrica
 import com.lightningbi.lightning_engine.model.ChartData
 import com.lightningbi.lightning_engine.model.ChartSeries
 import com.lightningbi.lightning_engine.model.ChartType
@@ -11,6 +12,7 @@ import com.lightningbi.lightning_engine.repository.AreaChartRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import java.math.BigDecimal
 import java.util.UUID
 
 @Service
@@ -24,11 +26,17 @@ class ChartService(
     private val maxPunti = 100
     private val maxFettePie = 12
 
+    /** Palette Tableau: blu (serie corrente), arancio (serie di confronto), rosso (calo). */
+    private val colorePrecedente = "#F28E2B"
+    private val coloreCorrente = "#4E79A7"
+    private val coloreCalo = "#E15759"
+
     // ===================== lettura dati =====================
 
     /**
-     * Tutti i grafici di un'Analisi, calcolati sulle Righe del pivot
-     * correnti e sulle selezioni della sessione.
+     * Tutti i grafici di un'Analisi, calcolati sulle Righe (e, se il
+     * grafico lo richiede, sulle Colonne) del pivot correnti e sulle
+     * selezioni della sessione.
      *
      * pivotRows non è più letto dal grafico stesso: il grafico non ha una
      * propria dimensione di raggruppamento, la eredita sempre da qui. Se
@@ -40,13 +48,14 @@ class ChartService(
     fun getChartsData(
         areaId: UUID,
         pivotRows: List<UUID>,
+        pivotColumns: List<UUID>,
         selections: Map<UUID, Set<Long>>
     ): List<ChartData> {
         if (pivotRows.isEmpty()) return emptyList()
 
         return areaChartRepository.findByArea(areaId).mapNotNull { chart ->
             try {
-                getChartData(chart, pivotRows, selections)
+                getChartData(chart, pivotRows, pivotColumns, selections)
             } catch (e: Exception) {
                 log.warn("Grafico '{}' ({}) non calcolabile, escluso dalla dashboard", chart.titolo, chart.id, e)
                 null
@@ -54,10 +63,11 @@ class ChartService(
         }
     }
 
-    /** Dati di un singolo grafico, calcolati sulle Righe del pivot correnti. */
+    /** Dati di un singolo grafico, calcolati sulle Righe (e, se richiesto, Colonne) del pivot correnti. */
     fun getChartData(
         chart: AreaChart,
         pivotRows: List<UUID>,
+        pivotColumns: List<UUID>,
         selections: Map<UUID, Set<Long>>
     ): ChartData {
         require(pivotRows.isNotEmpty()) {
@@ -77,18 +87,17 @@ class ChartService(
             "Il grafico '${chart.titolo}' referenzia metriche non più presenti nell'area"
         }
 
-        // Il limite di leggibilità è il più stretto fra quello scelto
-        // dall'utente e quello del tipo di grafico: una torta con 5000
-        // fette è illeggibile quanto una barra con 5000 colonne, ma la
-        // soglia di leggibilità è diversa per i due casi.
+        // followsColumns richiede almeno una dimensione in Colonne: se il
+        // pivot corrente non ne ha, il grafico si comporta come se
+        // followsColumns fosse false (nessuna colonna da seguire), non
+        // fallisce - evita che aprire l'area senza Colonne impostate
+        // rompa un grafico configurato per seguirle.
+        val columnsEffettive = if (chart.followsColumns) pivotColumns else emptyList()
+
         val limiteLeggibilita = if (chart.tipo == ChartType.PIE) maxFettePie else maxPunti
         val limit = minOf(chart.maxItems ?: limiteLeggibilita, limiteLeggibilita)
 
         val ordinePerQuery = if (chart.orderBy == AggregateOrder.DIMENSION && limit < Int.MAX_VALUE) {
-            // Con top-N e ordinamento per dimensione richiesto, si estrae
-            // comunque per la prima metrica decrescente (altrimenti il
-            // taglio prenderebbe le prime N in ordine alfabetico, non le
-            // N più rilevanti), poi si riordina in memoria dopo.
             AggregateOrder.METRIC_DESC
         } else {
             chart.orderBy
@@ -99,18 +108,16 @@ class ChartService(
                 areaId = chart.areaId,
                 selections = selections,
                 groupBy = pivotRows,
+                columnBy = columnsEffettive,
                 metricIds = metricheOrdinate.map { it.id },
-                order = ordinePerQuery,
-                orderMetricId = if (ordinePerQuery != AggregateOrder.DIMENSION) metricheOrdinate.first().id else null,
+                order = if (columnsEffettive.isEmpty()) ordinePerQuery else AggregateOrder.DIMENSION,
+                orderMetricId = if (columnsEffettive.isEmpty() && ordinePerQuery != AggregateOrder.DIMENSION) metricheOrdinate.first().id else null,
                 limit = limit,
                 resolveLabels = true
             )
         )
 
-        val rows = if (ordinePerQuery != chart.orderBy) {
-            // Riordino per etichetta dopo l'estrazione per metrica, come
-            // sopra: le righe risultanti sono al massimo "limit", il costo
-            // è trascurabile.
+        val rows = if (columnsEffettive.isEmpty() && ordinePerQuery != chart.orderBy) {
             result.rows.sortedBy { row -> labelFor(row, pivotRows) }
         } else {
             result.rows
@@ -118,14 +125,10 @@ class ChartService(
 
         val labels = rows.map { row -> labelFor(row, pivotRows) }
 
-        // Una serie per metrica, nell'ordine dichiarato in AreaChartMetrica:
-        // è questo che permette le barre affiancate (costo/ricavo) di cui
-        // parlavamo, non una singola serie come nella versione precedente.
-        val series = metricheOrdinate.map { metrica ->
-            ChartSeries(
-                metricaNome = metrica.nome,
-                values = rows.map { row -> (row.values[metrica.nome] ?: java.math.BigDecimal.ZERO).toDouble() }
-            )
+        val series = if (columnsEffettive.isEmpty()) {
+            buildSeriesPerMetrica(rows, metricheOrdinate)
+        } else {
+            buildSeriesPerColonna(rows, metricheOrdinate, chart.highlightDecline)
         }
 
         return ChartData(
@@ -134,6 +137,90 @@ class ChartService(
             series = series,
             truncated = result.truncated
         )
+    }
+
+    /**
+     * Comportamento storico: una serie per metrica, colore di default
+     * della palette (nessun pointColors).
+     */
+    private fun buildSeriesPerMetrica(
+        rows: List<com.lightningbi.lightning_engine.model.AggregateRow>,
+        metricheOrdinate: List<AreaMetrica>
+    ): List<ChartSeries> =
+        metricheOrdinate.map { metrica ->
+            ChartSeries(
+                metricaNome = metrica.nome,
+                values = rows.map { row -> (row.values[metrica.nome] ?: BigDecimal.ZERO).toDouble() }
+            )
+        }
+
+    /**
+     * Una serie per ogni valore-colonna distinto (es. "2025", "2026"),
+     * per la prima metrica del grafico - un grafico che segue le Colonne
+     * ha senso con una sola metrica alla volta, altrimenti il numero di
+     * serie esploderebbe (metriche × valori-colonna) diventando
+     * illeggibile. Le chiavi in AggregateRow.values sono già nella forma
+     * "nomeMetrica|v1|v2..." prodotta da AggregateService.pivotByColumns:
+     * qui si estrae solo il suffisso dopo il nome metrica come nome
+     * serie.
+     *
+     * highlightDecline colora di rosso ogni punto dell'ULTIMA serie
+     * (ordinata per label) il cui valore è inferiore al punto
+     * corrispondente della serie precedente. Le altre serie restano nei
+     * due colori fissi (arancio = confronto, blu = corrente) invece dei
+     * colori di palette di default, per rendere leggibile a colpo
+     * d'occhio quale sia il periodo "nuovo" rispetto al "vecchio".
+     */
+    private fun buildSeriesPerColonna(
+        rows: List<com.lightningbi.lightning_engine.model.AggregateRow>,
+        metricheOrdinate: List<AreaMetrica>,
+        highlightDecline: Boolean
+    ): List<ChartSeries> {
+        val metrica = metricheOrdinate.first()
+        val prefix = "${metrica.nome}|"
+
+        val nomiColonna = rows
+            .flatMap { it.values.keys }
+            .filter { it.startsWith(prefix) }
+            .map { it.removePrefix(prefix) }
+            .distinct()
+            .sorted()
+
+        if (nomiColonna.isEmpty()) return emptyList()
+
+        val serieValues = nomiColonna.map { nomeColonna ->
+            val key = "$prefix$nomeColonna"
+            rows.map { row -> (row.values[key] ?: BigDecimal.ZERO).toDouble() }
+        }
+
+        if (!highlightDecline || nomiColonna.size < 2) {
+            return nomiColonna.mapIndexed { i, nome ->
+                ChartSeries(metricaNome = nome, values = serieValues[i])
+            }
+        }
+
+        // Ultima serie (per ordine di label) confrontata con la
+        // penultima: rosso dove il valore è sceso, blu altrove. Le serie
+        // precedenti (se più di due, es. 2024/2025/2026) restano tutte
+        // arancio: solo il confronto sull'ultimo gradino è quello
+        // rilevante da evidenziare.
+        return nomiColonna.mapIndexed { i, nome ->
+            if (i < nomiColonna.size - 1) {
+                ChartSeries(
+                    metricaNome = nome,
+                    values = serieValues[i],
+                    pointColors = List(serieValues[i].size) { colorePrecedente }
+                )
+            } else {
+                val previousValues = serieValues[i - 1]
+                val currentValues = serieValues[i]
+                val pointColors = currentValues.mapIndexed { idx, value ->
+                    val previous = previousValues.getOrNull(idx) ?: 0.0
+                    if (value < previous) coloreCalo else coloreCorrente
+                }
+                ChartSeries(metricaNome = nome, values = currentValues, pointColors = pointColors)
+            }
+        }
     }
 
     /**
@@ -203,7 +290,9 @@ class ChartService(
         tipo: ChartType,
         metricaIds: List<UUID>,
         orderBy: AggregateOrder = AggregateOrder.DIMENSION,
-        maxItems: Int? = null
+        maxItems: Int? = null,
+        followsColumns: Boolean = false,
+        highlightDecline: Boolean = false
     ): AreaChart {
         validate(areaId, titolo, metricaIds)
         val chart = AreaChart(
@@ -213,7 +302,9 @@ class ChartService(
             tipo = tipo,
             orderBy = orderBy,
             maxItems = maxItems,
-            posizione = areaChartRepository.nextPosizione(areaId)
+            posizione = areaChartRepository.nextPosizione(areaId),
+            followsColumns = followsColumns,
+            highlightDecline = highlightDecline
         )
         areaChartRepository.save(chart)
         areaChartRepository.replaceMetriche(

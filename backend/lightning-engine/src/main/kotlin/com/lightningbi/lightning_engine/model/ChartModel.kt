@@ -114,8 +114,18 @@ data class ChartData(
     val truncated: Boolean
 )
 
-/** Una singola serie di valori nel grafico, con il nome della metrica per legenda/tooltip. */
+/**
+ * Una singola serie di valori nel grafico, con il nome della metrica per legenda/tooltip.
+ *
+ * pointColors è opzionale: null significa "nessun colore per punto
+ * personalizzato, usa il colore di default della serie (palette)".
+ * Quando presente, ha la stessa lunghezza di values, stesso indice -
+ * usato quando AreaChart.followsColumns genera serie per valore-colonna
+ * (es. una serie "2025" arancio, una serie "2026" blu salvo i punti in
+ * calo colorati di rosso se highlightDecline è attivo).
+ */
 data class ChartSeries(
     val metricaNome: String,
-    val values: List<Double>
+    val values: List<Double>,
+    val pointColors: List<String?>? = null
 )

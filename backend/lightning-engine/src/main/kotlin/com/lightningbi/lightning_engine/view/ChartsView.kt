@@ -22,6 +22,7 @@ import com.vaadin.flow.router.HasUrlParameter
 import com.vaadin.flow.router.Route
 import java.util.UUID
 import com.lightningbi.lightning_engine.service.AuthService
+import com.lightningbi.lightning_engine.model.AggregateOrder
 
 
 /**
@@ -348,8 +349,155 @@ class ChartsView(
         dialog.open()
     }
 
+    /**
+     * Edit completo di un grafico esistente: titolo, metriche (aggiungi/
+     * rimuovi/riordina), ordinamento, limite righe, e le due opzioni che
+     * legano il grafico all'asse Colonne del pivot (followsColumns) e alla
+     * colorazione condizionale (highlightDecline, attivabile solo se
+     * followsColumns è spuntato). Il TIPO di grafico non è modificabile qui:
+     * cambiare tipo significa cambiare i vincoli (metriche minime,
+     * comportamento assi), più semplice eliminare e ricreare col tipo giusto
+     * che rivalidare tutto in place.
+     */
     private fun openEditDialog(chart: AreaChart) {
-        Notification.show("Modifica grafico: in arrivo")
+        val currentAreaId = areaId ?: return
+        val tutteMetriche = registryRepository.findMetricheByArea(currentAreaId)
+        if (tutteMetriche.isEmpty()) {
+            Notification.show("L'analisi non ha metriche configurate")
+            return
+        }
+
+        val metricheAttuali = chartService.getMetricheDelGrafico(chart.id)
+            .sortedBy { it.posizione }
+            .mapNotNull { cm -> tutteMetriche.find { it.id == cm.metricaId } }
+
+        val dialog = Dialog().apply {
+            className = "lbi-wizard-dialog"
+            headerTitle = "Modifica \"${chart.titolo}\" (${chartTypeLabel(chart.tipo)})"
+            width = "480px"
+        }
+
+        val titoloField = TextField("Titolo").apply {
+            setWidthFull()
+            value = chart.titolo
+        }
+
+        // PIE/DONUT: una sola metrica scelta da ComboBox, come alla
+        // creazione. Gli altri tipi: multi-select ordinato, coerente con le
+        // "barre affiancate" già supportate da AreaChartMetrica.
+        val metricheMultiSelect = com.vaadin.flow.component.listbox.MultiSelectListBox<String>().apply {
+            setItems(tutteMetriche.map { it.nome })
+            value = metricheAttuali.map { it.nome }.toSet()
+            setWidthFull()
+        }
+        val metricaSingolaCombo = ComboBox<String>("Metrica").apply {
+            setItems(tutteMetriche.map { it.nome })
+            value = metricheAttuali.firstOrNull()?.nome
+            setWidthFull()
+        }
+        val isPieOrDonut = chart.tipo == ChartType.PIE || chart.tipo == ChartType.DONUT
+
+        val orderByCombo = ComboBox<AggregateOrder>("Ordinamento").apply {
+            setItems(AggregateOrder.entries)
+            setItemLabelGenerator {
+                when (it) {
+                    AggregateOrder.DIMENSION -> "Per etichetta (A-Z)"
+                    AggregateOrder.METRIC_DESC -> "Per valore, decrescente"
+                    AggregateOrder.METRIC_ASC -> "Per valore, crescente"
+                }
+            }
+            value = chart.orderBy
+            setWidthFull()
+        }
+
+        val maxItemsField = com.vaadin.flow.component.textfield.IntegerField("Limite righe (vuoto = automatico)").apply {
+            setWidthFull()
+            value = chart.maxItems
+        }
+
+        val followsColumnsCheckbox = com.vaadin.flow.component.checkbox.Checkbox(
+            "Segui le Colonne del pivot (una serie per valore, es. una per anno)"
+        ).apply {
+            value = chart.followsColumns
+        }
+        val highlightDeclineCheckbox = com.vaadin.flow.component.checkbox.Checkbox(
+            "Evidenzia i cali (rosso) confrontando l'ultima colonna con la precedente"
+        ).apply {
+            value = chart.highlightDecline
+            isEnabled = chart.followsColumns
+        }
+        followsColumnsCheckbox.addValueChangeListener { event ->
+            highlightDeclineCheckbox.isEnabled = event.value
+            if (!event.value) highlightDeclineCheckbox.value = false
+        }
+
+        val metricheSection = if (isPieOrDonut) metricaSingolaCombo else metricheMultiSelect
+        val metricheLabel = Span(if (isPieOrDonut) "Metrica" else "Metriche (multi-selezione, tutte diventano barre affiancate)")
+            .apply { className = "lbi-wizard-label" }
+
+        dialog.add(
+            VerticalLayout(
+                titoloField,
+                metricheLabel,
+                metricheSection,
+                orderByCombo,
+                maxItemsField,
+                followsColumnsCheckbox,
+                highlightDeclineCheckbox
+            ).apply { isPadding = false }
+        )
+
+        val cancelButton = Button("Annulla") { dialog.close() }
+        val saveButton = Button("Salva") {
+            val titolo = titoloField.value?.trim()
+            if (titolo.isNullOrBlank()) {
+                Notification.show("Il titolo è obbligatorio")
+                return@Button
+            }
+
+            val metricaIds: List<UUID> = if (isPieOrDonut) {
+                val nome = metricaSingolaCombo.value
+                if (nome == null) {
+                    Notification.show("Seleziona una metrica")
+                    return@Button
+                }
+                listOfNotNull(tutteMetriche.find { it.nome == nome }?.id)
+            } else {
+                metricheMultiSelect.value.mapNotNull { nome -> tutteMetriche.find { it.nome == nome }?.id }
+            }
+
+            if (metricaIds.isEmpty()) {
+                Notification.show("Seleziona almeno una metrica")
+                return@Button
+            }
+            if (followsColumnsCheckbox.value && metricaIds.size > 1) {
+                Notification.show(
+                    "\"Segui le Colonne\" richiede una sola metrica: rimuovine alcune o disattiva l'opzione",
+                    5000, Notification.Position.MIDDLE
+                )
+                return@Button
+            }
+
+            val updatedChart = chart.copy(
+                titolo = titolo,
+                orderBy = orderByCombo.value ?: chart.orderBy,
+                maxItems = maxItemsField.value,
+                followsColumns = followsColumnsCheckbox.value,
+                highlightDecline = highlightDeclineCheckbox.value
+            )
+
+            try {
+                chartService.update(updatedChart, metricaIds)
+                reload(currentAreaId)
+                dialog.close()
+                Notification.show("Grafico aggiornato", 3000, Notification.Position.BOTTOM_END)
+            } catch (e: Exception) {
+                Notification.show("Errore: ${e.message}", 5000, Notification.Position.MIDDLE)
+            }
+        }.apply { addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY) }
+
+        dialog.footer.add(cancelButton, saveButton)
+        dialog.open()
     }
 
     private fun confirmDelete(chart: AreaChart) {

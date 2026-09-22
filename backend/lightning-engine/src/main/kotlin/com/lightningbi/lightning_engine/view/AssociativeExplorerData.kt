@@ -116,7 +116,7 @@ class AssociativeExplorerData(
             versions
         )
         val rowHierarchy = aggregateService.buildRowHierarchy(areaId, aggregates, pivotRows, pivotValues)
-        val chartsData = chartService.getChartsData(areaId, pivotRows, selections)
+        val chartsData = chartService.getChartsData(areaId, pivotRows, pivotColumns, selections)
 
         val labels = resolveLabels(states, dimensionNames)
 
