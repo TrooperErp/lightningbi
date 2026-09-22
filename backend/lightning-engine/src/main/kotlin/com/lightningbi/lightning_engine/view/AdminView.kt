@@ -22,11 +22,14 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout
 import com.vaadin.flow.component.orderedlayout.VerticalLayout
 import com.vaadin.flow.component.textfield.PasswordField
 import com.vaadin.flow.component.textfield.TextField
+import com.vaadin.flow.router.AfterNavigationObserver
 import com.vaadin.flow.router.BeforeEnterEvent
 import com.vaadin.flow.router.BeforeEnterObserver
+import com.vaadin.flow.router.HasUrlParameter
 import com.vaadin.flow.router.Route
 import com.vaadin.flow.server.VaadinServletRequest
 import java.util.UUID
+import com.lightningbi.lightning_engine.service.AuthService
 
 /**
  * Console di amministrazione: gestione utenti e gestione ruoli/permessi.
@@ -48,26 +51,15 @@ class AdminView(
     private val userRoleRepository: UserRoleRepository,
     private val userService: UserService,
     private val permissionCheckService: PermissionCheckService,
+    private val authService: AuthService,
     private val passwordEncoder: org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
-) : VerticalLayout(), BeforeEnterObserver {
+) : VerticalLayout(){
 
     private val usersGrid = Grid<User>()
     private val rolesGrid = Grid<Role>()
 
 
-    override fun beforeEnter(event: BeforeEnterEvent) {
-        val currentUser = CurrentUserHolder.get()
-        if (currentUser == null) {
-            event.forwardTo(LoginView::class.java)
-            return
-        }
-        if (!permissionCheckService.hasPermission(currentUser.roleName, "MANAGE_USERS")) {
-            Notification.show("Accesso non autorizzato", 4000, Notification.Position.MIDDLE)
-            event.forwardTo(AssociativeExplorerView::class.java)
-            return
-        }
-        buildPage()
-    }
+
 
     private fun buildPage() {
         removeAll()
@@ -94,7 +86,7 @@ class AdminView(
             )
         )
 
-        val shell = LbiAppShell(menuGroups, content)
+        val shell = LbiAppShell(menuGroups, content, authService)
         add(shell)
         setFlexGrow(1.0, shell)
     }

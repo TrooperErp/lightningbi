@@ -47,7 +47,9 @@ class AreaChartRepositoryImpl(
             orderBy = AggregateOrder.valueOf(rs.getString("order_by")),
             maxItems = rs.getObject("max_items") as? Int,
             posizione = rs.getInt("posizione"),
-            createdAt = rs.getTimestamp("created_at").toInstant()
+            createdAt = rs.getTimestamp("created_at").toInstant(),
+            followsColumns = rs.getBoolean("follows_columns"),
+            highlightDecline = rs.getBoolean("highlight_decline")
         )
     }
 
@@ -63,13 +65,14 @@ class AreaChartRepositoryImpl(
     override fun save(chart: AreaChart): AreaChart {
         jdbcTemplate.update(
             """
-            INSERT INTO lbi_area_chart
-                (id, area_id, titolo, tipo, order_by, max_items, posizione, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """.trimIndent(),
+        INSERT INTO lbi_area_chart
+            (id, area_id, titolo, tipo, order_by, max_items, posizione, created_at, follows_columns, highlight_decline)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """.trimIndent(),
             chart.id, chart.areaId, chart.titolo, chart.tipo.name,
             chart.orderBy.name, chart.maxItems, chart.posizione,
-            java.sql.Timestamp.from(chart.createdAt)
+            java.sql.Timestamp.from(chart.createdAt),
+            chart.followsColumns, chart.highlightDecline
         )
         return chart
     }
@@ -77,12 +80,12 @@ class AreaChartRepositoryImpl(
     override fun update(chart: AreaChart): AreaChart {
         jdbcTemplate.update(
             """
-            UPDATE lbi_area_chart
-               SET titolo = ?, tipo = ?, order_by = ?, max_items = ?, posizione = ?
-             WHERE id = ?
-            """.trimIndent(),
+        UPDATE lbi_area_chart
+           SET titolo = ?, tipo = ?, order_by = ?, max_items = ?, posizione = ?, follows_columns = ?, highlight_decline = ?
+         WHERE id = ?
+        """.trimIndent(),
             chart.titolo, chart.tipo.name, chart.orderBy.name,
-            chart.maxItems, chart.posizione, chart.id
+            chart.maxItems, chart.posizione, chart.followsColumns, chart.highlightDecline, chart.id
         )
         return chart
     }

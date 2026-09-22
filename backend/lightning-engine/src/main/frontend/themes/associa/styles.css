@@ -635,3 +635,8 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
     width: 100%;
     box-sizing: border-box;
 }
+.lbi-analysis-name {
+    color: var(--lbi-header-fg);
+    font-weight: 600;
+    font-size: 14px;
+}

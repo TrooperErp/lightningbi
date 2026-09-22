@@ -21,6 +21,7 @@ import com.vaadin.flow.router.BeforeEvent
 import com.vaadin.flow.router.HasUrlParameter
 import com.vaadin.flow.router.Route
 import java.util.UUID
+import com.lightningbi.lightning_engine.service.AuthService
 
 
 /**
@@ -43,7 +44,8 @@ class ChartsView(
     private val chartService: ChartService,
     private val registryRepository: RegistryRepository,
     private val areaSourceRepository: AreaSourceRepository,
-    private val sourceVerificationService: SourceVerificationService
+    private val sourceVerificationService: SourceVerificationService,
+    private val authService: AuthService
 ) : VerticalLayout(), HasUrlParameter<String> {
 
     private var areaId: UUID? = null
@@ -111,7 +113,7 @@ class ChartsView(
             )
         )
 
-        val shell = LbiAppShell(menuGroups, content)
+        val shell = LbiAppShell(menuGroups, content, authService)
         add(shell)
         setFlexGrow(1.0, shell)
     }

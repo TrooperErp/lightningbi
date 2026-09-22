@@ -61,11 +61,25 @@ data class AreaChart(
     val titolo: String,
     val tipo: ChartType,
     val orderBy: AggregateOrder = AggregateOrder.DIMENSION,
-    /** Top-N. Null = tutte le righe fino al limite di sistema. */
     val maxItems: Int? = null,
-    /** Ordine nella dashboard dell'Analisi. */
     val posizione: Int = 0,
-    val createdAt: Instant = Instant.now()
+    val createdAt: Instant = Instant.now(),
+    /**
+     * Se true, il grafico genera una serie per ogni valore distinto
+     * dell'ultima dimensione di columnBy nel pivot corrente (es. Anno:
+     * una serie 2025, una serie 2026), oltre alle Righe come categorie
+     * sull'asse X. Se false (default), comportamento storico: una serie
+     * per metrica, nessun asse Colonne.
+     */
+    val followsColumns: Boolean = false,
+    /**
+     * Attivabile solo se followsColumns=true: colora di rosso ogni punto
+     * della serie più recente il cui valore è inferiore al punto
+     * corrispondente della serie precedente (stesso principio della
+     * variazione % già presente nel pivot). La serie precedente resta
+     * arancio, quella più recente blu salvo i punti in calo.
+     */
+    val highlightDecline: Boolean = false
 )
 
 /**

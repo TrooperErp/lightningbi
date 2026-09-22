@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Stato del pivot (Righe, Colonne, Valori, filtri attivi) persistito
+      per singolo utente su singola area - non condiviso tra utenti
+      diversi che aprono la stessa area, ognuno riparte dal proprio ultimo
+      stato salvato. Una riga sola per (user_id, area_id): sovrascritta ad
+      ogni salvataggio esplicito, nessuno storico di versioni per ora.
+
+      pivot_state è jsonb con la forma:
+      {
+        "pivotRows": ["<uuid>", ...],
+        "pivotColumns": ["<uuid>", ...],
+        "pivotValues": ["<uuid>", ...],
+        "selections": { "<uuid dimensione>": ["<id valore>", ...], ... }
+      }
+      Id di dimensioni/metriche/valori non più esistenti al momento del
+      ripristino vengono scartati silenziosamente (stesso comportamento
+      già presente in PivotPanel.restoreState per lo stato di sessione).
+    -->
+    <changeSet id="26" author="lightningbi">
+        <createTable tableName="pg_lbi_user_pivot_state">
+            <column name="user_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="area_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="pivot_state" type="jsonb">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey
+                tableName="pg_lbi_user_pivot_state"
+                columnNames="user_id, area_id"/>
+    </changeSet>
+
+</databaseChangeLog>

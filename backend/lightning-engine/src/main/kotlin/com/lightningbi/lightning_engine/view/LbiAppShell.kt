@@ -19,11 +19,14 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout
  */
 class LbiAppShell(
     initialMenuGroups: List<LbiSidebarMenu.MenuGroup>,
-    centerContent: Component
+    centerContent: Component,
+    private val authService: com.lightningbi.lightning_engine.service.AuthService,
+    analysisName: String? = null
 ) : VerticalLayout() {
 
     private var isDark = false
     private val sidebar = LbiSidebarMenu()
+    private val analysisNameSpan = Span("")
 
     init {
         className = "lbi-app"
@@ -39,6 +42,7 @@ class LbiAppShell(
             isSpacing = true
         }
 
+
         val themeToggle = Button("Dark").apply {
             className = "lbi-theme-toggle"
             addClickListener {
@@ -51,7 +55,27 @@ class LbiAppShell(
             }
         }
 
-        val topMenuBar = HorizontalLayout(logoContainer, themeToggle).apply {
+        val logoutButton = Button("Esci") {
+            val currentUser = CurrentUserHolder.get()
+            if (currentUser != null) {
+                val request = com.vaadin.flow.server.VaadinServletRequest.getCurrent().httpServletRequest
+                authService.logout(currentUser.sessionId, currentUser.userId, request.remoteAddr)
+                CurrentUserHolder.clear()
+            }
+            com.vaadin.flow.component.UI.getCurrent().navigate(LoginView::class.java)
+        }.apply { className = "lbi-theme-toggle" }
+
+        analysisNameSpan.apply {
+            text = analysisName ?: ""
+            className = "lbi-analysis-name"
+        }
+
+        val rightControls = HorizontalLayout(themeToggle, logoutButton).apply {
+            isSpacing = true
+            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
+        }
+
+        val topMenuBar = HorizontalLayout(logoContainer, analysisNameSpan, rightControls).apply {
             className = "lbi-topmenu"
             justifyContentMode = FlexComponent.JustifyContentMode.BETWEEN
             defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
@@ -77,5 +101,8 @@ class LbiAppShell(
     /** Ridisegna solo la sidebar con i gruppi aggiornati, lasciando il resto della shell intatto. */
     fun updateMenuGroups(groups: List<LbiSidebarMenu.MenuGroup>) {
         sidebar.setGroups(groups)
+    }
+    fun updateAnalysisName(name: String?) {
+        analysisNameSpan.text = name ?: ""
     }
 }

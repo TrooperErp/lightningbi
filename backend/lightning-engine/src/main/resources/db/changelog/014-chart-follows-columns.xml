@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Un grafico puo' seguire l'asse Colonne del pivot corrente
+      (followsColumns): genera una serie per ogni valore distinto
+      dell'ultima dimensione in columnBy (es. Anno: serie 2025, serie
+      2026), oltre alle Righe come categorie sull'asse X. Default false:
+      comportamento storico invariato (una serie per metrica).
+
+      highlightDecline, attivabile solo se followsColumns=true, colora
+      di rosso i punti della serie piu' recente il cui valore e'
+      inferiore al punto corrispondente della serie precedente - stesso
+      principio della variazione % gia' presente nel pivot (Righe/
+      Colonne), applicato qui alla resa visiva del grafico.
+    -->
+    <changeSet id="27" author="lightningbi">
+        <addColumn tableName="lbi_area_chart">
+            <column name="follows_columns" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="highlight_decline" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>
