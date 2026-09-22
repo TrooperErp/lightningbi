@@ -15,4 +15,5 @@
 	<include file="db/changelog/009-metric-model.xml"/>
 	<include file="db/changelog/010-chart-metrics.xml"/>
 	<include file="db/changelog/011-dimensione-valore-grezzo.xml"/>
+	<include file="db/changelog/012-role-permissions.xml"/>
 </databaseChangeLog>

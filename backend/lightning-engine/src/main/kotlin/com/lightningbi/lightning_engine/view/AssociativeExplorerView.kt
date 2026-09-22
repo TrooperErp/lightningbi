@@ -10,6 +10,7 @@ import com.lightningbi.lightning_engine.service.AssociativeStateService
 import com.lightningbi.lightning_engine.service.ChartService
 import com.lightningbi.lightning_engine.service.CryptoService
 import com.lightningbi.lightning_engine.service.MetadataService
+import com.lightningbi.lightning_engine.service.PermissionCheckService
 import com.lightningbi.lightning_engine.service.RegistryService
 import com.lightningbi.lightning_engine.service.SourceVerificationService
 import com.lightningbi.lightning_engine.service.SymbolLookupService
@@ -60,6 +61,7 @@ class AssociativeExplorerView(
     private val cryptoService: CryptoService,
     private val metadataService: MetadataService,
     private val viewSqlGenerator: ViewSqlGenerator,
+    private val permissionCheckService: PermissionCheckService,
     associativeStateService: AssociativeStateService,
     aggregateService: AggregateService,
     chartService: ChartService,
@@ -133,7 +135,7 @@ class AssociativeExplorerView(
 
     private fun buildMenuGroups(): List<LbiSidebarMenu.MenuGroup> {
         val currentAreaId = areaId
-        return listOf(
+        val groups = mutableListOf(
             LbiSidebarMenu.MenuGroup(
                 label = "Analisi",
                 entries = currentAreas.map { area ->
@@ -163,12 +165,29 @@ class AssociativeExplorerView(
             LbiSidebarMenu.MenuGroup(
                 label = "Report",
                 entries = listOf(LbiSidebarMenu.MenuEntry("Stampe") { Notification.show("Funzione in arrivo") })
-            ),
-            LbiSidebarMenu.MenuGroup(
-                label = "Amministrazione",
-                entries = listOf(LbiSidebarMenu.MenuEntry("Gestione utenti") { Notification.show("Funzione in arrivo") })
             )
         )
+
+        // "Amministrazione" compare SOLO per chi ha il permesso MANAGE_USERS
+        // sul proprio ruolo corrente - non un nome di ruolo fisso, coerente
+        // col modello a permessi granulari. Stesso controllo viene rifatto
+        // dentro AdminView.beforeEnter, perché l'URL /admin resta
+        // raggiungibile a mano anche se la voce di menu è nascosta qui.
+        val currentUser = CurrentUserHolder.get()
+        if (currentUser != null && permissionCheckService.hasPermission(currentUser.roleName, "MANAGE_USERS")) {
+            groups.add(
+                LbiSidebarMenu.MenuGroup(
+                    label = "Amministrazione",
+                    entries = listOf(
+                        LbiSidebarMenu.MenuEntry("Gestione utenti") {
+                            getUI().ifPresent { it.navigate(AdminView::class.java) }
+                        }
+                    )
+                )
+            )
+        }
+
+        return groups
     }
 
     private fun refreshSidebar() {
@@ -453,16 +472,13 @@ class AssociativeExplorerView(
     }
 
     private fun rebuildFilterCards(rows: List<UUID>, columns: List<UUID>) {
-        val allDims = rows + columns
-
-            ui.rebuildFilterCards(
-                rowDims = rows,
-                columnDims = columns,
-                dimensionNames = dimensionNames,
-                columnFor = { dimId -> dimensionColumns[dimId] },
-                countSameName = { name -> (rows + columns).count { dimensionNames[it] == name } }
-            )
-
+        ui.rebuildFilterCards(
+            rowDims = rows,
+            columnDims = columns,
+            dimensionNames = dimensionNames,
+            columnFor = { dimId -> dimensionColumns[dimId] },
+            countSameName = { name -> (rows + columns).count { dimensionNames[it] == name } }
+        )
     }
 
     private fun onFilterSelectionChanged(dimId: UUID, values: Set<Long>) {

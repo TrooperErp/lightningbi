@@ -22,22 +22,22 @@ class AuthService(
 
     fun login(username: String, password: String, ipAddress: String, userAgent: String): String? {
         val user = userRepository.findByUsername(username) ?: run {
-            auditService.log("LOGIN_FAILED", null, "User not found: $username", ipAddress)
+            auditService.log("LOGIN_FAILED", null, "User not found: $username", ipAddress, username = username, userAgent = userAgent)
             return null
         }
 
         if (!user.active) {
-            auditService.log("LOGIN_FAILED", user.id, "Account disabled", ipAddress)
+            auditService.log("LOGIN_FAILED", user.id, "Account disabled", ipAddress, username = user.username, userAgent = userAgent)
             return null
         }
 
         if (user.lockedUntil != null && user.lockedUntil.isAfter(LocalDateTime.now())) {
-            auditService.log("LOGIN_FAILED", user.id, "Account locked", ipAddress)
+            auditService.log("LOGIN_FAILED", user.id, "Account locked", ipAddress, username = user.username, userAgent = userAgent)
             return null
         }
 
         if (!passwordEncoder.matches(password, user.passwordHash)) {
-            handleFailedAttempt(user, ipAddress)
+            handleFailedAttempt(user, ipAddress, userAgent)
             return null
         }
 
@@ -54,20 +54,21 @@ class AuthService(
             ?: throw IllegalStateException("Role $roleId not found")
 
         val sessionId = sessionService.create(user.id, ipAddress, userAgent)
-        auditService.log("LOGIN_SUCCESS", user.id, "Login successful", ipAddress)
+        auditService.log("LOGIN_SUCCESS", user.id, "Login successful", ipAddress, username = user.username, userAgent = userAgent)
         return jwtService.generate(user.id, sessionId, role.name)
     }
 
     fun logout(sessionId: String, userId: UUID, ipAddress: String) {
         sessionService.revoke(sessionId)
-        auditService.log("LOGOUT", userId, "Logout", ipAddress)
+        val user = userRepository.findById(userId)
+        auditService.log("LOGOUT", userId, "Logout", ipAddress, username = user?.username ?: "")
     }
 
     fun changePassword(userId: UUID, oldPassword: String, newPassword: String, ipAddress: String): Boolean {
         val user = userRepository.findById(userId) ?: return false
 
         if (!passwordEncoder.matches(oldPassword, user.passwordHash)) {
-            auditService.log("PASSWORD_CHANGE_FAILED", userId, "Wrong current password", ipAddress)
+            auditService.log("PASSWORD_CHANGE_FAILED", userId, "Wrong current password", ipAddress, username = user.username)
             return false
         }
 
@@ -76,14 +77,14 @@ class AuthService(
             updatedAt = LocalDateTime.now()
         )
         userRepository.update(updatedUser)
-        auditService.log("PASSWORD_CHANGED", userId, "Password changed", ipAddress)
+        auditService.log("PASSWORD_CHANGED", userId, "Password changed", ipAddress, username = user.username)
         return true
     }
 
-    private fun handleFailedAttempt(user: User, ipAddress: String) {
+    private fun handleFailedAttempt(user: User, ipAddress: String, userAgent: String) {
         val attempts = user.failedAttempts + 1
         val lockedUntil = if (attempts >= 5) LocalDateTime.now().plusMinutes(15) else null
         userRepository.update(user.copy(failedAttempts = attempts, lockedUntil = lockedUntil))
-        auditService.log("LOGIN_FAILED", user.id, "Wrong password, attempt $attempts", ipAddress)
+        auditService.log("LOGIN_FAILED", user.id, "Wrong password, attempt $attempts", ipAddress, username = user.username, userAgent = userAgent)
     }
 }

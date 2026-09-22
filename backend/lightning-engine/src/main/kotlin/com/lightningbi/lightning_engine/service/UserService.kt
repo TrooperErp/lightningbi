@@ -30,14 +30,14 @@ class UserService(
         )
         userRepository.save(user)
         userRoleRepository.assign(user.id, roleId)
-        auditService.log("USER_CREATED", adminId, "Created user $username with role $roleId", ipAddress)
+        auditService.log("USER_CREATED", adminId, "Created user $username with role $roleId", ipAddress, username = username)
         return user
     }
 
     fun deactivateUser(userId: UUID, adminId: UUID, ipAddress: String): Boolean {
         val user = userRepository.findById(userId) ?: return false
         userRepository.update(user.copy(active = false, updatedAt = LocalDateTime.now()))
-        auditService.log("USER_DEACTIVATED", adminId, "Deactivated user ${user.username}", ipAddress)
+        auditService.log("USER_DEACTIVATED", adminId, "Deactivated user ${user.username}", ipAddress, username = user.username)
         return true
     }
 
