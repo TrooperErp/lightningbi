@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
+import tools.jackson.databind.ObjectMapper
 import java.sql.ResultSet
 import java.util.UUID
 
@@ -35,8 +36,18 @@ interface AreaChartRepository {
 
 @Repository
 class AreaChartRepositoryImpl(
-    @Qualifier("postgresJdbcTemplate") private val jdbcTemplate: JdbcTemplate
+    @Qualifier("postgresJdbcTemplate") private val jdbcTemplate: JdbcTemplate,
+    private val objectMapper: ObjectMapper
 ) : AreaChartRepository {
+
+    /** Serializza una lista di UUID come array JSON di stringhe, per le colonne jsonb pivot_rows_json/pivot_columns_json. */
+    private fun toJson(ids: List<UUID>): String = objectMapper.writeValueAsString(ids.map { it.toString() })
+
+    private fun fromJson(json: String?): List<UUID> {
+        if (json.isNullOrBlank()) return emptyList()
+        val raw: List<String> = objectMapper.readValue(json, objectMapper.typeFactory.constructCollectionType(List::class.java, String::class.java))
+        return raw.map { UUID.fromString(it) }
+    }
 
     private val mapper = RowMapper { rs: ResultSet, _: Int ->
         AreaChart(
@@ -49,7 +60,9 @@ class AreaChartRepositoryImpl(
             posizione = rs.getInt("posizione"),
             createdAt = rs.getTimestamp("created_at").toInstant(),
             followsColumns = rs.getBoolean("follows_columns"),
-            highlightDecline = rs.getBoolean("highlight_decline")
+            highlightDecline = rs.getBoolean("highlight_decline"),
+            pivotRows = fromJson(rs.getString("pivot_rows_json")),
+            pivotColumns = fromJson(rs.getString("pivot_columns_json"))
         )
     }
 
@@ -66,13 +79,14 @@ class AreaChartRepositoryImpl(
         jdbcTemplate.update(
             """
         INSERT INTO lbi_area_chart
-            (id, area_id, titolo, tipo, order_by, max_items, posizione, created_at, follows_columns, highlight_decline)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, area_id, titolo, tipo, order_by, max_items, posizione, created_at, follows_columns, highlight_decline, pivot_rows_json, pivot_columns_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)
         """.trimIndent(),
             chart.id, chart.areaId, chart.titolo, chart.tipo.name,
             chart.orderBy.name, chart.maxItems, chart.posizione,
             java.sql.Timestamp.from(chart.createdAt),
-            chart.followsColumns, chart.highlightDecline
+            chart.followsColumns, chart.highlightDecline,
+            toJson(chart.pivotRows), toJson(chart.pivotColumns)
         )
         return chart
     }
@@ -81,11 +95,14 @@ class AreaChartRepositoryImpl(
         jdbcTemplate.update(
             """
         UPDATE lbi_area_chart
-           SET titolo = ?, tipo = ?, order_by = ?, max_items = ?, posizione = ?, follows_columns = ?, highlight_decline = ?
+           SET titolo = ?, tipo = ?, order_by = ?, max_items = ?, posizione = ?, follows_columns = ?, highlight_decline = ?,
+               pivot_rows_json = ?::jsonb, pivot_columns_json = ?::jsonb
          WHERE id = ?
         """.trimIndent(),
             chart.titolo, chart.tipo.name, chart.orderBy.name,
-            chart.maxItems, chart.posizione, chart.followsColumns, chart.highlightDecline, chart.id
+            chart.maxItems, chart.posizione, chart.followsColumns, chart.highlightDecline,
+            toJson(chart.pivotRows), toJson(chart.pivotColumns),
+            chart.id
         )
         return chart
     }

@@ -1,0 +1,29 @@
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+<!--
+      Un grafico ottiene le sue proprie Righe/Colonne (pivotRows/
+      pivotColumns): non le eredita piu' sempre dal pivot della pagina.
+      La struttura del grafico e' fissa (scelta in creazione/edit), i
+      filtri/selezioni della pagina restano invece sempre condivisi e
+      dinamici.
+
+      I campi ammessi in questi due array sono sempre un sottoinsieme di
+      cio' che e' presente nel pivot dell'Analisi in quel momento (Righe+
+      Colonne+Valori): se un campo viene rimosso dal pivot pagina dopo il
+      salvataggio, va ripulito automaticamente dal grafico per coerenza.
+
+      Persistiti come jsonb (array di UUID come stringhe), stesso
+      principio di pg_lbi_user_pivot_state.pivot_state: pochi elementi,
+      nessuna necessita' di query/join su questi valori, non serve una
+      tabella normalizzata.
+     -->
+<changeSet id="28" author="lightningbi">
+<addColumn tableName="lbi_area_chart">
+<column name="pivot_rows_json" type="jsonb" defaultValue="[]">
+<constraints nullable="false"/>
+</column>
+<column name="pivot_columns_json" type="jsonb" defaultValue="[]">
+<constraints nullable="false"/>
+</column>
+</addColumn>
+</changeSet>
+</databaseChangeLog>

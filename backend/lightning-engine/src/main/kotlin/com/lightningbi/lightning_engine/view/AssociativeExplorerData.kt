@@ -116,7 +116,13 @@ class AssociativeExplorerData(
             versions
         )
         val rowHierarchy = aggregateService.buildRowHierarchy(areaId, aggregates, pivotRows, pivotValues)
-        val chartsData = chartService.getChartsData(areaId, pivotRows, pivotColumns, selections)
+
+        // I grafici hanno ora le loro proprie Righe/Colonne: non ricevono
+        // più pivotRows/pivotColumns della pagina come struttura, solo
+        // come "campi ammessi" per la potatura (insieme a pivotValues,
+        // cioè le metriche presenti nel pivot pagina). selections resta
+        // l'unica cosa che i grafici applicano sempre.
+        val chartsData = chartService.getChartsData(areaId, pivotRows, pivotColumns, pivotValues, selections)
 
         val labels = resolveLabels(states, dimensionNames)
 

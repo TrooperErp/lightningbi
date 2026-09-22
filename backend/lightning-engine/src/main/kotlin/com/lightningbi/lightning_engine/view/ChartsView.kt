@@ -4,6 +4,7 @@ import com.lightningbi.lightning_engine.model.AreaChart
 import com.lightningbi.lightning_engine.model.ChartType
 import com.lightningbi.lightning_engine.repository.AreaSourceRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
+import com.lightningbi.lightning_engine.repository.UserPivotStateRepository
 import com.lightningbi.lightning_engine.service.ChartService
 import com.lightningbi.lightning_engine.service.SourceVerificationService
 import com.vaadin.flow.component.Component
@@ -39,6 +40,16 @@ import com.lightningbi.lightning_engine.model.AggregateOrder
  * emergono nel dialog di creazione o, per il vincolo sulle dimensioni,
  * nella vista principale dove il grafico verrebbe mostrato opaco con un
  * messaggio se il pivot corrente non è coerente.
+ *
+ * Righe/Colonne/Valori del grafico sono ora scelte con un PivotPanel
+ * dedicato dentro il dialog (create/edit), non più con ComboBox/
+ * MultiSelectListBox: stesso componente della pagina Analisi, ma
+ * "subordinato" - i campi ammessi sono solo quelli presenti nell'ULTIMO
+ * pivot salvato dall'utente per quest'area (userPivotStateRepository),
+ * tutti gli altri campi dell'area restano visibili ma disabilitati
+ * (grigi) nel pool, per dare dinamismo: se l'utente amplia il pivot in
+ * Analisi e lo salva, quei campi diventano scegliebili anche qui alla
+ * prossima apertura del dialog.
  */
 @Route("charts")
 class ChartsView(
@@ -46,7 +57,8 @@ class ChartsView(
     private val registryRepository: RegistryRepository,
     private val areaSourceRepository: AreaSourceRepository,
     private val sourceVerificationService: SourceVerificationService,
-    private val authService: AuthService
+    private val authService: AuthService,
+    private val userPivotStateRepository: UserPivotStateRepository
 ) : VerticalLayout(), HasUrlParameter<String> {
 
     private var areaId: UUID? = null
@@ -152,7 +164,7 @@ class ChartsView(
 
         return VerticalLayout(
             Span("Grafici di \"$areaNome\"").apply { className = "lbi-section-title" },
-            Span("Scegli un tipo per creare un nuovo grafico. Segue sempre le Righe del pivot corrente dell'analisi.").apply {
+            Span("Scegli un tipo per creare un nuovo grafico. Righe, Colonne e Valori sono proprie del grafico, scelte fra i campi presenti nel pivot corrente dell'analisi.").apply {
                 className = "lbi-wizard-label"
             },
             typeGallery,
@@ -300,11 +312,50 @@ class ChartsView(
     }
 
     /**
+     * Campi ammessi in questo momento per il PivotPanel del grafico:
+     * quelli presenti nell'ULTIMO pivot salvato dall'utente per
+     * quest'area (Righe+Colonne+Valori), letto da userPivotStateRepository.
+     * Se l'utente non ha mai salvato una vista per quest'area, l'insieme
+     * è vuoto - tutti i campi appaiono disabilitati, coerente col fatto
+     * che senza un pivot di riferimento un grafico non avrebbe comunque
+     * senso.
+     */
+    private fun campiAmmessi(currentAreaId: UUID): Set<UUID> {
+        val userId = CurrentUserHolder.get()?.userId ?: return emptySet()
+        val stato = userPivotStateRepository.find(userId, currentAreaId) ?: return emptySet()
+        return (stato.pivotRows + stato.pivotColumns + stato.pivotValues).toSet()
+    }
+
+    /**
+     * Costruisce il PivotPanel dedicato al grafico: stessi campi
+     * dell'area (dimensioni + metriche) del PivotPanel della pagina
+     * Analisi, ma con i campi non presenti nell'ultimo pivot salvato
+     * dall'utente marcati come disabilitati (grigi) tramite
+     * setDisabledFields - non rimossi, per dare visibilità che esistono
+     * ma non sono selezionabili ora.
+     */
+    private fun buildChartPivotPanel(currentAreaId: UUID): PivotPanel {
+        val dimensioni = registryRepository.findDimensioniByArea(currentAreaId)
+            .mapNotNull { d -> registryRepository.findDimensione(d.dimensioneId)?.let { d.dimensioneId to it.nome } }
+        val metriche = registryRepository.findMetricheByArea(currentAreaId).map { it.id to it.nome }
+
+        val ammessi = campiAmmessi(currentAreaId)
+        val tuttiCampi = (dimensioni.map { it.first } + metriche.map { it.first }).toSet()
+        val disabilitati = tuttiCampi - ammessi
+
+        val panel = PivotPanel { _, _, _ -> }
+        panel.setFieldsWithIds(dimensioni, metriche)
+        panel.setDisabledFields(disabilitati)
+        return panel
+    }
+
+    /**
      * Dialog di creazione: il tipo arriva già deciso dal click sulla
-     * card, qui si scelgono solo titolo e metriche. Se il tipo richiede
-     * un numero minimo di metriche (torta = 1, scatter >= 2, radar >= 3)
-     * e la scelta non lo rispetta, il messaggio arriva alla conferma,
-     * non come blocco preventivo sulla card.
+     * card, qui si scelgono titolo, metriche e Righe/Colonne proprie del
+     * grafico via PivotPanel dedicato. Se il tipo richiede un numero
+     * minimo di metriche (torta = 1, scatter >= 2, radar >= 3) e la
+     * scelta non lo rispetta, il messaggio arriva alla conferma, non
+     * come blocco preventivo sulla card.
      */
     private fun openCreateDialog(currentAreaId: UUID, tipo: ChartType) {
         val metriche = registryRepository.findMetricheByArea(currentAreaId)
@@ -315,30 +366,49 @@ class ChartsView(
 
         val dialog = Dialog().apply {
             headerTitle = "Nuovo grafico: ${chartTypeLabel(tipo)}"
-            width = "440px"
+            width = "560px"
         }
 
         val titoloField = TextField("Titolo").apply { setWidthFull() }
-        val metricheCombo = ComboBox<String>(
-            if (tipo == ChartType.PIE || tipo == ChartType.DONUT) "Metrica" else "Metriche (una per ora)"
-        ).apply {
-            setItems(metriche.map { it.nome })
-            setWidthFull()
-        }
 
-        dialog.add(VerticalLayout(titoloField, metricheCombo).apply { isPadding = false })
+        val pivotPanel = buildChartPivotPanel(currentAreaId)
+
+        dialog.add(
+            VerticalLayout(
+                titoloField,
+                Span("Righe, Colonne e Valori del grafico (solo i campi presenti nel pivot corrente dell'analisi sono selezionabili)")
+                    .apply { className = "lbi-wizard-label" },
+                pivotPanel
+            ).apply { isPadding = false }
+        )
 
         val cancelButton = Button("Annulla") { dialog.close() }
         val createButton = Button("Crea") {
             val titolo = titoloField.value?.trim()
-            val metricaNome = metricheCombo.value
-            if (titolo.isNullOrBlank() || metricaNome == null) {
-                Notification.show("Compila tutti i campi")
+            if (titolo.isNullOrBlank()) {
+                Notification.show("Il titolo è obbligatorio")
                 return@Button
             }
-            val metricaId = metriche.find { it.nome == metricaNome }?.id ?: return@Button
+
+            val (pivotRows, pivotColumns, pivotValues) = pivotPanel.currentState()
+            if (pivotRows.isEmpty()) {
+                Notification.show("Seleziona almeno una dimensione in Righe")
+                return@Button
+            }
+            if (pivotValues.isEmpty()) {
+                Notification.show("Seleziona almeno una metrica in Valori")
+                return@Button
+            }
+
             try {
-                chartService.create(currentAreaId, titolo, tipo, listOf(metricaId))
+                chartService.create(
+                    areaId = currentAreaId,
+                    titolo = titolo,
+                    tipo = tipo,
+                    metricaIds = pivotValues,
+                    pivotRows = pivotRows,
+                    pivotColumns = pivotColumns
+                )
                 reload(currentAreaId)
                 dialog.close()
             } catch (e: Exception) {
@@ -350,14 +420,17 @@ class ChartsView(
     }
 
     /**
-     * Edit completo di un grafico esistente: titolo, metriche (aggiungi/
-     * rimuovi/riordina), ordinamento, limite righe, e le due opzioni che
-     * legano il grafico all'asse Colonne del pivot (followsColumns) e alla
-     * colorazione condizionale (highlightDecline, attivabile solo se
-     * followsColumns è spuntato). Il TIPO di grafico non è modificabile qui:
+     * Edit completo di un grafico esistente: titolo, Righe/Colonne/Valori
+     * proprie (PivotPanel dedicato, precompilato con la configurazione
+     * salvata - i campi non più ammessi nel pivot corrente dell'analisi
+     * restano disabilitati anche se già scelti in precedenza, l'utente
+     * viene così invitato a correggere e risalvare), ordinamento, limite
+     * righe, e le due opzioni che legano il grafico all'asse Colonne
+     * PROPRIO (followsColumns) e alla colorazione condizionale
+     * (highlightDecline). Il TIPO di grafico non è modificabile qui:
      * cambiare tipo significa cambiare i vincoli (metriche minime,
-     * comportamento assi), più semplice eliminare e ricreare col tipo giusto
-     * che rivalidare tutto in place.
+     * comportamento assi), più semplice eliminare e ricreare col tipo
+     * giusto che rivalidare tutto in place.
      */
     private fun openEditDialog(chart: AreaChart) {
         val currentAreaId = areaId ?: return
@@ -374,7 +447,7 @@ class ChartsView(
         val dialog = Dialog().apply {
             className = "lbi-wizard-dialog"
             headerTitle = "Modifica \"${chart.titolo}\" (${chartTypeLabel(chart.tipo)})"
-            width = "480px"
+            width = "560px"
         }
 
         val titoloField = TextField("Titolo").apply {
@@ -382,20 +455,8 @@ class ChartsView(
             value = chart.titolo
         }
 
-        // PIE/DONUT: una sola metrica scelta da ComboBox, come alla
-        // creazione. Gli altri tipi: multi-select ordinato, coerente con le
-        // "barre affiancate" già supportate da AreaChartMetrica.
-        val metricheMultiSelect = com.vaadin.flow.component.listbox.MultiSelectListBox<String>().apply {
-            setItems(tutteMetriche.map { it.nome })
-            value = metricheAttuali.map { it.nome }.toSet()
-            setWidthFull()
-        }
-        val metricaSingolaCombo = ComboBox<String>("Metrica").apply {
-            setItems(tutteMetriche.map { it.nome })
-            value = metricheAttuali.firstOrNull()?.nome
-            setWidthFull()
-        }
-        val isPieOrDonut = chart.tipo == ChartType.PIE || chart.tipo == ChartType.DONUT
+        val pivotPanel = buildChartPivotPanel(currentAreaId)
+        pivotPanel.restoreState(chart.pivotRows, chart.pivotColumns, metricheAttuali.map { it.id })
 
         val orderByCombo = ComboBox<AggregateOrder>("Ordinamento").apply {
             setItems(AggregateOrder.entries)
@@ -416,7 +477,7 @@ class ChartsView(
         }
 
         val followsColumnsCheckbox = com.vaadin.flow.component.checkbox.Checkbox(
-            "Segui le Colonne del pivot (una serie per valore, es. una per anno)"
+            "Segui le Colonne del grafico (una serie per valore, es. una per anno)"
         ).apply {
             value = chart.followsColumns
         }
@@ -431,15 +492,12 @@ class ChartsView(
             if (!event.value) highlightDeclineCheckbox.value = false
         }
 
-        val metricheSection = if (isPieOrDonut) metricaSingolaCombo else metricheMultiSelect
-        val metricheLabel = Span(if (isPieOrDonut) "Metrica" else "Metriche (multi-selezione, tutte diventano barre affiancate)")
-            .apply { className = "lbi-wizard-label" }
-
         dialog.add(
             VerticalLayout(
                 titoloField,
-                metricheLabel,
-                metricheSection,
+                Span("Righe, Colonne e Valori del grafico (solo i campi presenti nel pivot corrente dell'analisi sono selezionabili)")
+                    .apply { className = "lbi-wizard-label" },
+                pivotPanel,
                 orderByCombo,
                 maxItemsField,
                 followsColumnsCheckbox,
@@ -455,22 +513,16 @@ class ChartsView(
                 return@Button
             }
 
-            val metricaIds: List<UUID> = if (isPieOrDonut) {
-                val nome = metricaSingolaCombo.value
-                if (nome == null) {
-                    Notification.show("Seleziona una metrica")
-                    return@Button
-                }
-                listOfNotNull(tutteMetriche.find { it.nome == nome }?.id)
-            } else {
-                metricheMultiSelect.value.mapNotNull { nome -> tutteMetriche.find { it.nome == nome }?.id }
-            }
-
-            if (metricaIds.isEmpty()) {
-                Notification.show("Seleziona almeno una metrica")
+            val (pivotRows, pivotColumns, pivotValues) = pivotPanel.currentState()
+            if (pivotRows.isEmpty()) {
+                Notification.show("Seleziona almeno una dimensione in Righe")
                 return@Button
             }
-            if (followsColumnsCheckbox.value && metricaIds.size > 1) {
+            if (pivotValues.isEmpty()) {
+                Notification.show("Seleziona almeno una metrica in Valori")
+                return@Button
+            }
+            if (followsColumnsCheckbox.value && pivotValues.size > 1) {
                 Notification.show(
                     "\"Segui le Colonne\" richiede una sola metrica: rimuovine alcune o disattiva l'opzione",
                     5000, Notification.Position.MIDDLE
@@ -483,11 +535,13 @@ class ChartsView(
                 orderBy = orderByCombo.value ?: chart.orderBy,
                 maxItems = maxItemsField.value,
                 followsColumns = followsColumnsCheckbox.value,
-                highlightDecline = highlightDeclineCheckbox.value
+                highlightDecline = highlightDeclineCheckbox.value,
+                pivotRows = pivotRows,
+                pivotColumns = pivotColumns
             )
 
             try {
-                chartService.update(updatedChart, metricaIds)
+                chartService.update(updatedChart, pivotValues)
                 reload(currentAreaId)
                 dialog.close()
                 Notification.show("Grafico aggiornato", 3000, Notification.Position.BOTTOM_END)

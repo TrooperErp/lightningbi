@@ -33,6 +33,17 @@ class PivotPanel(
     private val columnFields = mutableListOf<Field>()
     private val valueFields = mutableListOf<Field>()
 
+    /**
+     * Campi non trascinabili in questo momento (grigi, ma visibili) -
+     * usato dal PivotPanel del grafico: solo i campi attualmente presenti
+     * nel pivot dell'Analisi sono ammessi, gli altri restano visibili ma
+     * disabilitati, per dare visibilità di "esiste ma non è selezionabile
+     * ora" invece di farlo sparire silenziosamente.
+     */
+    private var disabledFieldIds: Set<UUID> = emptySet()
+
+    // ... (poolBox, rowsBox, columnsBox, valuesBox invariati) ...
+
     private val poolBox = HorizontalLayout().apply { className = "lbi-pivot-pool"; isPadding = false }
     private val rowsBox = VerticalLayout().apply { className = "lbi-pivot-zone"; isPadding = false }
     private val columnsBox = VerticalLayout().apply { className = "lbi-pivot-zone"; isPadding = false }
@@ -120,6 +131,7 @@ class PivotPanel(
         dropTarget.addDropListener { event ->
             val fieldId = event.dragData.orElse(null) as? UUID ?: return@addDropListener
             val field = allFields.find { it.id == fieldId } ?: return@addDropListener
+            if (field.id in disabledFieldIds) return@addDropListener
 
             // Righe e Colonne accettano solo dimensioni, Valori solo metriche.
             when (zoneType) {
@@ -163,11 +175,18 @@ class PivotPanel(
     }
 
     private fun buildDraggableChip(field: Field): Span {
+        val isDisabled = field.id in disabledFieldIds
         val chip = Span(field.label).apply {
-            className = if (field.isMetric) "lbi-pivot-chip lbi-pivot-chip-metric" else "lbi-pivot-chip lbi-pivot-chip-dim"
+            className = when {
+                isDisabled -> "lbi-pivot-chip lbi-pivot-chip-disabled"
+                field.isMetric -> "lbi-pivot-chip lbi-pivot-chip-metric"
+                else -> "lbi-pivot-chip lbi-pivot-chip-dim"
+            }
         }
-        val dragSource = DragSource.create(chip)
-        dragSource.setDragData(field.id)
+        if (!isDisabled) {
+            val dragSource = DragSource.create(chip)
+            dragSource.setDragData(field.id)
+        }
         return chip
     }
 
@@ -213,4 +232,24 @@ class PivotPanel(
     private fun fireChange() {
         onChange(rowFields.map { it.id }, columnFields.map { it.id }, valueFields.map { it.id })
     }
+
+    /**
+     * Aggiorna l'insieme dei campi non selezionabili (grigi) senza
+     * toccare rowFields/columnFields/valueFields già scelti. Se un campo
+     * già presente in una zona diventa disabilitato (perché rimosso dal
+     * pivot pagina), resta lì ma visivamente segnalato - la rimozione
+     * effettiva dalla zona è compito del chiamante (vedi nota in
+     * ChartsView su potatura), non di questo metodo.
+     */
+    fun setDisabledFields(ids: Set<UUID>) {
+        disabledFieldIds = ids
+        renderAll()
+    }
+    /**
+     * Stato corrente (Righe, Colonne, Valori) senza passare da onChange -
+     * usato dal dialog grafico per leggere la configurazione al momento
+     * del salvataggio (Crea/Salva), non ad ogni singola modifica.
+     */
+    fun currentState(): Triple<List<UUID>, List<UUID>, List<UUID>> =
+        Triple(rowFields.map { it.id }, columnFields.map { it.id }, valueFields.map { it.id })
 }

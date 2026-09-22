@@ -516,6 +516,13 @@ vaadin-button[disabled] {
     background: rgba(34, 197, 94, 0.12);
     border: 1px solid var(--lbi-state-selected);
 }
+.lbi-pivot-chip-disabled {
+    background: var(--lbi-excluded-bg);
+    border: 1px solid var(--lbi-border);
+    color: var(--lbi-excluded-text);
+    cursor: not-allowed;
+    opacity: 0.7;
+}
 
 .lbi-pivot-zone-chip {
     align-items: center;

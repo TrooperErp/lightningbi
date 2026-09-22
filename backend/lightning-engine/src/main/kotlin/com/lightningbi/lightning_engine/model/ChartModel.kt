@@ -79,7 +79,16 @@ data class AreaChart(
      * variazione % già presente nel pivot). La serie precedente resta
      * arancio, quella più recente blu salvo i punti in calo.
      */
-    val highlightDecline: Boolean = false
+    val highlightDecline: Boolean = false,
+    /**
+     * Righe e Colonne proprie del grafico (non più ereditate dalla
+     * pagina). Sottoposte al pivot dell'Analisi: solo campi attualmente
+     * presenti nel pivot pagina sono ammessi, gli altri vanno filtrati
+     * dalla UI e, se rimossi dal pivot pagina dopo il salvataggio,
+     * vanno ripuliti automaticamente da ChartService per coerenza.
+     */
+    val pivotRows: List<UUID> = emptyList(),
+    val pivotColumns: List<UUID> = emptyList()
 )
 
 /**

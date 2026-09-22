@@ -18,4 +18,5 @@
 	<include file="db/changelog/012-role-permissions.xml"/>
 	<include file="db/changelog/013-user-pivot-state.xml"/>
 	<include file="db/changelog/014-chart-follows-columns.xml"/>
+	<include file="db/changelog/015-chart-own-pivot.xml"/>
 </databaseChangeLog>
