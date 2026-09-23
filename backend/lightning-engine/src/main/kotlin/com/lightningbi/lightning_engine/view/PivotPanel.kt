@@ -51,17 +51,19 @@ class PivotPanel(
 
     init {
         isPadding = false
+        isSpacing = false
         className = "lbi-pivot-panel"
 
         add(
             Span("Campi disponibili (trascina in Righe, Colonne o Valori)").apply { className = "lbi-wizard-label" },
             poolBox,
             HorizontalLayout(
-                VerticalLayout(Span("Righe").apply { className = "lbi-wizard-label" }, rowsBox).apply { isPadding = false; setWidthFull() },
-                VerticalLayout(Span("Colonne").apply { className = "lbi-wizard-label" }, columnsBox).apply { isPadding = false; setWidthFull() },
-                VerticalLayout(Span("Valori").apply { className = "lbi-wizard-label" }, valuesBox).apply { isPadding = false; setWidthFull() }
+                VerticalLayout(Span("Righe").apply { className = "lbi-wizard-label" }, rowsBox).apply { isPadding = false; isSpacing = false; setWidthFull() },
+                VerticalLayout(Span("Colonne").apply { className = "lbi-wizard-label" }, columnsBox).apply { isPadding = false; isSpacing = false; setWidthFull() },
+                VerticalLayout(Span("Valori").apply { className = "lbi-wizard-label" }, valuesBox).apply { isPadding = false; isSpacing = false; setWidthFull() }
             ).apply {
                 isPadding = false
+                isSpacing = false
                 setWidthFull()
             }
         )

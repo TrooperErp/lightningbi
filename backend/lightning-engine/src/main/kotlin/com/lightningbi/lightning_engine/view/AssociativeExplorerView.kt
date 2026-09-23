@@ -8,11 +8,12 @@ import com.lightningbi.lightning_engine.repository.AreaSourceRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import com.lightningbi.lightning_engine.repository.UserPivotStateRepository
 import com.lightningbi.lightning_engine.service.AggregateService
-import com.lightningbi.lightning_engine.service.AssociativeStateService
+import com.lightningbi.lightning_engine.service.AssociativeStateFacade
 import com.lightningbi.lightning_engine.service.ChartService
 import com.lightningbi.lightning_engine.service.CryptoService
 import com.lightningbi.lightning_engine.service.MetadataService
 import com.lightningbi.lightning_engine.service.PermissionCheckService
+import com.lightningbi.lightning_engine.service.PivotViewService
 import com.lightningbi.lightning_engine.service.RegistryService
 import com.lightningbi.lightning_engine.service.SourceVerificationService
 import com.lightningbi.lightning_engine.service.SymbolLookupService
@@ -56,12 +57,21 @@ import com.lightningbi.lightning_engine.service.AuthService
  * parametro; afterNavigation() (che gira dopo che la navigazione è
  * completamente avvenuta) innesca il vero caricamento.
  *
- * Persistenza pivot: lo stato del pivot (Righe, Colonne, Valori,
- * selezioni) può essere salvato esplicitamente per utente+area
- * (UserPivotStateRepository), distinto dallo stato "in transito"
- * verso/da ChartsView (AnalysisWorkStateHolder, sessione Vaadin,
- * non persistito). Ogni modifica al pivot marca hasUnsavedChanges;
- * cambiare area con modifiche pendenti chiede conferma.
+ * PIVOT: Righe/Colonne/Valori NON si costruiscono più qui. Vivono in
+ * una PivotView (una per "foglio", condivisa per l'Area, gestite in
+ * ConfigureAnalysisView) - questa vista legge sempre la vista ATTIVA
+ * per l'utente corrente (PivotViewService.ensureActiveView) e la
+ * ridisegna, ma non offre alcun drag&drop per modificarla.
+ *
+ * SELEZIONI: uniche e condivise per l'intera Area, indipendenti da
+ * quale PivotView è attiva - comportamento Qlik confermato (le
+ * selezioni sono a livello di app, non di foglio). Selezionare un
+ * valore qui o in ConfigureAnalysisView è la stessa identica azione
+ * sullo stesso stato. Non vengono MAI rimosse per il solo fatto che una
+ * dimensione non è (più) in nessuna vista: restano attive e si
+ * riflettono su griglia e grafici tramite la barra "selezioni attive",
+ * sempre visibile, anche per campi non mostrati come card in questa
+ * pagina.
  */
 @Route("associative")
 class AssociativeExplorerView(
@@ -74,7 +84,8 @@ class AssociativeExplorerView(
     private val viewSqlGenerator: ViewSqlGenerator,
     private val permissionCheckService: PermissionCheckService,
     private val userPivotStateRepository: UserPivotStateRepository,
-    associativeStateService: AssociativeStateService,
+    private val pivotViewService: PivotViewService,
+    associativeStateService: AssociativeStateFacade,
     aggregateService: AggregateService,
     chartService: ChartService,
     versionService: VersionService,
@@ -92,8 +103,7 @@ class AssociativeExplorerView(
 
     private val ui = AssociativeExplorerUi(
         onFilterSelectionChanged = { dimId, values -> onFilterSelectionChanged(dimId, values) },
-        onRemoveSelection = { dimId, valueId -> onRemoveSelection(dimId, valueId) },
-        onPivotChanged = { rows, columns, values -> onPivotChanged(rows, columns, values) }
+        onRemoveSelection = { dimId, valueId -> onRemoveSelection(dimId, valueId) }
     )
 
     private var areaId: UUID? = null
@@ -106,8 +116,6 @@ class AssociativeExplorerView(
     private var pivotRows: List<UUID> = emptyList()
     private var pivotColumns: List<UUID> = emptyList()
     private var pivotValues: List<UUID> = emptyList()
-
-    private var hasUnsavedChanges: Boolean = false
 
     private val requestCounter = AtomicLong(0)
 
@@ -143,42 +151,19 @@ class AssociativeExplorerView(
             switchArea(requestedId)
         } else if (currentAreas.isNotEmpty() && areaId == null) {
             switchArea(currentAreas.first().id)
+        } else if (areaId != null) {
+            // Si torna su questa pagina (es. da ConfigureAnalysisView):
+            // la PivotView attiva o le selezioni potrebbero essere
+            // cambiate nel frattempo, va sempre riletto lo stato fresco.
+            reloadActiveViewAndRefresh(areaId!!)
         }
     }
 
     override fun beforeLeave(event: com.vaadin.flow.router.BeforeLeaveEvent) {
-        if (!hasUnsavedChanges) return
-
-        val continuation = event.postpone()
-        val dialog = Dialog().apply {
-            headerTitle = "Modifiche non salvate"
-            width = "440px"
-            isCloseOnEsc = false
-            isCloseOnOutsideClick = false
-            addDialogCloseActionListener {
-                continuation.cancel()
-                close()
-            }
-        }
-        dialog.add(Span("Hai modifiche al pivot non ancora salvate. Vuoi salvarle prima di uscire?"))
-
-        val cancelButton = Button("Annulla") {
-            dialog.close()
-            continuation.cancel()
-        }
-        val discardButton = Button("Scarta modifiche") {
-            markSaved()
-            dialog.close()
-            continuation.proceed()
-        }
-        val saveButton = Button("Salva ed esci") {
-            savePivotState()
-            dialog.close()
-            continuation.proceed()
-        }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
-
-        dialog.footer.add(cancelButton, discardButton, saveButton)
-        dialog.open()
+        // Nessuna modifica pivot pendente da salvare qui: la struttura si
+        // modifica solo in ConfigureAnalysisView, che salva ad ogni
+        // cambiamento. Questa pagina non ha più nulla da chiedere prima
+        // di lasciarla.
     }
 
     // ================= Sidebar =================
@@ -194,9 +179,16 @@ class AssociativeExplorerView(
                 active = true
             ),
             LbiSidebarMenu.MenuGroup(
+                label = "Configura Analisi",
+                entries = listOf(
+                    LbiSidebarMenu.MenuEntry("Righe, Colonne, Valori", enabled = currentAreaId != null) {
+                        navigateToConfigure(currentAreaId)
+                    }
+                )
+            ),
+            LbiSidebarMenu.MenuGroup(
                 label = "Gestisci",
                 entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Salva vista", enabled = hasUnsavedChanges) { savePivotState() },
                     LbiSidebarMenu.MenuEntry("Verifica sorgente", enabled = hasSource) { verifySource() },
                     LbiSidebarMenu.MenuEntry("Mostra SQL view", enabled = hasSource) { showViewSql() },
                     LbiSidebarMenu.MenuEntry("Sincronizza", enabled = hasSource && sourceStatus == SourceStatus.VERIFIED) { runEtl() },
@@ -249,93 +241,12 @@ class AssociativeExplorerView(
 
     private fun navigateToCharts(currentAreaId: UUID?) {
         if (currentAreaId == null) return
-        AnalysisWorkStateHolder.save(
-            AnalysisWorkState(
-                areaId = currentAreaId,
-                pivotRows = pivotRows,
-                pivotColumns = pivotColumns,
-                pivotValues = pivotValues,
-                selections = selections.toMap()
-            )
-        )
         getUI().ifPresent { it.navigate(ChartsView::class.java, currentAreaId.toString()) }
     }
 
-    // ================= Persistenza pivot =================
-
-    /**
-     * Marca lo stato pivot corrente come "non salvato" e rinfresca la
-     * sidebar cosi' la voce "Salva vista" diventa cliccabile. Chiamato
-     * da ogni punto che cambia pivotRows/pivotColumns/pivotValues/
-     * selections.
-     */
-    private fun markUnsaved() {
-        hasUnsavedChanges = true
-        refreshSidebar()
-    }
-
-    private fun markSaved() {
-        hasUnsavedChanges = false
-        refreshSidebar()
-    }
-
-    /**
-     * Salva lo stato corrente del pivot (Righe, Colonne, Valori,
-     * selezioni) per l'utente loggato su quest'area. Una riga sola per
-     * (utente, area): sovrascrive il salvataggio precedente, nessuno
-     * storico di versioni.
-     */
-    private fun savePivotState() {
-        val currentAreaId = areaId ?: return
-        val currentUser = CurrentUserHolder.get() ?: run {
-            Notification.show("Nessun utente autenticato: impossibile salvare", 4000, Notification.Position.MIDDLE)
-            return
-        }
-        userPivotStateRepository.save(
-            UserPivotState(
-                userId = currentUser.userId,
-                areaId = currentAreaId,
-                pivotRows = pivotRows,
-                pivotColumns = pivotColumns,
-                pivotValues = pivotValues,
-                selections = selections.filterValues { it.isNotEmpty() }
-            )
-        )
-        markSaved()
-        Notification.show("Vista salvata", 3000, Notification.Position.BOTTOM_END)
-    }
-
-    /**
-     * Se ci sono modifiche non salvate, chiede conferma prima di
-     * procedere (es. cambio area). onProceed viene eseguito solo se
-     * l'utente sceglie "Salva ed esci" o "Scarta modifiche"; "Annulla"
-     * non fa nulla, l'utente resta dove si trovava.
-     */
-    private fun confirmDiscardIfNeeded(onProceed: () -> Unit) {
-        if (!hasUnsavedChanges) {
-            onProceed()
-            return
-        }
-        val dialog = Dialog().apply {
-            headerTitle = "Modifiche non salvate"
-            width = "440px"
-        }
-        dialog.add(Span("Hai modifiche al pivot non ancora salvate. Vuoi salvarle prima di continuare?"))
-
-        val cancelButton = Button("Annulla") { dialog.close() }
-        val discardButton = Button("Scarta modifiche") {
-            markSaved()
-            dialog.close()
-            onProceed()
-        }
-        val saveButton = Button("Salva ed esci") {
-            savePivotState()
-            dialog.close()
-            onProceed()
-        }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
-
-        dialog.footer.add(cancelButton, discardButton, saveButton)
-        dialog.open()
+    private fun navigateToConfigure(currentAreaId: UUID?) {
+        if (currentAreaId == null) return
+        getUI().ifPresent { it.navigate(ConfigureAnalysisView::class.java, currentAreaId.toString()) }
     }
 
     // ================= Sorgente =================
@@ -345,7 +256,7 @@ class AssociativeExplorerView(
         if (currentAreaId == null) {
             hasSource = false
             sourceStatus = null
-            ui.setSourceStatusText("")
+            shell.updateSourceStatus("")
             refreshSidebar()
             return
         }
@@ -354,7 +265,7 @@ class AssociativeExplorerView(
         hasSource = source != null
         sourceStatus = source?.status
 
-        ui.setSourceStatusText(
+        shell.updateSourceStatus(
             when {
                 source == null -> "Nessuna sorgente collegata"
                 source.status == SourceStatus.VERIFIED -> "Sorgente verificata: ${source.config.viewName}"
@@ -370,7 +281,7 @@ class AssociativeExplorerView(
         val vaadinUi = getUI().orElse(null) ?: return
         val scope = viewScope ?: return
 
-        ui.setSourceStatusText("Verifica in corso...")
+        shell.updateSourceStatus("Verifica in corso...")
 
         scope.launch {
             val results = try {
@@ -407,7 +318,7 @@ class AssociativeExplorerView(
             return
         }
 
-        ui.setSourceStatusText("Sincronizzazione in corso...")
+        shell.updateSourceStatus("Sincronizzazione in corso...")
 
         scope.launch {
             try {
@@ -467,7 +378,6 @@ class AssociativeExplorerView(
             cryptoService = cryptoService,
             metadataService = metadataService
         ) {
-            refreshPivotFields(currentAreaId)
             refresh()
         }.open()
     }
@@ -476,7 +386,6 @@ class AssociativeExplorerView(
     private fun openEditMetrics() {
         val currentAreaId = areaId ?: return
         EditMetricsDialog(currentAreaId, registryService) {
-            refreshPivotFields(currentAreaId)
             refresh()
         }.open()
     }
@@ -554,16 +463,7 @@ class AssociativeExplorerView(
         ui.clearAll()
     }
 
-    /**
-     * Punto di ingresso pubblico per cambiare area: se ci sono modifiche
-     * pivot non salvate sull'area corrente, chiede conferma prima di
-     * procedere davvero (doSwitchArea).
-     */
     private fun switchArea(newAreaId: UUID) {
-        confirmDiscardIfNeeded { doSwitchArea(newAreaId) }
-    }
-
-    private fun doSwitchArea(newAreaId: UUID) {
         areaId = newAreaId
         resetAreaState()
 
@@ -573,65 +473,37 @@ class AssociativeExplorerView(
                 dimensionColumns[ad.dimensioneId] = ad.colonnaFisica
             }
         }
-        refreshPivotFields(newAreaId)
         refreshSourceStatus()
+        reloadActiveViewAndRefresh(newAreaId)
+    }
 
-        // Stato "in transito" da/verso ChartsView (sessione Vaadin, non
-        // persistito): ha priorità sullo stato salvato esplicitamente,
-        // perché rappresenta un lavoro appena interrotto un attimo fa.
-        val saved = AnalysisWorkStateHolder.read()
-        if (saved != null && saved.areaId == newAreaId) {
-            pivotRows = saved.pivotRows
-            pivotColumns = saved.pivotColumns
-            pivotValues = saved.pivotValues
-            selections.putAll(saved.selections)
-            ui.pivotPanel.restoreState(pivotRows, pivotColumns, pivotValues)
-            rebuildFilterCards(pivotRows, pivotColumns)
-            AnalysisWorkStateHolder.clear()
-        } else {
-            // Nessuno stato "in transito": prova a caricare l'ultimo
-            // stato salvato esplicitamente dall'utente per quest'area.
-            // Id di dimensioni/metriche/valori non più esistenti vengono
-            // scartati silenziosamente da PivotPanel.restoreState, stesso
-            // comportamento già usato per lo stato "in transito" sopra.
-            val currentUser = CurrentUserHolder.get()
-            if (currentUser != null) {
-                val savedPivotState = userPivotStateRepository.find(currentUser.userId, newAreaId)
-                if (savedPivotState != null) {
-                    pivotRows = savedPivotState.pivotRows
-                    pivotColumns = savedPivotState.pivotColumns
-                    pivotValues = savedPivotState.pivotValues
-                    selections.putAll(savedPivotState.selections)
-                    ui.pivotPanel.restoreState(pivotRows, pivotColumns, pivotValues)
-                    rebuildFilterCards(pivotRows, pivotColumns)
-                }
-            }
+    /**
+     * Rilegge la PivotView attiva per l'utente su quest'area (creandone
+     * una di default se l'area non ne ha ancora nessuna - vedi
+     * PivotViewService.ensureActiveView) e le selezioni correnti, poi
+     * ridisegna. Punto unico richiamato sia al cambio area sia al
+     * ritorno da ConfigureAnalysisView, perché entrambe le cose possono
+     * essere cambiate nel frattempo in un'altra pagina.
+     */
+    private fun reloadActiveViewAndRefresh(currentAreaId: UUID) {
+        val currentUser = CurrentUserHolder.get() ?: return
+
+        val activeView = pivotViewService.ensureActiveView(currentUser.userId, currentAreaId)
+        pivotRows = activeView.pivotRows
+        pivotColumns = activeView.pivotColumns
+        pivotValues = activeView.pivotValues
+
+        selections.clear()
+        userPivotStateRepository.find(currentUser.userId, currentAreaId)?.let { state ->
+            selections.putAll(state.selections)
         }
-        markSaved()
 
+        rebuildFilterCards(pivotRows, pivotColumns)
+        refreshSidebar()
         refresh()
     }
 
-    private fun refreshPivotFields(currentAreaId: UUID) {
-        val dims = data.findDimensioniByArea(currentAreaId)
-            .mapNotNull { ad -> data.findDimensione(ad.dimensioneId)?.let { ad.dimensioneId to it.nome } }
-        val metriche = data.findMetricheByArea(currentAreaId).map { it.id to it.nome }
-        ui.pivotPanel.setFieldsWithIds(dims, metriche)
-    }
-
-    // ================= Pivot / Filtri =================
-
-    private fun onPivotChanged(rows: List<UUID>, columns: List<UUID>, values: List<UUID>) {
-        println("DEBUG: onPivotChanged chiamato, rows=$rows, columns=$columns")
-        val removedDims = (pivotRows + pivotColumns).filter { it !in rows && it !in columns }
-        pivotRows = rows
-        pivotColumns = columns
-        pivotValues = values
-        removedDims.forEach { selections.remove(it) }
-        rebuildFilterCards(rows, columns)
-        markUnsaved()
-        refresh()
-    }
+    // ================= Filtri =================
 
     private fun rebuildFilterCards(rows: List<UUID>, columns: List<UUID>) {
         ui.rebuildFilterCards(
@@ -643,9 +515,16 @@ class AssociativeExplorerView(
         )
     }
 
+    /**
+     * Le selezioni sono uniche e condivise per l'Area: qui vengono solo
+     * salvate su UserPivotState e applicate al refresh, MAI cancellate
+     * per il fatto che una dimensione non è (più) nella vista attiva -
+     * comportamento Qlik confermato (le selezioni valgono su tutta
+     * l'app, non sul singolo foglio).
+     */
     private fun onFilterSelectionChanged(dimId: UUID, values: Set<Long>) {
         selections[dimId] = values
-        markUnsaved()
+        persistSelections()
         refresh()
     }
 
@@ -654,8 +533,22 @@ class AssociativeExplorerView(
         current.remove(valueId)
         if (current.isEmpty()) selections.remove(dimId) else selections[dimId] = current
         ui.deselectValue(dimId, valueId)
-        markUnsaved()
+        persistSelections()
         refresh()
+    }
+
+    private fun persistSelections() {
+        val currentAreaId = areaId ?: return
+        val currentUser = CurrentUserHolder.get() ?: return
+        val current = userPivotStateRepository.find(currentUser.userId, currentAreaId)
+        userPivotStateRepository.save(
+            UserPivotState(
+                userId = currentUser.userId,
+                areaId = currentAreaId,
+                activeViewId = current?.activeViewId,
+                selections = selections.filterValues { it.isNotEmpty() }
+            )
+        )
     }
 
     // ================= Refresh =================
@@ -665,12 +558,6 @@ class AssociativeExplorerView(
      * data.refresh() il lavoro vero (query), poi delega a ui.render*()
      * il disegno del risultato. Non fa mai query né costruisce
      * componenti direttamente: coordina solo.
-     *
-     * NOTA: pivotColumns non è ancora passato a data.refresh()/
-     * AggregateService - il calcolo dell'asse Colonne non è ancora
-     * cablato lato backend. Il pivot UI accetta già il drag&drop su
-     * Colonne, ma finché AggregateService non aggrega su due assi il
-     * risultato ignora pivotColumns.
      */
     private fun refresh() {
         val currentAreaId = areaId ?: return
@@ -688,18 +575,14 @@ class AssociativeExplorerView(
         scope.launch {
             try {
                 val result = data.refresh(currentAreaId, rowsSnapshot, columnsSnapshot, valuesSnapshot, selectionsSnapshot, dimensionNames)
-                println("DEBUG: refresh completato, righe aggregati=${result.aggregates.rows.size}, grafici=${result.chartsData.size}")
 
                 vaadinUi.access {
                     if (myRequestId != requestCounter.get()) return@access
                     if (areaId != currentAreaId) return@access
-                    println("DEBUG: prima di renderStates")
+                    ui.renderActiveSelections(selectionsSnapshot, dimensionNames, result.labels, data::labelOrFallback)
                     ui.renderStates(result.states, result.labels, data::labelOrFallback) { dimId -> dimensionColumns[dimId] }
-                    println("DEBUG: prima di renderResultsGrid")
                     ui.renderResultsGrid(result.aggregates, result.rowHierarchy, rowsSnapshot, dimensionNames)
-                    println("DEBUG: prima di renderCharts")
                     ui.renderCharts(result.chartsData, rowsSnapshot)
-                    println("DEBUG: dopo renderCharts, tutto ok")
                     ui.loadingDialog.close()
                 }
             } catch (e: CancellationException) {

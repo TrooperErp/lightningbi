@@ -27,8 +27,8 @@ class EChartComponent : Div() {
 
     init {
         element.setAttribute("id", chartId)
-        style.set("width", "480px")
-        style.set("height", "320px")
+        style.set("width", "720px")
+        style.set("height", "450px")
     }
 
     /**
@@ -167,6 +167,37 @@ class EChartComponent : Div() {
                         "data" to s.values
                     )
                     if (areaStyle != null) base["areaStyle"] = areaStyle
+
+                    val uniqueColors = s.pointColors?.filterNotNull()?.distinct()
+                    when {
+                        // Tutti i punti della serie hanno lo stesso colore:
+                        // lo si imposta a livello di SERIE (itemStyle sulla
+                        // serie, non sui singoli punti), cosi' la legenda
+                        // di ECharts - che legge solo il colore di serie,
+                        // mai quello dei punti - mostra il colore giusto.
+                        uniqueColors != null && uniqueColors.size == 1 -> {
+                            base["itemStyle"] = mapOf("color" to uniqueColors.first())
+                        }
+                        // Colori misti nella stessa serie (caso 2 colonne
+                        // con highlightDecline: alcuni punti rossi, altri
+                        // blu dentro la serie "corrente"): colore per
+                        // singolo punto/barra. La legenda in questo caso
+                        // specifico mostra un colore che non rispecchia
+                        // ogni singola barra - limite noto di ECharts,
+                        // accettabile perché il dato visivo sulle barre
+                        // resta corretto.
+                        s.pointColors != null -> {
+                            base["data"] = s.values.mapIndexed { idx, value ->
+                                val color = s.pointColors.getOrNull(idx)
+                                if (color != null) {
+                                    mapOf("value" to value, "itemStyle" to mapOf("color" to color))
+                                } else {
+                                    value
+                                }
+                            }
+                        }
+                    }
+
                     base
                 }
 

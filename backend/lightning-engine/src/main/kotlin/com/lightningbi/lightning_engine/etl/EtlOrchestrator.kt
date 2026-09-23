@@ -8,6 +8,7 @@ import com.lightningbi.lightning_engine.model.SyncMode
 import com.lightningbi.lightning_engine.repository.EtlRunRepository
 import com.lightningbi.lightning_engine.repository.EtlSyncStateRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
+import com.lightningbi.lightning_engine.service.BitmapIndexBuilder
 import com.lightningbi.lightning_engine.service.CryptoService
 import com.lightningbi.lightning_engine.service.EtlCompletionService
 import org.slf4j.LoggerFactory
@@ -29,7 +30,8 @@ class EtlOrchestrator(
     private val loaderService: LoaderService,
     private val redisTemplate: StringRedisTemplate,
     private val etlCompletionService: EtlCompletionService,
-    private val cryptoService: CryptoService
+    private val cryptoService: CryptoService,
+    private val bitmapIndexBuilder: BitmapIndexBuilder
 ) {
     private val log = LoggerFactory.getLogger(EtlOrchestrator::class.java)
 
@@ -157,6 +159,24 @@ class EtlOrchestrator(
                 // _partition_key non viene più passato: nessuno lo popola e le
                 // tabelle d'area non dichiarano PARTITION BY. Vedi LoaderService.
                 loaderService.load(area.tabellaFisica, valid, columns)
+            }
+
+            // Ricostruzione dell'indice bitmap associativo, DOPO il load dei
+            // fatti e PRIMA del bump della dataVersion: una versione dati
+            // nuova deve esistere solo quando l'indice è già allineato,
+            // altrimenti la cache degli stati potrebbe associare dati nuovi
+            // a un indice vecchio.
+            //
+            // Finché il motore bitmap non è quello attivo (fase di confronto
+            // con il motore a query), un errore qui NON deve far fallire la
+            // sincronizzazione: si registra e si prosegue. Quando il motore
+            // bitmap diventerà primario, questo try/catch va rimosso, perché
+            // un indice non allineato produrrebbe stati sbagliati senza
+            // errori visibili.
+            try {
+                bitmapIndexBuilder.rebuild(areaId)
+            } catch (e: Exception) {
+                log.error("Ricostruzione indice bitmap fallita per area {}: motore a query non impattato", areaId, e)
             }
 
             // Bump della dataVersion e registrazione dell'ultima sincronizzazione:

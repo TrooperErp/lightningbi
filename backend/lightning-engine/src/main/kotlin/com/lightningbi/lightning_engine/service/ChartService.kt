@@ -6,6 +6,7 @@ import com.lightningbi.lightning_engine.model.AreaChart
 import com.lightningbi.lightning_engine.model.AreaChartMetrica
 import com.lightningbi.lightning_engine.model.AreaMetrica
 import com.lightningbi.lightning_engine.model.ChartData
+import com.lightningbi.lightning_engine.model.ChartResult
 import com.lightningbi.lightning_engine.model.ChartSeries
 import com.lightningbi.lightning_engine.model.ChartType
 import com.lightningbi.lightning_engine.repository.AreaChartRepository
@@ -35,15 +36,10 @@ class ChartService(
 
     /**
      * Tutti i grafici di un'Analisi, calcolati sulle LORO PROPRIE Righe/
-     * Colonne (chart.pivotRows/chart.pivotColumns), non più su quelle
-     * della pagina. pivotRowsPagina/pivotColumnsPagina/pivotValuesPagina
-     * servono solo a sapere quali campi sono "ammessi" in questo momento
-     * (per la potatura): un grafico che referenzia un campo non più
-     * presente nel pivot pagina viene escluso dalla dashboard finché non
-     * viene riallineato (vedi getChartData).
-     *
-     * selections resta l'unica cosa che la pagina passa e che il grafico
-     * applica sempre, indipendentemente dalla propria struttura fissa.
+     * Colonne (chart.pivotRows/chart.pivotColumns). campiAmmessi (Righe+
+     * Colonne+Valori del pivot pagina) serve solo per la potatura: un
+     * grafico che referenzia un campo non più presente torna Incoherent
+     * invece di sparire silenziosamente.
      */
     fun getChartsData(
         areaId: UUID,
@@ -51,70 +47,70 @@ class ChartService(
         pivotColumnsPagina: List<UUID>,
         pivotValuesPagina: List<UUID>,
         selections: Map<UUID, Set<Long>>
-    ): List<ChartData> {
+    ): List<ChartResult> {
         val campiAmmessi = (pivotRowsPagina + pivotColumnsPagina + pivotValuesPagina).toSet()
 
-        return areaChartRepository.findByArea(areaId).mapNotNull { chart ->
+        return areaChartRepository.findByArea(areaId).map { chart ->
             try {
                 getChartData(chart, campiAmmessi, selections)
+            } catch (e: IllegalArgumentException) {
+                ChartResult.Incoherent(chart, e.message ?: "Grafico non coerente con il pivot corrente")
             } catch (e: Exception) {
-                log.warn("Grafico '{}' ({}) non calcolabile, escluso dalla dashboard", chart.titolo, chart.id, e)
-                null
+                log.warn("Grafico '{}' ({}) non calcolabile per errore imprevisto", chart.titolo, chart.id, e)
+                ChartResult.Incoherent(chart, "Errore nel calcolo del grafico")
             }
         }
     }
 
-    /**
-     * Dati di un singolo grafico, calcolati sulle sue proprie Righe/
-     * Colonne (chart.pivotRows/chart.pivotColumns).
-     *
-     * campiAmmessi: insieme dei campi attualmente presenti nel pivot
-     * della pagina (Righe+Colonne+Valori). Se il grafico referenzia
-     * campi non più ammessi, vengono rimossi al volo (potatura) prima di
-     * calcolare - per coerenza col fatto che nella UI di edit quei campi
-     * sarebbero già mostrati come non selezionabili. La potatura qui non
-     * salva la modifica su DB: il grafico configurato resta quello
-     * salvato, solo il calcolo la applica finché l'utente non lo modifica
-     * esplicitamente nel dialog (dove il PivotPanel del grafico glielo
-     * mostrerà già ripulito, invitandolo a salvare la versione corretta).
-     */
+    /** Dati di un singolo grafico, calcolati sulle sue proprie Righe/Colonne (chart.pivotRows/chart.pivotColumns). */
     fun getChartData(
         chart: AreaChart,
         campiAmmessi: Set<UUID>,
         selections: Map<UUID, Set<Long>>
-    ): ChartData {
+    ): ChartResult {
+        val metricaIds = areaChartRepository.findMetricheByChart(chart.id).map { it.metricaId }
+        return computeChartData(chart, metricaIds, campiAmmessi, selections)
+    }
+
+    /**
+     * Variante di getChartData per grafici non ancora salvati (bozza in
+     * creazione/edit nel form inline di ChartsView): le metriche sono
+     * passate esplicitamente invece di essere lette da
+     * areaChartRepository.findMetricheByChart(chart.id), che per un
+     * grafico non persistito tornerebbe sempre vuoto.
+     */
+    fun getChartDataForPreview(
+        chart: AreaChart,
+        metricaIds: List<UUID>,
+        campiAmmessi: Set<UUID>,
+        selections: Map<UUID, Set<Long>>
+    ): ChartResult = computeChartData(chart, metricaIds, campiAmmessi, selections)
+
+    private fun computeChartData(
+        chart: AreaChart,
+        metricaIds: List<UUID>,
+        campiAmmessi: Set<UUID>,
+        selections: Map<UUID, Set<Long>>
+    ): ChartResult {
         val pivotRows = chart.pivotRows.filter { it in campiAmmessi }
         val pivotColumns = chart.pivotColumns.filter { it in campiAmmessi }
 
         require(pivotRows.isNotEmpty()) {
-            "Il grafico '${chart.titolo}' non ha Righe valide nel pivot corrente"
+            "Righe non più presenti nel pivot corrente dell'analisi"
         }
-
-        val chartMetriche = areaChartRepository.findMetricheByChart(chart.id)
-        require(chartMetriche.isNotEmpty()) {
-            "Il grafico '${chart.titolo}' non ha metriche configurate"
+        require(metricaIds.isNotEmpty()) {
+            "Nessuna metrica configurata per questo grafico"
         }
 
         val tutteMetriche = registryRepository.findMetricheByArea(chart.areaId)
-        val metricheOrdinate = chartMetriche.mapNotNull { cm ->
-            tutteMetriche.find { it.id == cm.metricaId }
-        }
-        require(metricheOrdinate.size == chartMetriche.size) {
-            "Il grafico '${chart.titolo}' referenzia metriche non più presenti nell'area"
+        val metricheOrdinate = metricaIds.mapNotNull { id -> tutteMetriche.find { it.id == id } }
+        require(metricheOrdinate.size == metricaIds.size) {
+            "Una o più metriche del grafico non esistono più nell'area"
         }
 
-        // Mappa dimensione -> colonna fisica, calcolata UNA VOLTA prima di
-        // ogni uso di labelFor (mai dentro un loop): serve a provare la
-        // libreria di transcodifica DimensionFormatters (oggi solo mesi,
-        // domani altre dimensioni) prima del fallback alla label standard
-        // risolta da AggregateService/SymbolLookupService.
         val dimensioni = registryRepository.findDimensioniByArea(chart.areaId)
         val colonnaFisicaByDim: Map<UUID, String> = dimensioni.associate { it.dimensioneId to it.colonnaFisica }
 
-        // followsColumns richiede almeno una dimensione in Colonne PROPRIE
-        // del grafico: se non ce ne sono (mai impostate, o rimosse dalla
-        // potatura), il grafico si comporta come se followsColumns fosse
-        // false, non fallisce.
         val columnsEffettive = if (chart.followsColumns) pivotColumns else emptyList()
 
         val limiteLeggibilita = if (chart.tipo == ChartType.PIE) maxFettePie else maxPunti
@@ -140,8 +136,16 @@ class ChartService(
             )
         )
 
-        val rows = if (columnsEffettive.isEmpty() && ordinePerQuery != chart.orderBy) {
-            result.rows.sortedBy { row -> labelFor(row, pivotRows, colonnaFisicaByDim) }
+        // Riordino esplicito per etichetta SOLO quando l'utente ha scelto
+        // "Per etichetta (A-Z)" come ordinamento del grafico: applicato
+        // sempre (non solo quando columnsEffettive è vuoto), perché
+        // AggregateService ordina alfabeticamente per label anche per i
+        // grafici con Colonne (followsColumns), e per dimensioni con un
+        // ordine naturale (es. mese_numero: Gennaio...Dicembre) quello è
+        // sbagliato - va rispettato l'ordine cronologico/naturale del
+        // valore grezzo, non l'ordine alfabetico del nome.
+        val rows = if (chart.orderBy == AggregateOrder.DIMENSION) {
+            result.rows.sortedBy { row -> sortKeyFor(row, pivotRows, colonnaFisicaByDim) }
         } else {
             result.rows
         }
@@ -154,11 +158,13 @@ class ChartService(
             buildSeriesPerColonna(rows, metricheOrdinate, chart.highlightDecline)
         }
 
-        return ChartData(
-            chart = chart,
-            labels = labels,
-            series = series,
-            truncated = result.truncated
+        return ChartResult.Ready(
+            ChartData(
+                chart = chart,
+                labels = labels,
+                series = series,
+                truncated = result.truncated
+            )
         )
     }
 
@@ -189,9 +195,10 @@ class ChartService(
      *
      * highlightDecline: attivo solo se ci sono ESATTAMENTE 2 valori-colonna.
      * Con 1 o 3+ colonne il confronto "ultima vs penultima" è ambiguo/
-     * fuorviante (es. con 3 anni il più recente appariva sempre rosso a
-     * prescindere dall'andamento reale) - in quel caso si usa la palette
-     * Tableau standard in sequenza (stessa di ChartsView.chartTypeIcon).
+     * fuorviante - in quel caso si usa la palette Tableau standard in
+     * sequenza, che NON include il rosso (coloreCalo): il rosso è
+     * riservato al solo caso 2-colonne/calo, non deve mai comparire come
+     * colore "neutro" di una terza o quarta serie.
      */
     private fun buildSeriesPerColonna(
         rows: List<com.lightningbi.lightning_engine.model.AggregateRow>,
@@ -215,8 +222,21 @@ class ChartService(
             rows.map { row -> (row.values[key] ?: BigDecimal.ZERO).toDouble() }
         }
 
+        // Palette per 1 o 3+ colonne: NON contiene coloreCalo (rosso),
+        // riservato esclusivamente al confronto a 2 colonne sotto.
+        // Palette Tableau 10, ESCLUSO il rosso (coloreCalo): riservato
+        // esclusivamente al confronto a 2 colonne più sotto, non deve mai
+        // comparire come colore "neutro" di una terza o successiva serie.
         val paletteStandard = listOf(
-            coloreCorrente, colorePrecedente, "#59A14F", "#76B7B2", coloreCalo, "#EDC948"
+            coloreCorrente,      // #4E79A7 blu
+            colorePrecedente,    // #F28E2B arancio
+            "#76B7B2",           // teal (verde acqua)
+            "#59A14F",           // verde
+            "#EDC948",           // giallo
+            "#B07AA1",           // viola
+            "#FF9DA7",           // rosa
+            "#9C755F",           // marrone
+            "#BAB0AC"            // grigio
         )
 
         if (!highlightDecline || nomiColonna.size != 2) {
@@ -247,6 +267,31 @@ class ChartService(
 
         return listOf(serieprecedente, serieCorrente)
     }
+
+    /**
+     * Chiave di ordinamento per una riga: per ogni dimensione in
+     * pivotRows, se la colonna fisica ha un ordine naturale (es.
+     * mese_numero: l'ordine cronologico non è quello alfabetico del
+     * nome) si ordina sul VALORE numerico grezzo (zero-padded per un
+     * confronto stringa corretto); altrimenti sulla label risolta
+     * (ordine alfabetico, comportamento storico). Concatenata con un
+     * separatore che non compare mai nei dati, per un sort composito
+     * multi-dimensione stabile.
+     */
+    private fun sortKeyFor(
+        row: com.lightningbi.lightning_engine.model.AggregateRow,
+        pivotRows: List<UUID>,
+        colonnaFisicaByDim: Map<UUID, String>
+    ): String =
+        pivotRows.joinToString("\u0000") { dimId ->
+            val valueId = row.groupKeys[dimId]
+            val colonna = colonnaFisicaByDim[dimId]
+            if (colonna != null && valueId != null && DimensionSortOrders.usesNaturalOrder(colonna)) {
+                valueId.toString().padStart(10, '0')
+            } else {
+                row.labels[dimId] ?: valueId?.toString() ?: ""
+            }
+        }
 
     /**
      * Etichetta composita per una riga: se le Righe del pivot hanno più di
@@ -323,9 +368,9 @@ class ChartService(
      * all'area: senza FK nel registry, il controllo sta qui.
      *
      * pivotRows/pivotColumns sono ora obbligatoriamente scelte in
-     * creazione (dal PivotPanel dedicato nel dialog): pivotRows non può
-     * essere vuoto, un grafico senza dimensione di raggruppamento propria
-     * non ha assi su cui disegnarsi.
+     * creazione (dal PivotPanel dedicato): pivotRows non può essere
+     * vuoto, un grafico senza dimensione di raggruppamento propria non
+     * ha assi su cui disegnarsi.
      */
     fun create(
         areaId: UUID,

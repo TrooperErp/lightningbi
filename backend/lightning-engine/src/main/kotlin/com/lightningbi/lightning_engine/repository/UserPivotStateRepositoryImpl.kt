@@ -1,5 +1,6 @@
 package com.lightningbi.lightning_engine.repository
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.lightningbi.lightning_engine.model.UserPivotState
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.JdbcTemplate
@@ -9,10 +10,15 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * Legge/scrive lo stato pivot come jsonb su pg_lbi_user_pivot_state.
- * Il JSON contiene liste di UUID come stringhe e le selections con
- * chiave UUID (dimensione) -> lista di Long (id valore, non Set: JSON
- * non ha un tipo Set nativo, la conversione a Set avviene in lettura).
+ * Legge/scrive lo stato utente su pg_lbi_user_pivot_state.
+ * active_view_id è una colonna propria (nullable: nessuna vista attiva
+ * ancora scelta); pivot_state (jsonb) contiene ora solo le selections.
+ *
+ * Il JSON viene letto in modo tollerante: le righe salvate col vecchio
+ * formato contengono anche pivotRows/pivotColumns/pivotValues. Questi
+ * campi vengono ignorati da find() e letti solo da findLegacyStructure(),
+ * per il recupero una-tantum in "Vista 1". Ogni save() riscrive il JSON
+ * nel formato nuovo (solo selections), eliminando il residuo legacy.
  */
 @Repository
 class UserPivotStateRepositoryImpl(
@@ -20,54 +26,64 @@ class UserPivotStateRepositoryImpl(
     private val objectMapper: ObjectMapper
 ) : UserPivotStateRepository {
 
-    private data class PivotStateJson(
-        val pivotRows: List<String>,
-        val pivotColumns: List<String>,
-        val pivotValues: List<String>,
-        val selections: Map<String, List<Long>>
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private data class StateJson(
+        val selections: Map<String, List<Long>> = emptyMap(),
+        val pivotRows: List<String>? = null,
+        val pivotColumns: List<String>? = null,
+        val pivotValues: List<String>? = null
     )
 
-    override fun find(userId: UUID, areaId: UUID): UserPivotState? {
-        val rows = jdbcTemplate.query(
-            "SELECT pivot_state, updated_at FROM pg_lbi_user_pivot_state WHERE user_id = ? AND area_id = ?",
+    private data class Row(val json: String, val activeViewId: UUID?, val updatedAt: Instant)
+
+    private fun readRow(userId: UUID, areaId: UUID): Row? =
+        jdbcTemplate.query(
+            "SELECT pivot_state, active_view_id, updated_at FROM pg_lbi_user_pivot_state WHERE user_id = ? AND area_id = ?",
             { rs, _ ->
-                val json = rs.getString("pivot_state")
-                val updatedAt = rs.getTimestamp("updated_at").toInstant()
-                json to updatedAt
+                Row(
+                    json = rs.getString("pivot_state"),
+                    activeViewId = rs.getString("active_view_id")?.let { UUID.fromString(it) },
+                    updatedAt = rs.getTimestamp("updated_at").toInstant()
+                )
             },
             userId, areaId
-        )
-        val (json, updatedAt) = rows.firstOrNull() ?: return null
+        ).firstOrNull()
 
-        val parsed = objectMapper.readValue(json, PivotStateJson::class.java)
+    override fun find(userId: UUID, areaId: UUID): UserPivotState? {
+        val row = readRow(userId, areaId) ?: return null
+        val parsed = objectMapper.readValue(row.json, StateJson::class.java)
         return UserPivotState(
             userId = userId,
             areaId = areaId,
-            pivotRows = parsed.pivotRows.map { UUID.fromString(it) },
-            pivotColumns = parsed.pivotColumns.map { UUID.fromString(it) },
-            pivotValues = parsed.pivotValues.map { UUID.fromString(it) },
+            activeViewId = row.activeViewId,
             selections = parsed.selections.mapKeys { UUID.fromString(it.key) }.mapValues { it.value.toSet() },
-            updatedAt = updatedAt
+            updatedAt = row.updatedAt
+        )
+    }
+
+    override fun findLegacyStructure(userId: UUID, areaId: UUID): Triple<List<UUID>, List<UUID>, List<UUID>>? {
+        val row = readRow(userId, areaId) ?: return null
+        val parsed = objectMapper.readValue(row.json, StateJson::class.java)
+        if (parsed.pivotRows == null && parsed.pivotColumns == null && parsed.pivotValues == null) return null
+        return Triple(
+            parsed.pivotRows.orEmpty().map { UUID.fromString(it) },
+            parsed.pivotColumns.orEmpty().map { UUID.fromString(it) },
+            parsed.pivotValues.orEmpty().map { UUID.fromString(it) }
         )
     }
 
     override fun save(state: UserPivotState) {
         val json = objectMapper.writeValueAsString(
-            PivotStateJson(
-                pivotRows = state.pivotRows.map { it.toString() },
-                pivotColumns = state.pivotColumns.map { it.toString() },
-                pivotValues = state.pivotValues.map { it.toString() },
-                selections = state.selections.mapKeys { it.key.toString() }.mapValues { it.value.toList() }
-            )
+            mapOf("selections" to state.selections.mapKeys { it.key.toString() }.mapValues { it.value.toList() })
         )
         jdbcTemplate.update(
             """
-                INSERT INTO pg_lbi_user_pivot_state (user_id, area_id, pivot_state, updated_at)
-                VALUES (?, ?, ?::jsonb, ?)
+                INSERT INTO pg_lbi_user_pivot_state (user_id, area_id, pivot_state, active_view_id, updated_at)
+                VALUES (?, ?, ?::jsonb, ?, ?)
                 ON CONFLICT (user_id, area_id)
-                DO UPDATE SET pivot_state = EXCLUDED.pivot_state, updated_at = EXCLUDED.updated_at
+                DO UPDATE SET pivot_state = EXCLUDED.pivot_state, active_view_id = EXCLUDED.active_view_id, updated_at = EXCLUDED.updated_at
                 """,
-            state.userId, state.areaId, json, java.sql.Timestamp.from(Instant.now())
+            state.userId, state.areaId, json, state.activeViewId, java.sql.Timestamp.from(Instant.now())
         )
     }
 

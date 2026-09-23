@@ -42,6 +42,11 @@ import java.util.UUID
  * colonne per riga) né Checkbox (introdotti per errore in un passaggio
  * intermedio, mai richiesti: l'aspetto voluto è il pulsante colorato
  * pieno, non un quadratino con etichetta a fianco).
+ *
+ * Lo stato sorgente ("Sorgente verificata: X") non vive più qui: è
+ * mostrato nella topbar (LbiAppShell.updateSourceStatus), per recuperare
+ * spazio verticale nella pagina - il grafico deve restare il più
+ * possibile a vista senza dover scrollare oltre la griglia.
  */
 class AssociativeExplorerUi(
     private val onFilterSelectionChanged: (dimId: UUID, values: Set<Long>) -> Unit,
@@ -53,7 +58,7 @@ class AssociativeExplorerUi(
     val resultsGrid = TreeGrid<PivotEngine.PivotNode>().apply {
         className = "lbi-results-grid"
         setWidthFull()
-        height = "560px"
+        height = "280px"
     }
 
     val filtersColumn = VerticalLayout().apply {
@@ -63,8 +68,6 @@ class AssociativeExplorerUi(
     }
 
     val activeSelectionsBar = Div().apply { className = "lbi-active-selections" }
-
-    val sourceStatusLabel = Span().apply { className = "lbi-source-status" }
 
     val chartsPanel = VerticalLayout().apply {
         className = "lbi-charts-panel"
@@ -107,23 +110,15 @@ class AssociativeExplorerUi(
     init {
         filtersColumn.add(activeSelectionsBar)
 
-        val statusRow = HorizontalLayout(sourceStatusLabel).apply {
-            className = "lbi-action-bar"
-            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
-            isPadding = false
-            setWidthFull()
-        }
-
         // Solo la griglia è dentro lo Scroller: i grafici restano fuori,
         // in un'area fissa sotto, sempre visibili senza dover scrollare.
         val scrollableGrid = Scroller(resultsGrid).apply {
             setWidthFull()
-            height = "560px"
+            height = "280px"
             style.set("flex-shrink", "0")
         }
 
         val centerArea = VerticalLayout(
-            statusRow,
             pivotPanel,
             Span("Risultati").apply { className = "lbi-section-title" },
             scrollableGrid,
@@ -133,7 +128,6 @@ class AssociativeExplorerUi(
             isPadding = true
             setWidthFull()
             setHeightFull()
-            setFlexGrow(0.0, statusRow)
             setFlexGrow(0.0, pivotPanel)
             setFlexGrow(1.0, scrollableGrid)
             setFlexGrow(0.0, chartsPanel)
@@ -146,10 +140,6 @@ class AssociativeExplorerUi(
             setFlexGrow(1.0, centerArea)
             setFlexGrow(0.0, filtersColumn)
         }
-    }
-
-    fun setSourceStatusText(text: String) {
-        sourceStatusLabel.text = text
     }
 
     /**
@@ -397,8 +387,8 @@ class AssociativeExplorerUi(
         else -> value.toString()
     }
 
-    /** Un EChartComponent per grafico, sostituisce il vecchio placeholder testuale. */
-    fun renderCharts(chartsData: List<ChartData>, rows: List<UUID>) {
+    /** Un EChartComponent per grafico pronto; un placeholder per ogni grafico non coerente col pivot corrente. */
+    fun renderCharts(chartsData: List<com.lightningbi.lightning_engine.model.ChartResult>, rows: List<UUID>) {
         chartsPanel.removeAll()
 
         if (rows.isEmpty()) {
@@ -415,13 +405,37 @@ class AssociativeExplorerUi(
             className = "lbi-charts-grid"
             isPadding = false
         }
-        chartsData.forEach { chartData ->
-            val chartComponent = EChartComponent()
-            grid.add(chartComponent)
-            chartComponent.render(chartData)
+        chartsData.forEach { result ->
+            when (result) {
+                is com.lightningbi.lightning_engine.model.ChartResult.Ready -> {
+                    val chartComponent = EChartComponent()
+                    grid.add(chartComponent)
+                    chartComponent.render(result.data)
+                }
+                is com.lightningbi.lightning_engine.model.ChartResult.Incoherent -> {
+                    grid.add(buildIncoherentPlaceholder(result.chart.titolo, result.reason))
+                }
+            }
         }
         chartsPanel.add(grid)
     }
+
+    /**
+     * Placeholder mostrato al posto di un grafico non più coerente col
+     * pivot corrente (campi rimossi, metriche non più esistenti): il
+     * grafico non sparisce silenziosamente, l'utente capisce cosa
+     * sistemare e può andare in ChartsView a farlo.
+     */
+    private fun buildIncoherentPlaceholder(titolo: String, reason: String): VerticalLayout =
+        VerticalLayout(
+            Span(titolo).apply { className = "lbi-chart-type-label" },
+            Span(reason).apply { className = "lbi-wizard-label" },
+            Span("Vai in \"Gestisci grafici\" per correggerlo").apply { className = "lbi-wizard-label" }
+        ).apply {
+            className = "lbi-chart-placeholder"
+            isPadding = true
+            width = "300px"
+        }
 
     fun clearAll() {
         filtersColumn.removeAll()

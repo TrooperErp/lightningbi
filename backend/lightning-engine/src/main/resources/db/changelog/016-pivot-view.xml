@@ -1,0 +1,42 @@
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+<!--
+      Una Analisi (Area) puo' avere piu' "viste pivot" (Righe/Colonne/
+      Valori), come i fogli di un'app Qlik: struttura CONDIVISA per
+      l'area (chiunque apra l'analisi vede lo stesso elenco di viste),
+      non per singolo utente. Le selezioni (verde/bianco/grigio) restano
+      invece personali per utente e condivise trasversalmente su tutte
+      le viste della stessa area (vedi 017).
+
+      I grafici NON dipendono da nessuna vista pivot specifica: usano
+      sempre tutti i campi dell'Area, indipendenti da quale vista pivot
+      sia attiva in questo momento nella griglia principale.
+     -->
+<changeSet id="16" author="lightningbi">
+<createTable tableName="pg_lbi_pivot_view">
+<column name="id" type="uuid">
+<constraints primaryKey="true" nullable="false"/>
+</column>
+<column name="area_id" type="uuid">
+<constraints nullable="false"/>
+</column>
+<column name="nome" type="varchar(200)">
+<constraints nullable="false"/>
+</column>
+<column name="pivot_rows_json" type="jsonb" defaultValue="[]">
+<constraints nullable="false"/>
+</column>
+<column name="pivot_columns_json" type="jsonb" defaultValue="[]">
+<constraints nullable="false"/>
+</column>
+<column name="pivot_values_json" type="jsonb" defaultValue="[]">
+<constraints nullable="false"/>
+</column>
+<column name="posizione" type="int" defaultValueNumeric="0">
+<constraints nullable="false"/>
+</column>
+<column name="created_at" type="timestamptz" defaultValueComputed="now()">
+<constraints nullable="false"/>
+</column>
+</createTable>
+</changeSet>
+</databaseChangeLog>

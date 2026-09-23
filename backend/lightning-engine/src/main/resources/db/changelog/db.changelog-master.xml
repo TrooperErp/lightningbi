@@ -19,4 +19,6 @@
 	<include file="db/changelog/013-user-pivot-state.xml"/>
 	<include file="db/changelog/014-chart-follows-columns.xml"/>
 	<include file="db/changelog/015-chart-own-pivot.xml"/>
+	<include file="db/changelog/016-pivot-view.xml"/>
+	<include file="db/changelog/017-user-pivot-state-active-view.xml"/>
 </databaseChangeLog>

@@ -1,0 +1,18 @@
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+<!--
+      pg_lbi_user_pivot_state cambia significato: non contiene piu'
+      Righe/Colonne/Valori (quelli vivono ora in pg_lbi_pivot_view, una
+      struttura condivisa per l'area - vedi 016), solo quale vista pivot
+      e' attiva per QUESTO utente su QUESTA area, piu' le selezioni
+      correnti (personali, condivise su tutte le viste dell'area).
+
+      Il campo pivot_state (jsonb) esistente resta ma il suo contenuto
+      cambia forma lato applicativo: da {pivotRows, pivotColumns,
+      pivotValues, selections} a solo {selections}.
+     -->
+<changeSet id="17" author="lightningbi">
+<addColumn tableName="pg_lbi_user_pivot_state">
+<column name="active_view_id" type="uuid"/>
+</addColumn>
+</changeSet>
+</databaseChangeLog>

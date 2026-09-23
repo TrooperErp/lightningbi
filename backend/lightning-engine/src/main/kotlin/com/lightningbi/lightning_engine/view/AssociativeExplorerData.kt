@@ -19,6 +19,7 @@ import com.lightningbi.lightning_engine.service.SymbolLookupService
 import com.lightningbi.lightning_engine.service.VersionService
 import com.lightningbi.lightning_engine.etl.EtlOrchestrator
 import com.lightningbi.lightning_engine.service.PivotEngine
+import com.lightningbi.lightning_engine.model.ChartResult
 
 import java.util.UUID
 
@@ -38,7 +39,7 @@ class AssociativeExplorerData(
     private val registryRepository: RegistryRepository,
     private val areaSourceRepository: AreaSourceRepository,
     private val sourceVerificationService: SourceVerificationService,
-    private val associativeStateService: AssociativeStateService,
+    private val associativeStateService: com.lightningbi.lightning_engine.service.AssociativeStateFacade,
     private val aggregateService: AggregateService,
     private val chartService: ChartService,
     private val versionService: VersionService,
@@ -50,7 +51,7 @@ class AssociativeExplorerData(
         val states: Map<UUID, DimensionState>,
         val aggregates: AggregateResult,
         val rowHierarchy: List<PivotEngine.PivotNode>,
-        val chartsData: List<ChartData>,
+        val chartsData: List<com.lightningbi.lightning_engine.model.ChartResult>,
         val labels: Map<UUID, Map<Long, String>>
     )
 
@@ -117,11 +118,14 @@ class AssociativeExplorerData(
         )
         val rowHierarchy = aggregateService.buildRowHierarchy(areaId, aggregates, pivotRows, pivotValues)
 
-        // I grafici hanno ora le loro proprie Righe/Colonne: non ricevono
-        // più pivotRows/pivotColumns della pagina come struttura, solo
-        // come "campi ammessi" per la potatura (insieme a pivotValues,
-        // cioè le metriche presenti nel pivot pagina). selections resta
-        // l'unica cosa che i grafici applicano sempre.
+        // I grafici hanno le loro proprie Righe/Colonne: non ricevono più
+        // pivotRows/pivotColumns della pagina come struttura, solo come
+        // "campi ammessi" per la potatura (insieme a pivotValues, cioè le
+        // metriche presenti nel pivot pagina). selections resta l'unica
+        // cosa che i grafici applicano sempre. Il tipo di ritorno è ora
+        // List<ChartResult>: un grafico non coerente col pivot corrente
+        // torna come Incoherent invece di sparire, per far comparire il
+        // placeholder in UI.
         val chartsData = chartService.getChartsData(areaId, pivotRows, pivotColumns, pivotValues, selections)
 
         val labels = resolveLabels(states, dimensionNames)

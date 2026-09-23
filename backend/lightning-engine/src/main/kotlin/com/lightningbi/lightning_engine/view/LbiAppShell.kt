@@ -16,6 +16,12 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout
  * quando cambia lo stato che decide quali voci sono enabled/active (es.
  * dopo aver verificato una sorgente), senza dover ricostruire l'intera
  * shell: solo la sidebar viene ridisegnata.
+ *
+ * sourceStatusSpan mostra lo stato sorgente ("Sorgente verificata: X")
+ * nella topbar, accanto al nome analisi - prima viveva nella centerArea
+ * di AssociativeExplorerUi, occupando una riga verticale dedicata sopra
+ * il pivot panel; spostato qui per recuperare spazio verticale nella
+ * pagina Analisi.
  */
 class LbiAppShell(
     initialMenuGroups: List<LbiSidebarMenu.MenuGroup>,
@@ -27,6 +33,7 @@ class LbiAppShell(
     private var isDark = false
     private val sidebar = LbiSidebarMenu()
     private val analysisNameSpan = Span("")
+    private val sourceStatusSpan = Span("").apply { className = "lbi-source-status-topbar" }
 
     init {
         className = "lbi-app"
@@ -70,12 +77,17 @@ class LbiAppShell(
             className = "lbi-analysis-name"
         }
 
+        val centerInfo = HorizontalLayout(analysisNameSpan, sourceStatusSpan).apply {
+            isSpacing = true
+            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
+        }
+
         val rightControls = HorizontalLayout(themeToggle, logoutButton).apply {
             isSpacing = true
             defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
         }
 
-        val topMenuBar = HorizontalLayout(logoContainer, analysisNameSpan, rightControls).apply {
+        val topMenuBar = HorizontalLayout(logoContainer, centerInfo, rightControls).apply {
             className = "lbi-topmenu"
             justifyContentMode = FlexComponent.JustifyContentMode.BETWEEN
             defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
@@ -104,5 +116,10 @@ class LbiAppShell(
     }
     fun updateAnalysisName(name: String?) {
         analysisNameSpan.text = name ?: ""
+    }
+
+    /** Aggiorna il testo di stato sorgente nella topbar (es. "Sorgente verificata: X"). */
+    fun updateSourceStatus(text: String?) {
+        sourceStatusSpan.text = text ?: ""
     }
 }
