@@ -42,7 +42,7 @@ import java.util.UUID
  * colonne per riga) né Checkbox (introdotti per errore in un passaggio
  * intermedio, mai richiesti: l'aspetto voluto è il pulsante colorato
  * pieno, non un quadratino con etichetta a fianco).
- *
+ *F
  * NON possiede più un PivotPanel: Righe/Colonne/Valori si costruiscono
  * ora solo in ConfigureAnalysisView. Questa vista mostra solo le card
  * filtro della struttura corrente (letta dalla PivotView attiva),
@@ -202,16 +202,21 @@ class AssociativeExplorerUi(
         selections: Map<UUID, Set<Long>>,
         dimensionNames: Map<UUID, String>,
         labels: Map<UUID, Map<Long, String>>,
-        labelOrFallback: (Map<Long, String>, Long?) -> String
+        labelOrFallback: (Map<Long, String>, Long?) -> String,
+        colonnaFisicaFor: (UUID) -> String? = { null }
     ) {
         activeSelectionsBar.removeAll()
         selections.forEach { (dimId, values) ->
             if (values.isEmpty()) return@forEach
             val dimName = dimensionNames[dimId] ?: return@forEach
             val dimLabels = labels[dimId] ?: emptyMap()
+            val colonna = colonnaFisicaFor(dimId)
 
             values.sorted().forEach { valueId ->
-                val valueLabel = labelOrFallback(dimLabels, valueId)
+                val valueLabel = colonna?.let {
+                    com.lightningbi.lightning_engine.service.DimensionFormatters.formatOrNull(it, valueId)
+                } ?: labelOrFallback(dimLabels, valueId)
+
                 val removeIcon = Span("×").apply {
                     className = "lbi-active-chip-remove"
                     addClickListener { onRemoveSelection(dimId, valueId) }

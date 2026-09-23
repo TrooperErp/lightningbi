@@ -580,7 +580,7 @@ class AssociativeExplorerView(
                     if (myRequestId != requestCounter.get()) return@access
                     if (areaId != currentAreaId) return@access
                     ui.renderActiveSelections(selectionsSnapshot, dimensionNames, result.labels, data::labelOrFallback)
-                    ui.renderStates(result.states, result.labels, data::labelOrFallback) { dimId -> dimensionColumns[dimId] }
+                    ui.renderActiveSelections(selectionsSnapshot, dimensionNames, result.labels, data::labelOrFallback) { dimId -> dimensionColumns[dimId] }
                     ui.renderResultsGrid(result.aggregates, result.rowHierarchy, rowsSnapshot, dimensionNames)
                     ui.renderCharts(result.chartsData, rowsSnapshot)
                     ui.loadingDialog.close()

@@ -103,7 +103,10 @@ class ConfigureAnalysisView(
 
     override fun onAttach(attachEvent: AttachEvent) {
         super.onAttach(attachEvent)
-        if (viewScope == null) viewScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        attachEvent.ui.page.addJavaScript("js/echarts.min.js")
+        if (viewScope == null) {
+            viewScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        }
     }
 
     override fun onDetach(detachEvent: DetachEvent) {
@@ -324,7 +327,15 @@ class ConfigureAnalysisView(
             fieldsContainer.add(card)
         }
 
-        refreshOpenCards(currentAreaId)
+        // Il calcolo delle card aperte parte da onAttach, non da qui:
+        // in questo momento (dentro buildContent, chiamato da
+        // setParameter) la pagina non è ancora attaccata al browser,
+        // quindi ui.orElse(null) tornerebbe vuoto o un valore stantio e
+        // il risultato della coroutine andrebbe perso. Qui disegniamo
+        // solo i "+" delle card chiuse.
+        fieldCards.keys.forEach { dimId ->
+            if (dimId !in openDims) renderClosedCard(dimId)
+        }
     }
 
     /**
@@ -358,14 +369,20 @@ class ConfigureAnalysisView(
     }
 
     /** Ricalcola e disegna solo le card in openDims; le altre restano/diventano il chip "+". */
+    /** Ricalcola e disegna solo le card in openDims; le altre restano/diventano il chip "+". */
     private fun refreshOpenCards(currentAreaId: UUID) {
-        val vaadinUi = ui.orElse(null) ?: return
-        val scope = viewScope ?: return
-
+        // I chip "+" delle card chiuse si disegnano SEMPRE, anche prima che
+        // la pagina sia attaccata al browser (chiamata da setParameter):
+        // non richiedono query né UI.
         fieldCards.keys.forEach { dimId ->
             if (dimId !in openDims) renderClosedCard(dimId)
         }
         if (openDims.isEmpty()) return
+
+        // Il calcolo delle card aperte richiede UI e scope, disponibili solo
+        // dopo onAttach: se non ci sono ancora, lo farà onAttach stesso.
+        val vaadinUi = ui.orElse(null) ?: return
+        val scope = viewScope ?: return
 
         val selectionsSnapshot = selections.filterValues { it.isNotEmpty() }
         val target = openDims.toSet()
