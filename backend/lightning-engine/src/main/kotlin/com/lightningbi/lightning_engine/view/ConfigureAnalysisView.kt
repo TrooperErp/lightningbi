@@ -107,6 +107,7 @@ class ConfigureAnalysisView(
         if (viewScope == null) {
             viewScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         }
+        areaId?.let { refreshOpenCards(it) }
     }
 
     override fun onDetach(detachEvent: DetachEvent) {
