@@ -368,7 +368,7 @@ vaadin-menu-bar-button:hover {
     grid-auto-rows: 24px;
     gap: 2px;
     width: 100%;
-    max-height: 76px;
+    max-height: 128px;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-width: thin;
@@ -403,6 +403,21 @@ vaadin-menu-bar-button:hover {
     overflow: hidden;
     text-overflow: ellipsis;
     cursor: pointer;
+}
+
+/* Card filtro nella pagina "Configura Analisi": griglia a più colonne
+   invece di impilarsi a tutta pagina (le card sono pensate per stare
+   in una colonna stretta di 420px, qui vanno affiancate). */
+.lbi-config-fields-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.lbi-config-fields-grid .lbi-filter-card {
+    width: auto;
 }
 
 vaadin-notification-card {

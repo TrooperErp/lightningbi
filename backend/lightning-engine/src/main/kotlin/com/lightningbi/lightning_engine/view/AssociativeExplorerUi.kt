@@ -43,18 +43,18 @@ import java.util.UUID
  * intermedio, mai richiesti: l'aspetto voluto è il pulsante colorato
  * pieno, non un quadratino con etichetta a fianco).
  *
+ * NON possiede più un PivotPanel: Righe/Colonne/Valori si costruiscono
+ * ora solo in ConfigureAnalysisView. Questa vista mostra solo le card
+ * filtro della struttura corrente (letta dalla PivotView attiva),
+ * griglia e grafici - nessun drag&drop qui.
+ *
  * Lo stato sorgente ("Sorgente verificata: X") non vive più qui: è
- * mostrato nella topbar (LbiAppShell.updateSourceStatus), per recuperare
- * spazio verticale nella pagina - il grafico deve restare il più
- * possibile a vista senza dover scrollare oltre la griglia.
+ * mostrato nella topbar (LbiAppShell.updateSourceStatus).
  */
 class AssociativeExplorerUi(
     private val onFilterSelectionChanged: (dimId: UUID, values: Set<Long>) -> Unit,
-    private val onRemoveSelection: (dimId: UUID, valueId: Long) -> Unit,
-    private val onPivotChanged: (rows: List<UUID>, columns: List<UUID>, values: List<UUID>) -> Unit
+    private val onRemoveSelection: (dimId: UUID, valueId: Long) -> Unit
 ) {
-    val pivotPanel = PivotPanel { rows, columns, values -> onPivotChanged(rows, columns, values) }
-
     val resultsGrid = TreeGrid<PivotEngine.PivotNode>().apply {
         className = "lbi-results-grid"
         setWidthFull()
@@ -119,7 +119,6 @@ class AssociativeExplorerUi(
         }
 
         val centerArea = VerticalLayout(
-            pivotPanel,
             Span("Risultati").apply { className = "lbi-section-title" },
             scrollableGrid,
             chartsPanel
@@ -128,7 +127,6 @@ class AssociativeExplorerUi(
             isPadding = true
             setWidthFull()
             setHeightFull()
-            setFlexGrow(0.0, pivotPanel)
             setFlexGrow(1.0, scrollableGrid)
             setFlexGrow(0.0, chartsPanel)
         }

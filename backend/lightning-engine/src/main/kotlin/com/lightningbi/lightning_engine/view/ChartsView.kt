@@ -5,9 +5,9 @@ import com.lightningbi.lightning_engine.model.ChartResult
 import com.lightningbi.lightning_engine.model.ChartType
 import com.lightningbi.lightning_engine.repository.AreaSourceRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
-import com.lightningbi.lightning_engine.repository.UserPivotStateRepository
 import com.lightningbi.lightning_engine.service.ChartService
 import com.lightningbi.lightning_engine.service.SourceVerificationService
+import com.lightningbi.lightning_engine.repository.UserPivotStateRepository
 import com.vaadin.flow.component.Component
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.combobox.ComboBox
@@ -39,12 +39,16 @@ import com.lightningbi.lightning_engine.model.AggregateOrder
  * Righe/Colonne/Valori del grafico si scelgono con un PivotPanel dedicato
  * INLINE nella pagina (non più in un Dialog): sotto compare una preview
  * live del grafico (EChartComponent), ricalcolata ad ogni modifica del
- * pivot o delle opzioni. I campi ammessi nel PivotPanel sono solo quelli
- * presenti nell'ULTIMO pivot salvato dall'utente per quest'area
- * (userPivotStateRepository) - gli altri restano visibili ma disabilitati
- * (grigi), per dare dinamismo: se l'utente amplia il pivot in Analisi e
- * lo salva, quei campi diventano scegliebili anche qui alla prossima
- * apertura del form.
+ * pivot o delle opzioni.
+ *
+ * I grafici dipendono dall'ANALISI (Area), non da nessuna PivotView:
+ * TUTTI i campi (dimensioni + metriche) dell'area sono sempre
+ * selezionabili nel PivotPanel del grafico, nessuno disabilitato -
+ * comportamento diverso da prima del refactor multi-vista, quando i
+ * campi ammessi dipendevano dall'ultimo pivot salvato dall'utente in
+ * pagina Analisi. Le selezioni (verde/bianco/grigio), invece, sono le
+ * stesse condivise per l'Area e si applicano comunque al calcolo/
+ * preview del grafico.
  *
  * IMPORTANTE: il callback onChange di PivotPanel scatta SINCRONO già
  * dentro setFieldsWithIds/restoreState, quindi PRIMA che l'assegnazione
@@ -177,7 +181,7 @@ class ChartsView(
 
         return VerticalLayout(
             Span("Grafici di \"$areaNome\"").apply { className = "lbi-section-title" },
-            Span("Scegli un tipo per creare un nuovo grafico. Righe, Colonne e Valori sono proprie del grafico, scelte fra i campi presenti nel pivot corrente dell'analisi.").apply {
+            Span("Scegli un tipo per creare un nuovo grafico. Righe, Colonne e Valori sono proprie del grafico, scelte fra tutti i campi dell'analisi.").apply {
                 className = "lbi-wizard-label"
             },
             typeGallery,
@@ -326,28 +330,33 @@ class ChartsView(
     }
 
     /**
-     * Campi ammessi in questo momento per il PivotPanel del grafico:
-     * quelli presenti nell'ULTIMO pivot salvato dall'utente per
-     * quest'area (Righe+Colonne+Valori), letto da userPivotStateRepository.
+     * Tutti i campi (dimensioni + metriche) dell'Area: i grafici
+     * dipendono dall'Analisi, non da nessuna PivotView, quindi ogni
+     * campo dell'area è sempre ammesso/selezionabile qui, nessuno
+     * disabilitato.
      */
     private fun campiAmmessi(currentAreaId: UUID): Set<UUID> {
-        val userId = CurrentUserHolder.get()?.userId ?: return emptySet()
-        val stato = userPivotStateRepository.find(userId, currentAreaId) ?: return emptySet()
-        return (stato.pivotRows + stato.pivotColumns + stato.pivotValues).toSet()
+        val dimensioni = registryRepository.findDimensioniByArea(currentAreaId).map { it.dimensioneId }
+        val metriche = registryRepository.findMetricheByArea(currentAreaId).map { it.id }
+        return (dimensioni + metriche).toSet()
     }
 
-    /** Selezioni correnti dell'utente per quest'area, usate per calcolare la preview del grafico. */
+    /**
+     * Selezioni correnti (verde/bianco/grigio) dell'utente per quest'area:
+     * uniche e condivise per l'Area (non per vista), usate per calcolare
+     * la preview del grafico con gli stessi filtri che vede in pagina
+     * Analisi/Configura Analisi.
+     */
     private fun selezioniCorrenti(currentAreaId: UUID): Map<UUID, Set<Long>> {
         val userId = CurrentUserHolder.get()?.userId ?: return emptyMap()
         return userPivotStateRepository.find(userId, currentAreaId)?.selections ?: emptyMap()
     }
 
     /**
-     * Costruisce il PivotPanel dedicato al grafico: stessi campi
-     * dell'area (dimensioni + metriche), con i campi non presenti
-     * nell'ultimo pivot salvato dall'utente marcati come disabilitati
-     * (grigi) tramite setDisabledFields - non rimossi, per dare
-     * visibilità che esistono ma non sono selezionabili ora.
+     * Costruisce il PivotPanel dedicato al grafico: tutti i campi
+     * dell'area, TUTTI abilitati (nessuna disabilitazione), perché i
+     * grafici dipendono dall'Analisi intera, non da una PivotView
+     * specifica.
      *
      * onChange riceve righe/colonne/valori come parametri diretti dal
      * PivotPanel (non va letto da una variabile esterna catturata nella
@@ -363,13 +372,8 @@ class ChartsView(
             .mapNotNull { d -> registryRepository.findDimensione(d.dimensioneId)?.let { d.dimensioneId to it.nome } }
         val metriche = registryRepository.findMetricheByArea(currentAreaId).map { it.id to it.nome }
 
-        val ammessi = campiAmmessi(currentAreaId)
-        val tuttiCampi = (dimensioni.map { it.first } + metriche.map { it.first }).toSet()
-        val disabilitati = tuttiCampi - ammessi
-
         val panel = PivotPanel(onChange)
         panel.setFieldsWithIds(dimensioni, metriche)
-        panel.setDisabledFields(disabilitati)
         return panel
     }
 
@@ -514,7 +518,7 @@ class ChartsView(
         formArea.add(
             Span("Nuovo grafico: ${chartTypeLabel(tipo)}").apply { className = "lbi-section-title" },
             titoloField,
-            Span("Righe, Colonne e Valori (solo i campi presenti nel pivot corrente dell'analisi sono selezionabili)")
+            Span("Righe, Colonne e Valori (tutti i campi dell'analisi sono selezionabili)")
                 .apply { className = "lbi-wizard-label" },
             pivotPanel,
             orderByCombo,
@@ -668,7 +672,7 @@ class ChartsView(
         formArea.add(
             Span("Modifica \"${chart.titolo}\" (${chartTypeLabel(chart.tipo)})").apply { className = "lbi-section-title" },
             titoloField,
-            Span("Righe, Colonne e Valori (solo i campi presenti nel pivot corrente dell'analisi sono selezionabili)")
+            Span("Righe, Colonne e Valori (tutti i campi dell'analisi sono selezionabili)")
                 .apply { className = "lbi-wizard-label" },
             pivotPanel,
             orderByCombo,
@@ -685,10 +689,9 @@ class ChartsView(
     /**
      * Calcola e disegna la preview del grafico con i dati reali (stessa
      * ChartService.getChartDataForPreview usata a runtime per grafici non
-     * ancora salvati), usando le ULTIME selezioni salvate dall'utente per
-     * l'area - se il grafico bozza non è coerente (Righe vuote dopo
-     * potatura, metriche non valide), mostra un placeholder invece di un
-     * errore.
+     * ancora salvati), usando le selezioni correnti dell'utente per
+     * l'area - se il grafico bozza non è coerente (metriche non più
+     * esistenti), mostra un placeholder invece di un errore.
      */
     private fun renderPreview(container: VerticalLayout, bozza: AreaChart, metricaIds: List<UUID>, currentAreaId: UUID) {
         val campiAmmessiCorrente = campiAmmessi(currentAreaId)
