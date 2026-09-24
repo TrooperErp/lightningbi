@@ -359,18 +359,18 @@ vaadin-menu-bar-button:hover {
 }
 
 /* Card verde/grigio/escluso: Span cliccabili dentro un Div puro a
-   griglia CSS, due colonne fisse. Non più MultiSelectListBox né
-   Checkbox: solo elementi semplici (span) su cui abbiamo controllo
-   diretto, senza combattere layout interni di componenti Vaadin. */
+   flex-wrap: i chip si adattano al proprio testo e vanno a capo in
+   modo naturale, invece di essere forzati in una griglia rigida a 2
+   colonne che tronca le etichette lunghe. */
 .lbi-filter-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-auto-rows: 24px;
-    gap: 2px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
     width: 100%;
-    max-height: 128px;
+    max-height: 160px;
     overflow-y: auto;
     overflow-x: hidden;
+    padding-right: 4px;
     scrollbar-width: thin;
     scrollbar-color: var(--lbi-border) transparent;
 }
@@ -389,20 +389,18 @@ vaadin-menu-bar-button:hover {
 }
 
 .lbi-filter-grid span {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
-    height: 100%;
     box-sizing: border-box;
-    text-align: center;
-    padding: 0 4px;
-    border-radius: 4px;
-    font-size: 10px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
     cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+    flex: 0 0 auto;
 }
 
 /* Card filtro nella pagina "Configura Analisi": griglia a più colonne
@@ -502,21 +500,25 @@ vaadin-button[disabled] {
     cursor: not-allowed;
 }
 
+/* ============================================
+   PIVOT PANEL - restyling Enterprise/SaaS
+   ============================================ */
+
 .lbi-pivot-panel {
     border: 1px solid var(--lbi-border);
-    padding: 6px;
-    margin-bottom: 4px;
+    padding: 10px;
+    margin-bottom: 8px;
     border-radius: 8px;
-    background: transparent;
+    background: var(--lbi-surface-2);
 }
 
 .lbi-pivot-pool {
     display: flex;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     overflow-x: auto;
-    gap: 4px;
-    min-height: 22px;
-    padding: 4px;
+    gap: 6px;
+    min-height: 28px;
+    padding: 6px;
     background: transparent;
     border-radius: 8px;
 }
@@ -526,33 +528,63 @@ vaadin-button[disabled] {
     flex-direction: row;
     flex-wrap: wrap;
     align-items: flex-start;
-    min-height: 30px;
-    max-height: 70px;
+    min-height: 36px;
+    max-height: 90px;
     overflow-y: auto;
-    border: 1px dashed var(--lbi-border);
-    padding: 4px;
-    gap: 4px;
+    background: #f8fafc;
+    border: 1.5px dashed var(--lbi-border);
+    padding: 6px;
+    gap: 6px;
     border-radius: 8px;
 }
 
+[theme~="dark"] .lbi-pivot-zone {
+    background: var(--lbi-surface-2);
+}
+
+/* Chip nel pool (non ancora assegnati) - rettangolo smussato, non pillola */
 .lbi-pivot-chip {
-    padding: 2px 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
     border-radius: 6px;
     cursor: grab;
-    font-size: 11px;
+    font-size: 12px;
+    font-weight: 500;
     white-space: nowrap;
     flex: 0 0 auto;
+    border: 1px solid transparent;
+}
+
+.lbi-pivot-chip::before {
+    font-size: 10px;
+    font-weight: 700;
+    opacity: 0.7;
 }
 
 .lbi-pivot-chip-dim {
-    background: rgba(99, 102, 241, 0.12);
-    border: 1px solid var(--lbi-accent);
+    background: #f1f5f9;
+    color: #334155;
+    border-color: #e2e8f0;
+}
+
+.lbi-pivot-chip-dim::before {
+    content: "Abc";
+    font-family: monospace;
 }
 
 .lbi-pivot-chip-metric {
-    background: rgba(34, 197, 94, 0.12);
-    border: 1px solid var(--lbi-state-selected);
+    background: #dcfce7;
+    color: #166534;
+    border-color: #86efac;
 }
+
+.lbi-pivot-chip-metric::before {
+    content: "\2211"; /* ∑ */
+    font-size: 13px;
+}
+
 .lbi-pivot-chip-disabled {
     background: var(--lbi-excluded-bg);
     border: 1px solid var(--lbi-border);
@@ -561,49 +593,68 @@ vaadin-button[disabled] {
     opacity: 0.7;
 }
 
+/* Chip posizionato dentro Righe/Colonne/Valori - tono su tono per tipo */
 .lbi-pivot-zone-chip {
     align-items: center;
     gap: 0;
-    background: var(--lbi-surface-2);
-    border: 1px solid var(--lbi-border);
-    border-radius: 16px;
-    padding: 2px 2px 2px 10px;
+    border-radius: 6px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    padding: 4px 4px 4px 8px;
     width: fit-content;
     flex: 0 0 auto;
+    border: 1px solid transparent;
+}
+
+.lbi-pivot-zone-chip-dim {
+    background: #f1f5f9;
+    border-color: #e2e8f0;
+}
+
+.lbi-pivot-zone-chip-metric {
+    background: #dcfce7;
+    border-color: #86efac;
 }
 
 .lbi-pivot-chip-label {
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--lbi-text);
     margin-right: 6px;
     white-space: nowrap;
 }
 
+/* Pulsanti su/giù/rimuovi: tono su tono con la chip, icona nera, sempre visibili */
 .lbi-pivot-chip-btn {
-    min-width: 20px !important;
-    width: 20px !important;
-    height: 20px !important;
+    min-width: 22px !important;
+    width: 22px !important;
+    height: 22px !important;
     padding: 0 !important;
     margin: 0 1px !important;
-    border-radius: 50% !important;
-    background: var(--lbi-accent) !important;
+    border-radius: 4px !important;
+    box-shadow: none !important;
+    --vaadin-icon-color: #1a1a1a;
+    color: #1a1a1a !important;
 }
 
-.lbi-pivot-chip-btn:hover {
-    background: var(--lbi-accent-hover) !important;
+.lbi-pivot-zone-chip-dim .lbi-pivot-chip-btn {
+    background: #e2e8f0 !important;
+}
+
+.lbi-pivot-zone-chip-dim .lbi-pivot-chip-btn:hover {
+    background: #cbd5e1 !important;
+}
+
+.lbi-pivot-zone-chip-metric .lbi-pivot-chip-btn {
+    background: #86efac !important;
+}
+
+.lbi-pivot-zone-chip-metric .lbi-pivot-chip-btn:hover {
+    background: #4ade80 !important;
 }
 
 .lbi-pivot-chip-btn[disabled] {
-    background: var(--lbi-accent-disabled) !important;
-}
-
-.lbi-pivot-chip-btn-remove {
-    background: var(--lbi-excluded-text) !important;
-}
-
-.lbi-pivot-chip-btn-remove:hover {
-    background: #8a8886 !important;
+    opacity: 0.35;
+    color: #1a1a1a !important;
 }
 
 vaadin-button[theme~="icon"] {

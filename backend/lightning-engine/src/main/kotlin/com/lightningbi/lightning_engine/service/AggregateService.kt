@@ -344,7 +344,7 @@ class AggregateService(
             TipoAggregazione.COUNT -> if (col != null) "COUNT($col)" else "COUNT(*)"
             TipoAggregazione.COUNT_DISTINCT -> "COUNT(DISTINCT $col)"
             TipoAggregazione.SUM -> "SUM($col)"
-            TipoAggregazione.AVG -> "AVG($col)"
+            TipoAggregazione.AVG -> "toDecimal64(AVG($col), 4)"
             TipoAggregazione.MIN -> "MIN($col)"
             TipoAggregazione.MAX -> "MAX($col)"
         }

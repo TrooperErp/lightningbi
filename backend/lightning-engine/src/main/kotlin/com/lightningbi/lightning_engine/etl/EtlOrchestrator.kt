@@ -151,7 +151,7 @@ class EtlOrchestrator(
             // colonna caricata dall'ETL: sono calcolate a lettura da AggregateService,
             // non scritte riga per riga. Vanno escluse qui, altrimenti l'ETL tenta di
             // scrivere/leggere una colonna che non esiste.
-            val columns = dimensioni.map { it.colonnaFisica } + metriche.mapNotNull { it.colonnaFisica }
+            val columns = (dimensioni.map { it.colonnaFisica } + metriche.mapNotNull { it.colonnaFisica }).distinct()
 
             if (source.config.syncMode == SyncMode.FULL_RELOAD) {
                 loaderService.truncateAndLoad(area.tabellaFisica, valid, columns)

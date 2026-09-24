@@ -50,6 +50,8 @@ class PivotPanel(
     private val valuesBox = VerticalLayout().apply { className = "lbi-pivot-zone"; isPadding = false }
 
     init {
+        // forza il preload del chunk che contiene dndConnector (bundlato insieme a vaadin-icon)
+        add(Icon(VaadinIcon.ARROW_UP).apply { isVisible = false })
         isPadding = false
         isSpacing = false
         className = "lbi-pivot-panel"
@@ -68,9 +70,29 @@ class PivotPanel(
             }
         )
 
+        // setupDropTarget NON va chiamato qui: DragSource/DropTarget di
+        // Vaadin devono essere creati DOPO che il componente è attaccato
+        // al DOM del browser, altrimenti il client-side (FlowClient) non
+        // trova il nodo Flow corretto e il drag&drop fallisce silenziosamente
+        // (icona di divieto, errore "Cannot read properties of undefined
+        // (reading 'updateDropTarget')" in console). Il chiamante deve
+        // invocare ensureDropTargetsAttached() da onAttach().
+    }
+
+    private var dropTargetsAttached = false
+
+    /**
+     * Registra i DropTarget delle tre zone. Va chiamato una sola volta,
+     * DOPO che questo componente è attaccato al DOM (da onAttach() del
+     * chiamante) - mai nel costruttore, altrimenti il drag&drop fallisce
+     * silenziosamente perché il nodo Flow non è ancora pronto lato client.
+     */
+    fun ensureDropTargetsAttached() {
+        if (dropTargetsAttached) return
         setupDropTarget(rowsBox, zoneType = Zone.ROWS)
         setupDropTarget(columnsBox, zoneType = Zone.COLUMNS)
         setupDropTarget(valuesBox, zoneType = Zone.VALUES)
+        dropTargetsAttached = true
     }
 
     private enum class Zone { ROWS, COLUMNS, VALUES }
@@ -226,7 +248,7 @@ class PivotPanel(
         }.apply { className = "lbi-pivot-chip-btn lbi-pivot-chip-btn-remove" }
 
         return HorizontalLayout(label, upButton, downButton, removeButton).apply {
-            className = "lbi-pivot-zone-chip"
+            className = if (field.isMetric) "lbi-pivot-zone-chip lbi-pivot-zone-chip-metric" else "lbi-pivot-zone-chip lbi-pivot-zone-chip-dim"
             isPadding = false
         }
     }

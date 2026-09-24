@@ -2,6 +2,7 @@ package com.lightningbi.lightning_engine.view
 
 import com.lightningbi.lightning_engine.etl.EtlOrchestrator
 import com.lightningbi.lightning_engine.model.Area
+import com.lightningbi.lightning_engine.model.PivotView
 import com.lightningbi.lightning_engine.model.SourceStatus
 import com.lightningbi.lightning_engine.model.UserPivotState
 import com.lightningbi.lightning_engine.repository.AreaSourceRepository
@@ -44,6 +45,8 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import com.lightningbi.lightning_engine.service.AuthService
+import com.vaadin.flow.component.dependency.Uses
+import com.vaadin.flow.component.icon.Icon
 
 /**
  * Controller/Presenter: decide COSA succede quando, orchestrando Data
@@ -57,23 +60,29 @@ import com.lightningbi.lightning_engine.service.AuthService
  * parametro; afterNavigation() (che gira dopo che la navigazione è
  * completamente avvenuta) innesca il vero caricamento.
  *
- * PIVOT: Righe/Colonne/Valori NON si costruiscono più qui. Vivono in
- * una PivotView (una per "foglio", condivisa per l'Area, gestite in
- * ConfigureAnalysisView) - questa vista legge sempre la vista ATTIVA
- * per l'utente corrente (PivotViewService.ensureActiveView) e la
- * ridisegna, ma non offre alcun drag&drop per modificarla.
+ * GERARCHIA (Dataset -> Analisi): "Area" è il Dataset (i dati grezzi
+ * sincronizzati, derivati da una view sul DB origine); ogni Dataset ha
+ * N PivotView, che qui sono presentate come "Analisi" - ognuna con la
+ * sua propria struttura Righe/Colonne/Valori, scelta liberamente tra i
+ * campi del Dataset (un'Analisi può usare 3 campi, un'altra Analisi
+ * sullo stesso Dataset può usarne 3 completamente diversi).
  *
- * SELEZIONI: uniche e condivise per l'intera Area, indipendenti da
- * quale PivotView è attiva - comportamento Qlik confermato (le
- * selezioni sono a livello di app, non di foglio). Selezionare un
- * valore qui o in ConfigureAnalysisView è la stessa identica azione
- * sullo stesso stato. Non vengono MAI rimosse per il solo fatto che una
- * dimensione non è (più) in nessuna vista: restano attive e si
- * riflettono su griglia e grafici tramite la barra "selezioni attive",
- * sempre visibile, anche per campi non mostrati come card in questa
- * pagina.
+ * PIVOT: il PivotPanel vive DENTRO questa pagina (non più su una
+ * pagina "Configura Analisi" separata): trascinare un campo in Righe/
+ * Colonne/Valori aggiorna subito AggregateService (query leggera), e
+ * salva subito la struttura sulla PivotView attiva. Non serve un
+ * bottone "Applica": cambiare la struttura del pivot NON tocca il
+ * motore associativo (quello pesante), tocca solo l'aggregazione.
+ *
+ * SELEZIONI: uniche e condivise per l'intero Dataset (Area), indipendenti
+ * da quale Analisi (PivotView) è attiva - comportamento Qlik confermato
+ * (le selezioni sono a livello di app, non di singolo foglio). Non
+ * vengono MAI rimosse per il solo fatto che una dimensione non è (più)
+ * in Righe/Colonne dell'Analisi corrente.
  */
 @Route("associative")
+@Uses(Icon::class)
+
 class AssociativeExplorerView(
     private val registryRepository: RegistryRepository,
     private val registryService: RegistryService,
@@ -103,7 +112,8 @@ class AssociativeExplorerView(
 
     private val ui = AssociativeExplorerUi(
         onFilterSelectionChanged = { dimId, values -> onFilterSelectionChanged(dimId, values) },
-        onRemoveSelection = { dimId, valueId -> onRemoveSelection(dimId, valueId) }
+        onRemoveSelection = { dimId, valueId -> onRemoveSelection(dimId, valueId) },
+        onPivotChanged = { rows, columns, values -> onPivotChanged(rows, columns, values) }
     )
 
     private var areaId: UUID? = null
@@ -116,6 +126,10 @@ class AssociativeExplorerView(
     private var pivotRows: List<UUID> = emptyList()
     private var pivotColumns: List<UUID> = emptyList()
     private var pivotValues: List<UUID> = emptyList()
+
+    /** Le Analisi (PivotView) del Dataset corrente e quella attiva in questo momento. */
+    private var analyses: List<PivotView> = emptyList()
+    private var activeView: PivotView? = null
 
     private val requestCounter = AtomicLong(0)
 
@@ -151,40 +165,44 @@ class AssociativeExplorerView(
             switchArea(requestedId)
         } else if (currentAreas.isNotEmpty() && areaId == null) {
             switchArea(currentAreas.first().id)
-        } else if (areaId != null) {
-            // Si torna su questa pagina (es. da ConfigureAnalysisView):
-            // la PivotView attiva o le selezioni potrebbero essere
-            // cambiate nel frattempo, va sempre riletto lo stato fresco.
-            reloadActiveViewAndRefresh(areaId!!)
         }
     }
 
     override fun beforeLeave(event: com.vaadin.flow.router.BeforeLeaveEvent) {
-        // Nessuna modifica pivot pendente da salvare qui: la struttura si
-        // modifica solo in ConfigureAnalysisView, che salva ad ogni
-        // cambiamento. Questa pagina non ha più nulla da chiedere prima
-        // di lasciarla.
+        // Il pivot si salva ad ogni modifica (PivotViewService.updatePivot),
+        // le selezioni ad ogni click (persistSelections): nessuna modifica
+        // pendente da confermare prima di lasciare la pagina.
     }
 
     // ================= Sidebar =================
 
+    /**
+     * Gruppo "Dataset": elenco delle Aree (i Dataset), invariato nel
+     * meccanismo (switchArea), solo l'etichetta riflette la nuova
+     * terminologia.
+     *
+     * Gruppo "Analisi": elenco delle PivotView del Dataset corrente. Ogni
+     * voce chiama switchToAnalysis(view.id) per rendere quella vista
+     * attiva senza cambiare Dataset. "+ Nuova Analisi" crea una PivotView
+     * vuota e la apre subito.
+     */
     private fun buildMenuGroups(): List<LbiSidebarMenu.MenuGroup> {
         val currentAreaId = areaId
         val groups = mutableListOf(
             LbiSidebarMenu.MenuGroup(
-                label = "Analisi",
+                label = "Dataset",
                 entries = currentAreas.map { area ->
                     LbiSidebarMenu.MenuEntry(area.nome) { switchArea(area.id) }
-                } + LbiSidebarMenu.MenuEntry("+ Nuova analisi") { openNewAnalysisWizard() },
+                } + LbiSidebarMenu.MenuEntry("+ Nuovo dataset") { openNewAnalysisWizard() },
                 active = true
             ),
             LbiSidebarMenu.MenuGroup(
-                label = "Configura Analisi",
-                entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Righe, Colonne, Valori", enabled = currentAreaId != null) {
-                        navigateToConfigure(currentAreaId)
-                    }
-                )
+                label = "Analisi",
+                entries = if (currentAreaId != null) {
+                    analyses.map { view ->
+                        LbiSidebarMenu.MenuEntry(view.nome) { switchToAnalysis(view.id) }
+                    } + LbiSidebarMenu.MenuEntry("+ Nuova Analisi") { createNewAnalysis(currentAreaId) }
+                } else emptyList()
             ),
             LbiSidebarMenu.MenuGroup(
                 label = "Gestisci",
@@ -194,7 +212,7 @@ class AssociativeExplorerView(
                     LbiSidebarMenu.MenuEntry("Sincronizza", enabled = hasSource && sourceStatus == SourceStatus.VERIFIED) { runEtl() },
                     LbiSidebarMenu.MenuEntry("Modifica dimensioni", enabled = currentAreaId != null) { openEditDimensions() },
                     LbiSidebarMenu.MenuEntry("Modifica metriche", enabled = currentAreaId != null) { openEditMetrics() },
-                    LbiSidebarMenu.MenuEntry("Elimina analisi", enabled = currentAreaId != null) { confirmDeleteArea() }
+                    LbiSidebarMenu.MenuEntry("Elimina dataset", enabled = currentAreaId != null) { confirmDeleteArea() }
                 )
             ),
             LbiSidebarMenu.MenuGroup(
@@ -235,18 +253,20 @@ class AssociativeExplorerView(
 
     private fun refreshSidebar() {
         shell.updateMenuGroups(buildMenuGroups())
-        val nome = currentAreas.find { it.id == areaId }?.nome
-        shell.updateAnalysisName(nome?.let { "Analisi: $it" })
+        val nomeArea = currentAreas.find { it.id == areaId }?.nome
+        val nomeAnalisi = activeView?.nome
+        shell.updateAnalysisName(
+            when {
+                nomeArea != null && nomeAnalisi != null -> "$nomeArea · $nomeAnalisi"
+                nomeArea != null -> nomeArea
+                else -> null
+            }
+        )
     }
 
     private fun navigateToCharts(currentAreaId: UUID?) {
         if (currentAreaId == null) return
         getUI().ifPresent { it.navigate(ChartsView::class.java, currentAreaId.toString()) }
-    }
-
-    private fun navigateToConfigure(currentAreaId: UUID?) {
-        if (currentAreaId == null) return
-        getUI().ifPresent { it.navigate(ConfigureAnalysisView::class.java, currentAreaId.toString()) }
     }
 
     // ================= Sorgente =================
@@ -378,6 +398,7 @@ class AssociativeExplorerView(
             cryptoService = cryptoService,
             metadataService = metadataService
         ) {
+            refreshPivotFields(currentAreaId)
             refresh()
         }.open()
     }
@@ -386,19 +407,20 @@ class AssociativeExplorerView(
     private fun openEditMetrics() {
         val currentAreaId = areaId ?: return
         EditMetricsDialog(currentAreaId, registryService) {
+            refreshPivotFields(currentAreaId)
             refresh()
         }.open()
     }
 
     private fun confirmDeleteArea() {
         val currentAreaId = areaId ?: return
-        val areaNome = currentAreas.find { it.id == currentAreaId }?.nome ?: "questa analisi"
+        val areaNome = currentAreas.find { it.id == currentAreaId }?.nome ?: "questo dataset"
 
         val dialog = Dialog().apply {
             headerTitle = "Eliminare \"$areaNome\"?"
             width = "440px"
         }
-        dialog.add(Span("L'analisi, le sue metriche, i collegamenti alle dimensioni e i dati caricati verranno rimossi. L'operazione non è reversibile."))
+        dialog.add(Span("Il dataset, le sue metriche, i collegamenti alle dimensioni e i dati caricati verranno rimossi. L'operazione non è reversibile."))
         val cancelButton = Button("Annulla") { dialog.close() }
         val confirmButton = Button("Elimina") {
             performDeleteArea(currentAreaId)
@@ -422,7 +444,7 @@ class AssociativeExplorerView(
         } else {
             refreshSidebar()
         }
-        Notification.show("Analisi eliminata", 4000, Notification.Position.BOTTOM_END)
+        Notification.show("Dataset eliminato", 4000, Notification.Position.BOTTOM_END)
     }
 
     private fun openNewAnalysisWizard() {
@@ -443,6 +465,9 @@ class AssociativeExplorerView(
         if (viewScope == null) {
             viewScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         }
+        element.executeJs("return true").then {
+            ui.pivotPanel.ensureDropTargetsAttached()
+        }
     }
 
     override fun onDetach(detachEvent: DetachEvent) {
@@ -451,7 +476,7 @@ class AssociativeExplorerView(
         super.onDetach(detachEvent)
     }
 
-    // ================= Cambio area =================
+    // ================= Cambio Dataset (Area) =================
 
     private fun resetAreaState() {
         selections.clear()
@@ -460,6 +485,8 @@ class AssociativeExplorerView(
         pivotRows = emptyList()
         pivotColumns = emptyList()
         pivotValues = emptyList()
+        analyses = emptyList()
+        activeView = null
         ui.clearAll()
     }
 
@@ -473,25 +500,57 @@ class AssociativeExplorerView(
                 dimensionColumns[ad.dimensioneId] = ad.colonnaFisica
             }
         }
+        refreshPivotFields(newAreaId)
         refreshSourceStatus()
         reloadActiveViewAndRefresh(newAreaId)
     }
 
+    /** Popola il PivotPanel con tutti i campi (dimensioni+metriche) del Dataset corrente. */
+    private fun refreshPivotFields(currentAreaId: UUID) {
+        val dims = data.findDimensioniByArea(currentAreaId)
+            .mapNotNull { ad -> data.findDimensione(ad.dimensioneId)?.let { ad.dimensioneId to it.nome } }
+        val metriche = data.findMetricheByArea(currentAreaId).map { it.id to it.nome }
+        ui.pivotPanel.setFieldsWithIds(dims, metriche)
+    }
+
+    // ================= Cambio Analisi (PivotView) =================
+
+    /** Rende attiva una diversa Analisi (PivotView) dello stesso Dataset, senza cambiare Area. */
+    private fun switchToAnalysis(viewId: UUID) {
+        val currentAreaId = areaId ?: return
+        val currentUser = CurrentUserHolder.get() ?: return
+        pivotViewService.setActiveView(currentUser.userId, currentAreaId, viewId)
+        reloadActiveViewAndRefresh(currentAreaId)
+    }
+
+    /** Crea una nuova Analisi (PivotView) vuota sul Dataset corrente e la apre subito. */
+    private fun createNewAnalysis(currentAreaId: UUID) {
+        val currentUser = CurrentUserHolder.get() ?: return
+        pivotViewService.createView(currentUser.userId, currentAreaId, "Analisi ${analyses.size + 1}")
+        reloadActiveViewAndRefresh(currentAreaId)
+    }
+
     /**
-     * Rilegge la PivotView attiva per l'utente su quest'area (creandone
-     * una di default se l'area non ne ha ancora nessuna - vedi
-     * PivotViewService.ensureActiveView) e le selezioni correnti, poi
-     * ridisegna. Punto unico richiamato sia al cambio area sia al
-     * ritorno da ConfigureAnalysisView, perché entrambe le cose possono
-     * essere cambiate nel frattempo in un'altra pagina.
+     * Rilegge le PivotView del Dataset e quella ATTIVA per l'utente
+     * corrente (creandone una di default se il Dataset non ne ha ancora
+     * nessuna - vedi PivotViewService.ensureActiveView), popola il
+     * PivotPanel con quella struttura, rilegge le selezioni (uniche per
+     * Dataset), e ridisegna. Punto unico richiamato sia al cambio
+     * Dataset sia al cambio Analisi.
      */
     private fun reloadActiveViewAndRefresh(currentAreaId: UUID) {
         val currentUser = CurrentUserHolder.get() ?: return
 
-        val activeView = pivotViewService.ensureActiveView(currentUser.userId, currentAreaId)
-        pivotRows = activeView.pivotRows
-        pivotColumns = activeView.pivotColumns
-        pivotValues = activeView.pivotValues
+        analyses = pivotViewService.findByArea(currentAreaId)
+        val active = pivotViewService.ensureActiveView(currentUser.userId, currentAreaId)
+        // ensureActiveView può aver creato la prima Analisi se non ce n'erano: rileggo l'elenco.
+        analyses = pivotViewService.findByArea(currentAreaId)
+        activeView = active
+
+        pivotRows = active.pivotRows
+        pivotColumns = active.pivotColumns
+        pivotValues = active.pivotValues
+        ui.pivotPanel.restoreState(pivotRows, pivotColumns, pivotValues)
 
         selections.clear()
         userPivotStateRepository.find(currentUser.userId, currentAreaId)?.let { state ->
@@ -500,6 +559,25 @@ class AssociativeExplorerView(
 
         rebuildFilterCards(pivotRows, pivotColumns)
         refreshSidebar()
+        refresh()
+    }
+
+    // ================= Pivot =================
+
+    /**
+     * Il PivotPanel ha cambiato Righe/Colonne/Valori: salva subito sulla
+     * PivotView attiva (persistenza immediata, nessun bottone "Applica" -
+     * cambiare la struttura non tocca il motore associativo, solo
+     * AggregateService), aggiorna lo stato locale, ricostruisce le card
+     * filtro (i campi in Righe/Colonne sono cambiati) e ricalcola.
+     */
+    private fun onPivotChanged(rows: List<UUID>, columns: List<UUID>, values: List<UUID>) {
+        val currentView = activeView ?: return
+        activeView = pivotViewService.updatePivot(currentView, rows, columns, values)
+        pivotRows = rows
+        pivotColumns = columns
+        pivotValues = values
+        rebuildFilterCards(rows, columns)
         refresh()
     }
 
@@ -516,11 +594,11 @@ class AssociativeExplorerView(
     }
 
     /**
-     * Le selezioni sono uniche e condivise per l'Area: qui vengono solo
-     * salvate su UserPivotState e applicate al refresh, MAI cancellate
-     * per il fatto che una dimensione non è (più) nella vista attiva -
-     * comportamento Qlik confermato (le selezioni valgono su tutta
-     * l'app, non sul singolo foglio).
+     * Le selezioni sono uniche e condivise per il Dataset (Area): qui
+     * vengono solo salvate su UserPivotState e applicate al refresh, MAI
+     * cancellate per il fatto che una dimensione non è (più) nell'Analisi
+     * attiva - comportamento Qlik confermato (le selezioni valgono su
+     * tutta l'app, non sul singolo foglio).
      */
     private fun onFilterSelectionChanged(dimId: UUID, values: Set<Long>) {
         selections[dimId] = values
@@ -579,7 +657,6 @@ class AssociativeExplorerView(
                 vaadinUi.access {
                     if (myRequestId != requestCounter.get()) return@access
                     if (areaId != currentAreaId) return@access
-                    ui.renderActiveSelections(selectionsSnapshot, dimensionNames, result.labels, data::labelOrFallback)
                     ui.renderStates(result.states, result.labels, data::labelOrFallback) { dimId -> dimensionColumns[dimId] }
                     ui.renderResultsGrid(result.aggregates, result.rowHierarchy, rowsSnapshot, dimensionNames)
                     ui.renderCharts(result.chartsData, rowsSnapshot)

@@ -42,19 +42,31 @@ import java.util.UUID
  * colonne per riga) né Checkbox (introdotti per errore in un passaggio
  * intermedio, mai richiesti: l'aspetto voluto è il pulsante colorato
  * pieno, non un quadratino con etichetta a fianco).
- *F
- * NON possiede più un PivotPanel: Righe/Colonne/Valori si costruiscono
- * ora solo in ConfigureAnalysisView. Questa vista mostra solo le card
- * filtro della struttura corrente (letta dalla PivotView attiva),
- * griglia e grafici - nessun drag&drop qui.
+ *
+ * Le selezioni si vedono SOLO dentro le card (stato verde/selezionato):
+ * non esiste una barra "selezioni attive" separata sopra le card, che
+ * duplicherebbe la stessa informazione senza motivo.
+ *
+ * PIVOT: il PivotPanel (Righe/Colonne/Valori) è di nuovo QUI, nella
+ * stessa pagina di griglia e grafici - non più su una pagina
+ * "Configura Analisi" separata. Cambiare Righe/Colonne non richiede il
+ * ricalcolo del motore associativo (verde/bianco/grigio): tocca solo
+ * AggregateService, che è già veloce - il costo pesante è legato
+ * unicamente alle SELEZIONI, non alla struttura del pivot. Le card
+ * filtro restano comunque limitate alle sole dimensioni presenti in
+ * Righe/Colonne in quel momento (mai tutte quelle dell'Area), quindi il
+ * loro numero resta sempre piccolo.
  *
  * Lo stato sorgente ("Sorgente verificata: X") non vive più qui: è
  * mostrato nella topbar (LbiAppShell.updateSourceStatus).
  */
 class AssociativeExplorerUi(
     private val onFilterSelectionChanged: (dimId: UUID, values: Set<Long>) -> Unit,
-    private val onRemoveSelection: (dimId: UUID, valueId: Long) -> Unit
+    private val onRemoveSelection: (dimId: UUID, valueId: Long) -> Unit,
+    private val onPivotChanged: (rows: List<UUID>, columns: List<UUID>, values: List<UUID>) -> Unit
 ) {
+    val pivotPanel = PivotPanel { rows, columns, values -> onPivotChanged(rows, columns, values) }
+    private val pivotHeaderRows = mutableListOf<com.vaadin.flow.component.grid.HeaderRow>()
     val resultsGrid = TreeGrid<PivotEngine.PivotNode>().apply {
         className = "lbi-results-grid"
         setWidthFull()
@@ -66,8 +78,6 @@ class AssociativeExplorerUi(
         width = "420px"
         height = "100%"
     }
-
-    val activeSelectionsBar = Div().apply { className = "lbi-active-selections" }
 
     val chartsPanel = VerticalLayout().apply {
         className = "lbi-charts-panel"
@@ -108,8 +118,6 @@ class AssociativeExplorerUi(
     val root: HorizontalLayout
 
     init {
-        filtersColumn.add(activeSelectionsBar)
-
         // Solo la griglia è dentro lo Scroller: i grafici restano fuori,
         // in un'area fissa sotto, sempre visibili senza dover scrollare.
         val scrollableGrid = Scroller(resultsGrid).apply {
@@ -119,6 +127,7 @@ class AssociativeExplorerUi(
         }
 
         val centerArea = VerticalLayout(
+            pivotPanel,
             Span("Risultati").apply { className = "lbi-section-title" },
             scrollableGrid,
             chartsPanel
@@ -127,6 +136,7 @@ class AssociativeExplorerUi(
             isPadding = true
             setWidthFull()
             setHeightFull()
+            setFlexGrow(0.0, pivotPanel)
             setFlexGrow(1.0, scrollableGrid)
             setFlexGrow(0.0, chartsPanel)
         }
@@ -154,12 +164,9 @@ class AssociativeExplorerUi(
         countSameName: (String) -> Int
     ) {
         filtersColumn.removeAll()
-        filtersColumn.add(activeSelectionsBar)
         filterGrids.clear()
         dimensionSpans.clear()
         currentItems.clear()
-
-        val allDims = rowDims + columnDims
 
         val rowsGroup = VerticalLayout().apply { isPadding = false; className = "lbi-filter-group" }
         val columnsGroup = VerticalLayout().apply { isPadding = false; className = "lbi-filter-group" }
@@ -196,38 +203,6 @@ class AssociativeExplorerUi(
 
     fun deselectAll(dimId: UUID) {
         dimensionSpans[dimId]?.values?.forEach { it.className = "state-possible" }
-    }
-
-    fun renderActiveSelections(
-        selections: Map<UUID, Set<Long>>,
-        dimensionNames: Map<UUID, String>,
-        labels: Map<UUID, Map<Long, String>>,
-        labelOrFallback: (Map<Long, String>, Long?) -> String,
-        colonnaFisicaFor: (UUID) -> String? = { null }
-    ) {
-        activeSelectionsBar.removeAll()
-        selections.forEach { (dimId, values) ->
-            if (values.isEmpty()) return@forEach
-            val dimName = dimensionNames[dimId] ?: return@forEach
-            val dimLabels = labels[dimId] ?: emptyMap()
-            val colonna = colonnaFisicaFor(dimId)
-
-            values.sorted().forEach { valueId ->
-                val valueLabel = colonna?.let {
-                    com.lightningbi.lightning_engine.service.DimensionFormatters.formatOrNull(it, valueId)
-                } ?: labelOrFallback(dimLabels, valueId)
-
-                val removeIcon = Span("×").apply {
-                    className = "lbi-active-chip-remove"
-                    addClickListener { onRemoveSelection(dimId, valueId) }
-                }
-                val chip = Span().apply {
-                    className = "lbi-active-chip"
-                    add(Span("$dimName: $valueLabel"), removeIcon)
-                }
-                activeSelectionsBar.add(chip)
-            }
-        }
     }
 
     /**
@@ -308,7 +283,18 @@ class AssociativeExplorerUi(
      * di Vaadin TreeGrid. "result" resta necessario solo per derivare
      * l'insieme completo delle chiavi metrica/colonna da mostrare come
      * colonne (allValueKeys) e per il messaggio di troncamento.
+     *
+     * NOTA (debito tecnico aperto): quando Colonne ha più di una
+     * dimensione (es. Anno + Mese), le colonne qui restano piatte - non
+     * c'è ancora un header a più livelli che raggruppi visivamente
+     * "2025" sopra i suoi 12 mesi, come già avviene per le Righe con
+     * l'espandi/collassa del TreeGrid. Le chiavi (separate da "|")
+     * portano già l'informazione gerarchica necessaria; va aggiunto un
+     * HeaderRow con più livelli (Grid.prependHeaderRow + join) per
+     * sfruttarla.
      */
+
+
     fun renderResultsGrid(
         result: AggregateResult,
         rowHierarchy: List<PivotEngine.PivotNode>,
@@ -316,6 +302,13 @@ class AssociativeExplorerUi(
         dimensionNames: Map<UUID, String>
     ) {
         resultsGrid.removeAllColumns()
+
+        // removeAllColumns() non rimuove le header row aggiunte con
+        // prependHeaderRow(): le rimuovo esplicitamente per riferimento,
+        // evitando accumulo ad ogni render successivo (es. dopo aver
+        // spostato una riga con le frecce su/giù).
+        pivotHeaderRows.forEach { resultsGrid.removeHeaderRow(it) }
+        pivotHeaderRows.clear()
 
         if (rowHierarchy.isEmpty()) {
             resultsGrid.setDataProvider(TreeDataProvider(TreeData()))
@@ -327,13 +320,13 @@ class AssociativeExplorerUi(
         resultsGrid.setDataProvider(TreeDataProvider(treeData))
 
         val rowHeader = rows.mapNotNull { dimensionNames[it] }.joinToString(" / ").ifEmpty { "Righe" }
-        resultsGrid.addHierarchyColumn { node -> node.label }
+        val hierarchyColumn = resultsGrid.addHierarchyColumn { node -> node.label }
             .setHeader(rowHeader)
             .setWidth("220px")
             .setFlexGrow(0)
 
         val allValueKeys = collectAllValueKeys(rowHierarchy)
-        allValueKeys.forEach { key ->
+        val dataColumns = allValueKeys.map { key ->
             val parts = key.split("|")
             val headerText = if (parts.size > 1) parts.drop(1).joinToString(" · ") else key
             resultsGrid.addColumn { node -> formatMetricValue(node.values[key]) }
@@ -343,6 +336,52 @@ class AssociativeExplorerUi(
                 .setFlexGrow(0)
         }
 
+        // Un livello di header aggiuntivo per ogni dimensione in Colonne,
+        // sopra il livello "nome metrica · valori" già impostato con
+        // .setHeader() sulle colonne dati. Ogni key è "Metrica|val1|val2|...",
+        // quindi i livelli extra sono (numero di parti - 1). Si costruiscono
+        // dal livello più esterno (Anno) al più interno (Mese), ognuno con
+        // una prependHeaderRow() dedicata, così l'ultima chiamata resta la
+        // più esterna e finisce in cima come nelle pivot Excel/Qlik.
+        val columnLevels = allValueKeys.maxOfOrNull { it.split("|").size - 1 } ?: 0
+
+        if (columnLevels > 0) {
+            for (level in (columnLevels - 1) downTo 0) {
+                val levelValues = allValueKeys.map { it.split("|").getOrNull(level + 1) ?: "" }
+                val headerRow = resultsGrid.prependHeaderRow()
+                pivotHeaderRows.add(headerRow)
+
+                var i = 0
+                while (i < dataColumns.size) {
+                    val value = levelValues[i]
+                    var j = i
+                    // Due colonne sono raggruppabili allo stesso livello solo
+                    // se condividono anche tutti i livelli più esterni già
+                    // raggruppati in questo ciclo: altrimenti "Gennaio 2025"
+                    // e "Gennaio 2026" verrebbero unite per errore solo
+                    // perché condividono la label "Gennaio".
+                    while (j + 1 < dataColumns.size) {
+                        val partsJ = allValueKeys[j + 1].split("|")
+                        val partsI = allValueKeys[i].split("|")
+                        val samePrefix = (0 until level).all { l -> partsI.getOrNull(l + 1) == partsJ.getOrNull(l + 1) }
+                        if (samePrefix && levelValues[j + 1] == value) j++ else break
+                    }
+                    val group = dataColumns.subList(i, j + 1).toTypedArray()
+                    val cell = if (group.size > 1) headerRow.join(*group) else headerRow.getCell(group[0])
+                    cell.text = value
+                    i = j + 1
+                }
+            }
+        }
+
+        // Riordino esplicito DOPO aver creato le header row:
+        // prependHeaderRow() può alterare l'ordine interno delle colonne,
+        // spostando la colonna gerarchica lontano dalla prima posizione.
+        resultsGrid.setColumnOrder(buildList {
+            add(hierarchyColumn)
+            addAll(dataColumns)
+        })
+
         if (result.truncated) {
             val messaggio = if (rows.isEmpty())
                 "Risultato troncato: troppe righe da mostrare"
@@ -351,7 +390,6 @@ class AssociativeExplorerUi(
             Notification.show(messaggio, 5000, Notification.Position.BOTTOM_END)
         }
     }
-
     private fun addNodesRecursively(
         treeData: TreeData<PivotEngine.PivotNode>,
         parent: PivotEngine.PivotNode?,
@@ -442,8 +480,6 @@ class AssociativeExplorerUi(
 
     fun clearAll() {
         filtersColumn.removeAll()
-        filtersColumn.add(activeSelectionsBar)
-        activeSelectionsBar.removeAll()
         resultsGrid.setDataProvider(TreeDataProvider(TreeData()))
         resultsGrid.removeAllColumns()
         chartsPanel.removeAll()
