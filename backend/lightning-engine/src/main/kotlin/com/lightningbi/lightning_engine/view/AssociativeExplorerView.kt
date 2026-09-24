@@ -659,19 +659,26 @@ class AssociativeExplorerView(
                 val result = data.refresh(currentAreaId, rowsSnapshot, columnsSnapshot, valuesSnapshot, selectionsSnapshot, dimensionNames)
 
                 vaadinUi.access {
+                    // Il dialog va sempre chiuso quando UNA richiesta qualsiasi
+                    // torna, anche se superata da una più recente: altrimenti,
+                    // se una richiesta più vecchia non arriva mai a chiuderlo (o
+                    // arriva dopo la sua "vittoria" su un'altra), il dialog
+                    // resta aperto indefinitamente. Solo l'aggiornamento della
+                    // UI (griglia/stati/grafici) va scartato se superato.
+                    ui.loadingDialog.close()
+
                     if (myRequestId != requestCounter.get()) return@access
                     if (areaId != currentAreaId) return@access
                     ui.renderStates(result.states, result.labels, data::labelOrFallback) { dimId -> dimensionColumns[dimId] }
                     ui.renderResultsGrid(result.aggregates, result.rowHierarchy, rowsSnapshot, dimensionNames)
                     ui.renderCharts(result.chartsData, rowsSnapshot)
-                    ui.loadingDialog.close()
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 vaadinUi.access {
-                    if (myRequestId != requestCounter.get()) return@access
                     ui.loadingDialog.close()
+                    if (myRequestId != requestCounter.get()) return@access
                     Notification.show("Errore aggiornamento: ${e.message}", 5000, Notification.Position.BOTTOM_END)
                 }
             }
