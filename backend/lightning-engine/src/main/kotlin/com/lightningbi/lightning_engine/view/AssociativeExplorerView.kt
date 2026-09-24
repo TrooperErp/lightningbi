@@ -170,12 +170,7 @@ class AssociativeExplorerView(
         }
     }
 
-    // TEMPORANEO: verifica rapida che l'invio email funzioni. Da rimuovere
-// una volta confermato.
-    private fun testEmail() {
-        emailService.sendAdminAlert("Test", "Email di prova da LightningBI, tutto ok se la leggi.")
-        Notification.show("Email di test inviata (controlla la casella)", 4000, Notification.Position.BOTTOM_END)
-    }
+
 //==========================================================================================================================
     override fun beforeLeave(event: com.vaadin.flow.router.BeforeLeaveEvent) {
         // Il pivot si salva ad ogni modifica (PivotViewService.updatePivot),
@@ -202,7 +197,13 @@ class AssociativeExplorerView(
                 label = "Dataset",
                 entries = currentAreas.map { area ->
                     LbiSidebarMenu.MenuEntry(area.nome) { switchArea(area.id) }
-                } + LbiSidebarMenu.MenuEntry("+ Nuovo dataset") { openNewAnalysisWizard() },
+                } + listOf(
+                    LbiSidebarMenu.MenuEntry("+ Nuovo dataset") { openNewAnalysisWizard() },
+                    LbiSidebarMenu.MenuEntry("Modifica Schema", enabled = currentAreaId != null) {
+                        if (currentAreaId != null) getUI().ifPresent { it.navigate(EditFieldsView::class.java, currentAreaId.toString()) }
+                    },
+                    LbiSidebarMenu.MenuEntry("Sincronizza", enabled = hasSource && sourceStatus == SourceStatus.VERIFIED) { runEtl() }
+                ),
                 active = true
             ),
             LbiSidebarMenu.MenuGroup(
@@ -212,19 +213,6 @@ class AssociativeExplorerView(
                         LbiSidebarMenu.MenuEntry(view.nome) { switchToAnalysis(view.id) }
                     } + LbiSidebarMenu.MenuEntry("+ Nuova Analisi") { createNewAnalysis(currentAreaId) }
                 } else emptyList()
-            ),
-            LbiSidebarMenu.MenuGroup(
-                label = "Gestisci",
-                entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Verifica sorgente", enabled = hasSource) { verifySource() },
-                    LbiSidebarMenu.MenuEntry("Mostra SQL view", enabled = hasSource) { showViewSql() },
-                    LbiSidebarMenu.MenuEntry("Sincronizza", enabled = hasSource && sourceStatus == SourceStatus.VERIFIED) { runEtl() },
-                    LbiSidebarMenu.MenuEntry("Modifica Schema", enabled = currentAreaId != null) {
-                        if (currentAreaId != null) getUI().ifPresent { it.navigate(EditFieldsView::class.java, currentAreaId.toString()) }
-                    },
-                    LbiSidebarMenu.MenuEntry("Elimina dataset", enabled = currentAreaId != null) { confirmDeleteArea() },
-                            LbiSidebarMenu.MenuEntry("TEST EMAIL (da rimuovere)") { testEmail() }
-                )
             ),
             LbiSidebarMenu.MenuGroup(
                 label = "Grafici",
@@ -241,16 +229,21 @@ class AssociativeExplorerView(
         )
 
         // "Amministrazione" compare SOLO per chi ha il permesso MANAGE_USERS
-        // sul proprio ruolo corrente - non un nome di ruolo fisso, coerente
-        // col modello a permessi granulari. Stesso controllo viene rifatto
-        // dentro AdminView.beforeEnter, perché l'URL /admin resta
-        // raggiungibile a mano anche se la voce di menu è nascosta qui.
+        // sul proprio ruolo corrente. Raggruppa "Connessioni" (verifica
+        // sorgente, SQL view, eliminazione dataset - operazioni sulla
+        // connessione al DB origine, non sul contenuto analitico) e
+        // "Gestione utenti". Stesso controllo viene rifatto dentro
+        // AdminView.beforeEnter, perché l'URL /admin resta raggiungibile a
+        // mano anche se la voce di menu è nascosta qui.
         val currentUser = CurrentUserHolder.get()
         if (currentUser != null && permissionCheckService.hasPermission(currentUser.roleName, "MANAGE_USERS")) {
             groups.add(
                 LbiSidebarMenu.MenuGroup(
                     label = "Amministrazione",
                     entries = listOf(
+                        LbiSidebarMenu.MenuEntry("Verifica sorgente", enabled = hasSource) { verifySource() },
+                        LbiSidebarMenu.MenuEntry("Mostra SQL view", enabled = hasSource) { showViewSql() },
+                        LbiSidebarMenu.MenuEntry("Elimina dataset", enabled = currentAreaId != null) { confirmDeleteArea() },
                         LbiSidebarMenu.MenuEntry("Gestione utenti") {
                             getUI().ifPresent { it.navigate(AdminView::class.java) }
                         }
