@@ -44,7 +44,7 @@ dependencies {
 	implementation("com.oracle.database.jdbc:ojdbc11:23.5.0.24.07")
 	implementation("com.ibm.db2:jcc:11.5.9.0")
 	implementation("com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11")
-
+	implementation("org.springframework.boot:spring-boot-starter-mail")
 	// Migrations: Flyway -> ClickHouse, Liquibase -> Postgres
 	// (niente versione esplicita su flyway-core: la governa extra["flyway.version"])
 	implementation("org.flywaydb:flyway-database-clickhouse:10.24.0")
@@ -70,6 +70,7 @@ dependencies {
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
 }
 
 dependencyManagement {

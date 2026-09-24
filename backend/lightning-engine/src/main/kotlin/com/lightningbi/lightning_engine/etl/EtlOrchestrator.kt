@@ -5,12 +5,15 @@ import com.lightningbi.lightning_engine.model.EtlRun
 import com.lightningbi.lightning_engine.model.EtlStato
 import com.lightningbi.lightning_engine.model.SourceStatus
 import com.lightningbi.lightning_engine.model.SyncMode
+import com.lightningbi.lightning_engine.repository.AreaSourceRepository
 import com.lightningbi.lightning_engine.repository.EtlRunRepository
 import com.lightningbi.lightning_engine.repository.EtlSyncStateRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import com.lightningbi.lightning_engine.service.BitmapIndexBuilder
 import com.lightningbi.lightning_engine.service.CryptoService
+import com.lightningbi.lightning_engine.service.EmailService
 import com.lightningbi.lightning_engine.service.EtlCompletionService
+import com.lightningbi.lightning_engine.service.MetadataService
 import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.script.DefaultRedisScript
@@ -31,6 +34,9 @@ class EtlOrchestrator(
     private val redisTemplate: StringRedisTemplate,
     private val etlCompletionService: EtlCompletionService,
     private val cryptoService: CryptoService,
+    private val emailService: EmailService,
+    private val metadataService: MetadataService,
+    private val areaSourceRepository: AreaSourceRepository,
     private val bitmapIndexBuilder: BitmapIndexBuilder
 ) {
     private val log = LoggerFactory.getLogger(EtlOrchestrator::class.java)
@@ -58,6 +64,68 @@ class EtlOrchestrator(
         end
         """.trimIndent(), Long::class.java
     )
+
+    /**
+     * Verifica che tutte le colonne agganciate come dimensione o metrica
+     * esistano ancora nella view sorgente, e segnala eventuali colonne
+     * nuove non ancora configurate. Va chiamato PRIMA di extractor.extract,
+     * non dopo: un ETL notturno che fallisce a metà su una colonna sparita
+     * lascia lo stato peggio di uno che si ferma subito con un errore
+     * chiaro.
+     *
+     * Colonne mancanti (agganciate ma sparite dalla view): bloccano l'ETL,
+     * perché la query di estrazione fallirebbe comunque, in modo più
+     * criptico e a metà lavoro. Email ad alta priorità.
+     *
+     * Colonne nuove (nella view ma non ancora agganciate): non bloccano
+     * l'ETL, sono solo un'opportunità da segnalare. Email normale.
+     */
+    private fun checkColumnDrift(
+        areaId: UUID,
+        areaNome: String,
+        source: AreaSource,
+        dimensioni: List<com.lightningbi.lightning_engine.model.AreaDimensione>,
+        metriche: List<com.lightningbi.lightning_engine.model.AreaMetrica>
+    ) {
+        val colonneAttese = (dimensioni.map { it.colonnaFisica } + metriche.mapNotNull { it.colonnaFisica }).distinct()
+
+        val colonneReali = try {
+            val password = cryptoService.decrypt(source.config.encryptedPassword)
+            metadataService.connect(
+                source.config.jdbcUrl, source.config.username, password, source.config.driverClassName
+            ).use { conn ->
+                metadataService.listColumns(conn, source.config.schema, source.config.viewName).map { it.name }
+            }
+        } catch (e: Exception) {
+            log.error("Impossibile leggere le colonne della view per il pre-check area {}: procedo comunque", areaId, e)
+            return // se il pre-check stesso fallisce, non blocco l'ETL per questo: extractor.extract darà l'errore vero
+        }
+
+        val colonneRealiLower = colonneReali.map { it.lowercase() }.toSet()
+        val colonneAttesLower = colonneAttese.map { it.lowercase() }.toSet()
+
+        val mancanti = colonneAttese.filter { it.lowercase() !in colonneRealiLower }
+        val nuove = colonneReali.filter { it.lowercase() !in colonneAttesLower }
+
+        if (mancanti.isNotEmpty()) {
+            val messaggio = "L'area '$areaNome' (id=$areaId) ha ${mancanti.size} colonna/e configurate ma non più " +
+                    "presenti nella view sorgente '${source.config.viewName}': ${mancanti.joinToString(", ")}. " +
+                    "L'ETL è stato bloccato per evitare un fallimento a metà. Vai in \"Modifica Schema\" per sistemare " +
+                    "le dimensioni/metriche coinvolte, poi rilancia la sincronizzazione manualmente."
+            emailService.sendAdminAlert("URGENTE - ETL bloccato: colonne mancanti su '$areaNome'", messaggio)
+            error(messaggio)
+        }
+
+        if (nuove.isNotEmpty()) {
+            val messaggio = "L'area '$areaNome' (id=$areaId) ha ${nuove.size} colonna/e nuove nella view sorgente " +
+                    "'${source.config.viewName}' non ancora configurate come dimensione o metrica: " +
+                    "${nuove.joinToString(", ")}. Nessuna azione richiesta, l'ETL prosegue normalmente: è solo un " +
+                    "promemoria per valutare se aggiungerle in \"Modifica Schema\"."
+            emailService.sendAdminAlert("Nuove colonne disponibili su '$areaNome'", messaggio)
+        }
+    }
+
+
 
     fun runForArea(areaId: UUID, source: AreaSource) {
         if (source.status != SourceStatus.VERIFIED) {
@@ -100,6 +168,12 @@ class EtlOrchestrator(
             // l'ETL finisce, tutte le righe scritte sulla sorgente durante
             // l'esecuzione finirebbero in una finestra temporale già superata
             // e non verrebbero mai raccolte.
+
+
+            checkColumnDrift(areaId, area.nome, source, dimensioni, metriche)
+
+
+
             val syncStart = LocalDateTime.now()
 
             val lastSync = if (source.config.syncMode == SyncMode.FULL_RELOAD) {
@@ -197,6 +271,10 @@ class EtlOrchestrator(
             )
         } catch (e: Exception) {
             log.error("ETL area {} fallito", areaId, e)
+            emailService.sendAdminAlert(
+                "URGENTE - ETL fallito su area $areaId",
+                "L'ETL per l'area $areaId è fallito con errore: ${e.message ?: e::class.qualifiedName}. Controlla i log del server."
+            )
             etlRunRepository.update(
                 run.copy(
                     finishedAt = LocalDateTime.now(),

@@ -53,6 +53,9 @@ const loadOnDemand = (key) => {
   if (key === '7b6aebf56e3723452af3a60bae5a2df68d84d5a4538b3c7269ee56314a1a5ce0') {
     pending.push(import('./chunks/chunk-3fdc4f4160ddff914fd7acdf291b3e4974ad333ec4ea5421676ad80e0fd8e9ea.js'));
   }
+  if (key === 'eed83d0542c60e76981627fff57764255b5ac07f9517a4797483a6392b323c79') {
+    pending.push(import('./chunks/chunk-a6059dffe0a8be502fa317fbb23fa6c23a5932e128efe3a8da33d82bbf5a9ccb.js'));
+  }
   if (key === '6200366fed7c7273360acb3003ed785a36114178aa190b855ed43428396b8f51') {
     pending.push(import('./chunks/chunk-12de20dafa9c53f9938fbd40f65022ce8ed819ebf7c63d7ccb124b5ca1464df8.js'));
   }

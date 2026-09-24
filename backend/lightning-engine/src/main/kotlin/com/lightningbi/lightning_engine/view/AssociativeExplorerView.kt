@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import com.lightningbi.lightning_engine.service.AuthService
+import com.lightningbi.lightning_engine.service.EmailService
 import com.vaadin.flow.component.dependency.Uses
 import com.vaadin.flow.component.icon.Icon
 
@@ -101,6 +102,7 @@ class AssociativeExplorerView(
     symbolLookupService: SymbolLookupService,
     sourceVerificationService: SourceVerificationService,
     private val authService: AuthService,
+    private val emailService: EmailService,
     etlOrchestrator: EtlOrchestrator
 ) : VerticalLayout(), HasUrlParameter<String>, AfterNavigationObserver, com.vaadin.flow.router.BeforeLeaveObserver {
 
@@ -168,6 +170,13 @@ class AssociativeExplorerView(
         }
     }
 
+    // TEMPORANEO: verifica rapida che l'invio email funzioni. Da rimuovere
+// una volta confermato.
+    private fun testEmail() {
+        emailService.sendAdminAlert("Test", "Email di prova da LightningBI, tutto ok se la leggi.")
+        Notification.show("Email di test inviata (controlla la casella)", 4000, Notification.Position.BOTTOM_END)
+    }
+//==========================================================================================================================
     override fun beforeLeave(event: com.vaadin.flow.router.BeforeLeaveEvent) {
         // Il pivot si salva ad ogni modifica (PivotViewService.updatePivot),
         // le selezioni ad ogni click (persistSelections): nessuna modifica
@@ -210,9 +219,11 @@ class AssociativeExplorerView(
                     LbiSidebarMenu.MenuEntry("Verifica sorgente", enabled = hasSource) { verifySource() },
                     LbiSidebarMenu.MenuEntry("Mostra SQL view", enabled = hasSource) { showViewSql() },
                     LbiSidebarMenu.MenuEntry("Sincronizza", enabled = hasSource && sourceStatus == SourceStatus.VERIFIED) { runEtl() },
-                    LbiSidebarMenu.MenuEntry("Modifica dimensioni", enabled = currentAreaId != null) { openEditDimensions() },
-                    LbiSidebarMenu.MenuEntry("Modifica metriche", enabled = currentAreaId != null) { openEditMetrics() },
-                    LbiSidebarMenu.MenuEntry("Elimina dataset", enabled = currentAreaId != null) { confirmDeleteArea() }
+                    LbiSidebarMenu.MenuEntry("Modifica Schema", enabled = currentAreaId != null) {
+                        if (currentAreaId != null) getUI().ifPresent { it.navigate(EditFieldsView::class.java, currentAreaId.toString()) }
+                    },
+                    LbiSidebarMenu.MenuEntry("Elimina dataset", enabled = currentAreaId != null) { confirmDeleteArea() },
+                            LbiSidebarMenu.MenuEntry("TEST EMAIL (da rimuovere)") { testEmail() }
                 )
             ),
             LbiSidebarMenu.MenuGroup(

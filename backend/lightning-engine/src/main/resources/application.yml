@@ -115,6 +115,7 @@ lightningbi:
 # ============ PROD ============
 # Nessun default localhost: se manca una env var il boot fallisce subito
 # (fail-fast), invece di puntare silenziosamente all'host sbagliato.
+
 spring:
   config:
     activate:
@@ -162,6 +163,21 @@ spring:
       name: ${ADMIN_USER}
       password: ${ADMIN_PASSWORD}
 
+  mail:
+    host: mail.molo40.it
+    port: 465
+    username: ${LBI_SMTP_USER}
+    password: ${LBI_SMTP_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+          socketFactory:
+            port: 465
+            class: javax.net.ssl.SSLSocketFactory
+
 vaadin:
   production-mode: true
 
@@ -193,3 +209,6 @@ logging:
     com.lightningbi: INFO
     org.springframework.security: WARN
 
+lbi:
+  alert:
+    admin-email: ict@tosoniindustrie.com
