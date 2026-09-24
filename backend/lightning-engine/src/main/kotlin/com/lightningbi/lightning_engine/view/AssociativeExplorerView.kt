@@ -547,9 +547,12 @@ class AssociativeExplorerView(
 
         analyses = pivotViewService.findByArea(currentAreaId)
         val active = pivotViewService.ensureActiveView(currentUser.userId, currentAreaId)
-        // ensureActiveView può aver creato la prima Analisi se non ce n'erano: rileggo l'elenco.
         analyses = pivotViewService.findByArea(currentAreaId)
         activeView = active
+
+        // DEBUG TEMPORANEO: verifica che l'Analisi attiva erediti i campi
+        // del Dataset corretto.
+        println("DEBUG ANALISI: areaId=$currentAreaId activeView.id=${active.id} activeView.nome=${active.nome} activeView.areaId=${active.areaId}")
 
         pivotRows = active.pivotRows
         pivotColumns = active.pivotColumns
