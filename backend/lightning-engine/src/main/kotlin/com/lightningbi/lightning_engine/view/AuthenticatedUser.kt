@@ -20,7 +20,8 @@ data class AuthenticatedUser(
     val userId: UUID,
     val username: String,
     val roleName: String,
-    val sessionId: String
+    val sessionId: String,
+    val codiceDittaAssegnata: Int? = null
 )
 
 object CurrentUserHolder {

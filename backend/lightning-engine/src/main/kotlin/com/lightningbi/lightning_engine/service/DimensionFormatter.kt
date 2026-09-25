@@ -1,5 +1,7 @@
 package com.lightningbi.lightning_engine.service
 
+import com.lightningbi.lightning_engine.model.Azienda
+import com.lightningbi.lightning_engine.model.DittaLightningBI
 import com.lightningbi.lightning_engine.model.MeseItaliano
 
 /**
@@ -20,8 +22,8 @@ import com.lightningbi.lightning_engine.model.MeseItaliano
 object DimensionFormatters {
 
     private val formatters: Map<String, (Long) -> String> = mapOf(
-        "mese_numero" to { v -> MeseItaliano.labelFor(v) }
-        // futuri: "trimestre_numero" to { v -> ... }, "giorno_settimana_numero" to { v -> ... }
+        "mese_numero" to { v -> MeseItaliano.labelFor(v) },
+        "codice_ditta" to { v -> Azienda.labelFor(v) }
     )
 
     /**

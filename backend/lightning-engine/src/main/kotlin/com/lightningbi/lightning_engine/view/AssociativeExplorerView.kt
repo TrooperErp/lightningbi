@@ -81,6 +81,8 @@ import com.vaadin.flow.component.icon.Icon
  * vengono MAI rimosse per il solo fatto che una dimensione non è (più)
  * in Righe/Colonne dell'Analisi corrente.
  */
+import com.vaadin.flow.spring.annotation.UIScope
+
 @Route("associative")
 @Uses(Icon::class)
 
@@ -207,11 +209,16 @@ class AssociativeExplorerView(
                 active = true
             ),
             LbiSidebarMenu.MenuGroup(
-                label = "Analisi",
+                label = "Analisi di ${currentAreas.find { it.id == currentAreaId }?.nome ?: ""}",
                 entries = if (currentAreaId != null) {
                     analyses.map { view ->
                         LbiSidebarMenu.MenuEntry(view.nome) { switchToAnalysis(view.id) }
-                    } + LbiSidebarMenu.MenuEntry("+ Nuova Analisi") { createNewAnalysis(currentAreaId) }
+                    } + listOf(
+                        LbiSidebarMenu.MenuEntry("+ Nuova Analisi") { createNewAnalysis(currentAreaId) },
+                        LbiSidebarMenu.MenuEntry("Elimina Analisi corrente", enabled = activeView != null) {
+                            activeView?.let { deleteAnalysis(it.id) }
+                        }
+                    )
                 } else emptyList()
             ),
             LbiSidebarMenu.MenuGroup(
@@ -270,7 +277,9 @@ class AssociativeExplorerView(
 
     private fun navigateToCharts(currentAreaId: UUID?) {
         if (currentAreaId == null) return
-        getUI().ifPresent { it.navigate(ChartsView::class.java, currentAreaId.toString()) }
+        val viewId = activeView?.id
+        val param = if (viewId != null) "$currentAreaId,$viewId" else currentAreaId.toString()
+        getUI().ifPresent { it.navigate(ChartsView::class.java, param) }
     }
 
     // ================= Sorgente =================
@@ -591,12 +600,21 @@ class AssociativeExplorerView(
     // ================= Filtri =================
 
     private fun rebuildFilterCards(rows: List<UUID>, columns: List<UUID>) {
+        val hiddenDims = mutableSetOf<UUID>()
+        // Se l'utente è monotenant (Ditta assegnata), nascondi la dimensione
+        // il cui campo fisico è "codice_ditta": il valore è fisso dal
+        // profilo, non deve comparire come scelta.
+        val currentUser = CurrentUserHolder.get()
+        if (currentUser?.codiceDittaAssegnata != null) {
+            dimensionColumns.entries.find { it.value == "codice_ditta" }?.let { hiddenDims.add(it.key) }
+        }
+
         ui.rebuildFilterCards(
-            rowDims = rows,
-            columnDims = columns,
+            allDimIds = dimensionNames.keys.toList(),
             dimensionNames = dimensionNames,
             columnFor = { dimId -> dimensionColumns[dimId] },
-            countSameName = { name -> (rows + columns).count { dimensionNames[it] == name } }
+            countSameName = { name -> dimensionNames.values.count { it == name } },
+            hiddenDimIds = hiddenDims
         )
     }
 
@@ -682,9 +700,33 @@ class AssociativeExplorerView(
                 vaadinUi.access {
                     ui.loadingDialog.close()
                     if (myRequestId != requestCounter.get()) return@access
-                    Notification.show("Errore aggiornamento: ${e.message}", 5000, Notification.Position.BOTTOM_END)
+                    Notification.show("Errore aggiornamento: ${e.message}", 5000, Notification.Position.MIDDLE)
                 }
             }
         }
+    }
+
+
+    private fun deleteAnalysis(viewId: UUID) {
+        val currentAreaId = areaId ?: return
+        val view = analyses.find { it.id == viewId } ?: return
+
+        val dialog = Dialog().apply {
+            headerTitle = "Eliminare \"${view.nome}\"?"
+            width = "440px"
+        }
+        dialog.add(Span("L'Analisi e la sua configurazione di Righe/Colonne/Valori verranno eliminate. L'operazione non è reversibile."))
+        val cancelButton = Button("Annulla") { dialog.close() }
+        val confirmButton = Button("Elimina") {
+            val ok = pivotViewService.deleteView(currentAreaId, viewId)
+            dialog.close()
+            if (!ok) {
+                Notification.show("Non puoi eliminare l'ultima Analisi rimasta del Dataset")
+            } else {
+                reloadActiveViewAndRefresh(currentAreaId)
+            }
+        }
+        dialog.footer.add(cancelButton, confirmButton)
+        dialog.open()
     }
 }

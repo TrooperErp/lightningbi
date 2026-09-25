@@ -26,5 +26,6 @@ data class User(
     // Status
     val active: Boolean = true,
     val createdAt: LocalDateTime = LocalDateTime.now(),
-    val updatedAt: LocalDateTime = LocalDateTime.now()
+    val updatedAt: LocalDateTime = LocalDateTime.now(),
+    val codiceDittaAssegnata: Int? = null
 )

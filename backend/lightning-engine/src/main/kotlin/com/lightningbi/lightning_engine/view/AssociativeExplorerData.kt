@@ -112,20 +112,18 @@ class AssociativeExplorerData(
                 groupBy = pivotRows,
                 columnBy = pivotColumns,
                 metricIds = pivotValues,
-                resolveLabels = true
+                resolveLabels = true,
+                // La % di variazione ha senso solo per un confronto netto fra
+                // esattamente due valori in Colonne (es. 2025 vs 2026): con 1
+                // o 3+ valori il confronto sarebbe parziale o fuorviante, e
+                // AggregateService.addVariationColumns già scarta gli altri
+                // casi, ma evitiamo comunque di chiederla inutilmente.
+                showVariationPercent = pivotColumns.size == 2
             ),
             versions
         )
         val rowHierarchy = aggregateService.buildRowHierarchy(areaId, aggregates, pivotRows, pivotValues)
 
-        // I grafici hanno le loro proprie Righe/Colonne: non ricevono più
-        // pivotRows/pivotColumns della pagina come struttura, solo come
-        // "campi ammessi" per la potatura (insieme a pivotValues, cioè le
-        // metriche presenti nel pivot pagina). selections resta l'unica
-        // cosa che i grafici applicano sempre. Il tipo di ritorno è ora
-        // List<ChartResult>: un grafico non coerente col pivot corrente
-        // torna come Incoherent invece di sparire, per far comparire il
-        // placeholder in UI.
         val chartsData = chartService.getChartsData(areaId, pivotRows, pivotColumns, pivotValues, selections)
 
         val labels = resolveLabels(states, dimensionNames)

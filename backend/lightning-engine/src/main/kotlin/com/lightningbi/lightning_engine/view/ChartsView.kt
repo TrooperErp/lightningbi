@@ -65,11 +65,14 @@ class ChartsView(
     private val areaSourceRepository: AreaSourceRepository,
     private val sourceVerificationService: SourceVerificationService,
     private val authService: AuthService,
-    private val userPivotStateRepository: UserPivotStateRepository
+    private val userPivotStateRepository: UserPivotStateRepository,
+    private val pivotViewService: com.lightningbi.lightning_engine.service.PivotViewService
 ) : VerticalLayout(), HasUrlParameter<String> {
 
     private var areaId: UUID? = null
     private val grid = Grid<AreaChart>()
+    private var pivotViewId: UUID? = null
+
 
     /** Area del form (creazione/edit) inline: vuota quando nessun grafico è in editing. */
     private val formArea = VerticalLayout().apply {
@@ -79,11 +82,15 @@ class ChartsView(
     }
 
     override fun setParameter(event: BeforeEvent, parameter: String) {
+        val parts = parameter.split(",")
         areaId = try {
-            UUID.fromString(parameter)
+            UUID.fromString(parts[0])
         } catch (e: IllegalArgumentException) {
             Notification.show("Analisi non valida")
             null
+        }
+        pivotViewId = parts.getOrNull(1)?.let {
+            try { UUID.fromString(it) } catch (e: IllegalArgumentException) { null }
         }
         buildPage()
     }
@@ -103,14 +110,6 @@ class ChartsView(
         }
 
         val menuGroups = listOf(
-            LbiSidebarMenu.MenuGroup(
-                label = "Analisi",
-                entries = if (area != null) {
-                    listOf(LbiSidebarMenu.MenuEntry(area.nome) { navigateToAssociative(area.id) })
-                } else {
-                    emptyList()
-                }
-            ),
             LbiSidebarMenu.MenuGroup(
                 label = "Gestisci",
                 entries = listOf(
@@ -148,9 +147,18 @@ class ChartsView(
     private fun navigateToAssociative(targetAreaId: UUID?) {
         if (targetAreaId == null) {
             ui.ifPresent { it.navigate(AssociativeExplorerView::class.java) }
-        } else {
-            ui.ifPresent { it.navigate(AssociativeExplorerView::class.java, targetAreaId.toString()) }
+            return
         }
+        val currentUser = CurrentUserHolder.get()
+        if (currentUser != null && pivotViewId != null) {
+            // Rende attiva l'Analisi di partenza per l'utente PRIMA di
+            // navigare: AssociativeExplorerView.afterNavigation carica
+            // sempre l'ultima vista attiva per l'utente (ensureActiveView),
+            // quindi senza questo passaggio "Torna all'analisi" potrebbe
+            // riaprire un'Analisi diversa da quella da cui si è arrivati.
+            pivotViewService.setActiveView(currentUser.userId, targetAreaId, pivotViewId!!)
+        }
+        ui.ifPresent { it.navigate(AssociativeExplorerView::class.java, targetAreaId.toString()) }
     }
 
     private fun buildContent(currentAreaId: UUID, areaNome: String): Component {
@@ -463,6 +471,16 @@ class ChartsView(
 
         val pivotPanel = buildChartPivotPanelWithCallback(currentAreaId) { rows, columns, values ->
             aggiornaPreview(rows, columns, values)
+        }
+
+        // Preimposta Righe/Colonne/Valori con quelli dell'Analisi da cui si è
+        // aperta questa pagina, così l'utente non deve ritrascinare da capo
+        // gli stessi campi che aveva già scelto nel pivot dell'Analisi.
+        pivotViewId?.let { viewId ->
+            pivotViewService.findById(viewId)?.let { view ->
+                pivotPanel.restoreState(view.pivotRows, view.pivotColumns, view.pivotValues)
+                aggiornaPreview(view.pivotRows, view.pivotColumns, view.pivotValues)
+            }
         }
 
         titoloField.addValueChangeListener { aggiornaPreview(ultimoPivotRows, ultimoPivotColumns, ultimoPivotValues) }

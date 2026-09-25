@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Vincolo opzionale "azienda assegnata" per utenti monotenant: se
+      valorizzato, l'utente vede sempre e solo i dati di quella Ditta
+      (codice_ditta), applicato lato server nelle query, non solo
+      nascosto in UI - vedi Azienda.kt per il significato dei codici.
+      NULL = utente multi-tenant (vede tutte le aziende), comportamento
+      di default per non rompere gli utenti esistenti.
+    -->
+    <changeSet id="18" author="lightningbi">
+        <addColumn tableName="pg_lbi_system_users">
+            <column name="codice_ditta_assegnata" type="integer">
+                <constraints nullable="true"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

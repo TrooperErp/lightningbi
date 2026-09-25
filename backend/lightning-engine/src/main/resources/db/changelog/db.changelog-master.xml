@@ -21,4 +21,5 @@
 	<include file="db/changelog/015-chart-own-pivot.xml"/>
 	<include file="db/changelog/016-pivot-view.xml"/>
 	<include file="db/changelog/017-user-pivot-state-active-view.xml"/>
+	<include file="db/changelog/018-user-codice-ditta-assegnata.xml"/>
 </databaseChangeLog>

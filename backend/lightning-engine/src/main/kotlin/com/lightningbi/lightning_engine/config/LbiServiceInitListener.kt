@@ -19,11 +19,19 @@ import org.springframework.stereotype.Component
  */
 @Component
 class LbiServiceInitListener : VaadinServiceInitListener {
+    private val log = org.slf4j.LoggerFactory.getLogger(LbiServiceInitListener::class.java)
+
     override fun serviceInit(event: ServiceInitEvent) {
         event.source.addUIInitListener { uiEvent ->
             uiEvent.ui.addBeforeEnterListener { beforeEnterEvent ->
                 val isLoginTarget = beforeEnterEvent.navigationTarget == LoginView::class.java
                 if (CurrentUserHolder.get() == null && !isLoginTarget) {
+                    log.warn(
+                        "Forward a login: navigationTarget={} sessionId={} da={}",
+                        beforeEnterEvent.navigationTarget.simpleName,
+                        com.vaadin.flow.server.VaadinSession.getCurrent()?.session?.id,
+                        beforeEnterEvent.location.path
+                    )
                     beforeEnterEvent.forwardTo(LoginView::class.java)
                 }
             }

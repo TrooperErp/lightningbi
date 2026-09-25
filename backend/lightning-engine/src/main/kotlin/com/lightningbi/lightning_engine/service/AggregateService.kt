@@ -33,6 +33,7 @@ class AggregateService(
     private val log = LoggerFactory.getLogger(AggregateService::class.java)
     private val cacheTtl = Duration.ofHours(6)
     private val rowLimit = 10_000
+    private val maxColonnePivot = 50
 
     fun getAggregates(req: AggregateRequest): AggregateResult =
         getAggregates(req, versionService.snapshotVersions(req.areaId))
@@ -232,6 +233,20 @@ class AggregateService(
         limit: Int
     ): AggregateResult {
         if (flat.rows.isEmpty()) return flat
+        // Blocco preventivo: una dimensione ad alta cardinalità (es. un id
+        // documento) in Colonne genererebbe una colonna Vaadin per ogni
+        // valore distinto - con migliaia di valori la UI tenta di costruire
+        // altrettante migliaia di colonne, bloccando il browser e il server
+        // senza un errore chiaro. Va fermato qui, prima di costruire
+        // l'albero, non lasciato esplodere silenziosamente.
+        columnBy.forEach { dimId ->
+            val nomeColonna = dimById[dimId]?.colonnaFisica ?: dimId.toString()
+            val valoriDistinti = flat.rows.mapNotNull { it.groupKeys[dimId] }.distinct().size
+            require(valoriDistinti <= maxColonnePivot) {
+                "La dimensione '$nomeColonna' ha $valoriDistinti valori distinti: troppi per essere usata in Colonne " +
+                        "(massimo $maxColonnePivot). Usa questa dimensione in Righe, oppure applica un filtro prima."
+            }
+        }
 
         val colonnaFisicaByDim: Map<UUID, String> = columnBy.associateWith { dimId ->
             dimById[dimId]?.colonnaFisica ?: ""
@@ -277,7 +292,7 @@ class AggregateService(
 
             val values = mutableMapOf<String, BigDecimal>()
             leafPaths.forEach { (path, node) ->
-                val suffix = path.joinToString("|")
+                val suffix = path.filter { it.isNotEmpty() }.joinToString("|")
                 metriche.forEach { m ->
                     val v = node.values[m.nome] ?: BigDecimal.ZERO
                     values["${m.nome}|$suffix"] = v
@@ -312,27 +327,31 @@ class AggregateService(
             val ordered = rowsInOuter.sortedBy { row ->
                 row.groupKeys[innerDim]?.let { labelFor(innerDim, it) } ?: ""
             }
-            for (i in 1 until ordered.size) {
-                val prevRow = ordered[i - 1]
-                val currRow = ordered[i]
-                val prevLabel = prevRow.groupKeys[innerDim]?.let { labelFor(innerDim, it) } ?: continue
-                val currLabel = currRow.groupKeys[innerDim]?.let { labelFor(innerDim, it) } ?: continue
+            // La % di variazione ha senso solo per un confronto A/B netto fra
+            // esattamente due valori (es. 2025 vs 2026): con 1 o 3+ valori il
+            // confronto "ultimo vs penultimo" sarebbe parziale e fuorviante,
+            // quindi la colonna Variaz.% non viene generata affatto.
+            if (ordered.size != 2) return@forEach
 
-                metriche.forEach { m ->
-                    val prevVal = prevRow.values[m.nome] ?: BigDecimal.ZERO
-                    val currVal = currRow.values[m.nome] ?: BigDecimal.ZERO
-                    val variation = if (prevVal.compareTo(BigDecimal.ZERO) == 0) {
-                        null
-                    } else {
-                        currVal.subtract(prevVal)
-                            .divide(prevVal, 6, RoundingMode.HALF_UP)
-                            .multiply(BigDecimal(100))
-                    }
-                    if (variation != null) {
-                        val outerPrefix = if (outerLabels.isEmpty()) "" else outerLabels.joinToString("|") + "|"
-                        val key = "${m.nome}|${outerPrefix}$prevLabel→$currLabel|Variaz.%"
-                        values[key] = variation
-                    }
+            val prevRow = ordered[0]
+            val currRow = ordered[1]
+            val prevLabel = prevRow.groupKeys[innerDim]?.let { labelFor(innerDim, it) } ?: return@forEach
+            val currLabel = currRow.groupKeys[innerDim]?.let { labelFor(innerDim, it) } ?: return@forEach
+
+            metriche.forEach { m ->
+                val prevVal = prevRow.values[m.nome] ?: BigDecimal.ZERO
+                val currVal = currRow.values[m.nome] ?: BigDecimal.ZERO
+                val variation = if (prevVal.compareTo(BigDecimal.ZERO) == 0) {
+                    null
+                } else {
+                    currVal.subtract(prevVal)
+                        .divide(prevVal, 6, RoundingMode.HALF_UP)
+                        .multiply(BigDecimal(100))
+                }
+                if (variation != null) {
+                    val outerPrefix = if (outerLabels.isEmpty()) "" else outerLabels.joinToString("|") + "|"
+                    val key = "${m.nome}|${outerPrefix}$prevLabel→$currLabel|Variaz.%"
+                    values[key] = variation
                 }
             }
         }

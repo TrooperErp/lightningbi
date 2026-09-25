@@ -114,7 +114,8 @@ class LoginView(
                 userId = user.id,
                 username = user.username,
                 roleName = roleName,
-                sessionId = sessionId
+                sessionId = sessionId,
+                codiceDittaAssegnata = user.codiceDittaAssegnata
             )
         )
 
