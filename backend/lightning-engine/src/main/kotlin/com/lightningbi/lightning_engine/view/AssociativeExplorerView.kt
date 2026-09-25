@@ -475,12 +475,19 @@ class AssociativeExplorerView(
     override fun onAttach(attachEvent: AttachEvent) {
         super.onAttach(attachEvent)
         attachEvent.ui.page.addJavaScript("js/echarts.min.js")
+
+        // DEBUG TEMPORANEO: cattura qualsiasi eccezione lato server non
+        // gestita durante il ciclo di vita della UI, per capire se il
+        // logout imprevisto è causato da un crash silenzioso in una delle
+        // classi Ui (FilterCardsUi/ResultsGridUi/ChartsPanelUi).
+        attachEvent.ui.session.errorHandler = com.vaadin.flow.server.ErrorHandler { event ->
+            org.slf4j.LoggerFactory.getLogger("LBI-UI-ERROR").error("Errore UI non gestito", event.throwable)
+        }
+
         if (viewScope == null) {
             viewScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         }
-        element.executeJs("return true").then {
-            ui.pivotPanel.ensureDropTargetsAttached()
-        }
+        ui.pivotPanel.ensureDropTargetsAttached()
     }
 
     override fun onDetach(detachEvent: DetachEvent) {
