@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="019-imported-table" author="lightningbi">
+        <createTable tableName="lbi_imported_table">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="area_id" type="uuid">
+                <constraints nullable="false" foreignKeyName="fk_imported_table_area"
+                             references="lbi_area(id)"/>
+            </column>
+            <column name="nome_logico" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="tabella_fisica" type="varchar(255)">
+                <constraints nullable="false" unique="true"/>
+            </column>
+            <!-- FATTI | DIMENSIONE -->
+            <column name="ruolo" type="varchar(20)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="source_id" type="uuid">
+                <constraints nullable="false" foreignKeyName="fk_imported_table_source"
+                             references="lbi_area_source(id)"/>
+            </column>
+            <!-- Colonna di JOIN verso i Fatti. Null finché non confermata nel wizard. -->
+            <column name="colonna_chiave" type="varchar(255)"/>
+        </createTable>
+        <createIndex indexName="idx_imported_table_area" tableName="lbi_imported_table">
+            <column name="area_id"/>
+        </createIndex>
+    </changeSet>
+
+    <changeSet id="019-imported-column" author="lightningbi">
+        <createTable tableName="lbi_imported_column">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="imported_table_id" type="uuid">
+                <constraints nullable="false" foreignKeyName="fk_imported_column_table"
+                             references="lbi_imported_table(id)" deleteCascade="true"/>
+            </column>
+            <column name="nome" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="tipo" type="varchar(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="is_chiave" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="idx_imported_column_table" tableName="lbi_imported_column">
+            <column name="imported_table_id"/>
+        </createIndex>
+        <addUniqueConstraint tableName="lbi_imported_column"
+            columnNames="imported_table_id, nome"
+            constraintName="uq_imported_column_table_nome"/>
+    </changeSet>
+
+</databaseChangeLog>

@@ -35,12 +35,43 @@ object Naming {
     /** Nome colonna fisica su ClickHouse. */
     fun column(nome: String): String = slug(nome)
 
-    /** Tabella dei fatti di un'area. */
+    /** Tabella dei fatti di un'area (modello legacy a view singola). */
     fun areaTable(nomeArea: String): String = "ch_lbi_" + slug(nomeArea)
 
     /** Symbol table di una dimensione. */
     fun symbolTable(nomeDimensione: String): String = "ch_lbi_symbol_" + slug(nomeDimensione)
 
-    /** Nome della view generata sul DB locale. */
+    /** Nome della view generata sul DB locale (modello legacy a view singola). */
     fun viewName(nomeArea: String): String = "vw_lbi_" + slug(nomeArea)
+
+    /**
+     * Motori sorgente riconosciuti per il naming delle tabelle importate.
+     * "altro" è il fallback per driver non ancora mappati esplicitamente:
+     * non blocca l'importazione, produce solo un prefisso meno leggibile.
+     */
+    private val motoriPerDriver = mapOf(
+        "com.microsoft.sqlserver.jdbc.SQLServerDriver" to "mssql",
+        "org.postgresql.Driver" to "psql",
+        "org.influxdb.InfluxDB" to "influx"
+    )
+
+    /**
+     * Ricava il prefisso motore (mssql, psql, influx, ...) dal driver JDBC
+     * della sorgente, per comporre il nome fisico di una tabella importata.
+     * Nessuna sorgente deve passare un motore a mano: si desincronizzerebbe
+     * dal driver realmente usato per connettersi.
+     */
+    fun motoreFromDriver(driverClassName: String): String =
+        motoriPerDriver[driverClassName] ?: "altro"
+
+    /**
+     * Tabella importata nel modello multi-tabella (TBS): <motore>_<db>__<nome>,
+     * es. mssql_sem__documenti, mssql_sem__clienti.
+     *
+     * @param motore vedi motoreFromDriver
+     * @param nomeDb nome logico del database/schema sorgente (es. "sem")
+     * @param nomeTabella nome logico della tabella importata (es. "Documenti")
+     */
+    fun importedTable(motore: String, nomeDb: String, nomeTabella: String): String =
+        "${slug(motore)}_${slug(nomeDb)}__${slug(nomeTabella)}"
 }

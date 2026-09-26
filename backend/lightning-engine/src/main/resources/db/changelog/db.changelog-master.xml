@@ -1,25 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<databaseChangeLog
-    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
-        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
-    <include file="db/changelog/001-users-role.xml"/>
-    <include file="db/changelog/002-registry.xml"/>
-    <include file="db/changelog/003-area-source-partition.xml"/>
-    <include file="db/changelog/004-etl-sync-log.xml"/>
-    <include file="db/changelog/005-area-data-version.xml"/>
-    <include file="db/changelog/006-area-source-timestamptz.xml"/>
-	<include file="db/changelog/007-area-source-status.xml"/>
-	<include file="db/changelog/008-charts.xml"/>
-	<include file="db/changelog/009-metric-model.xml"/>
-	<include file="db/changelog/010-chart-metrics.xml"/>
-	<include file="db/changelog/011-dimensione-valore-grezzo.xml"/>
-	<include file="db/changelog/012-role-permissions.xml"/>
-	<include file="db/changelog/013-user-pivot-state.xml"/>
-	<include file="db/changelog/014-chart-follows-columns.xml"/>
-	<include file="db/changelog/015-chart-own-pivot.xml"/>
-	<include file="db/changelog/016-pivot-view.xml"/>
-	<include file="db/changelog/017-user-pivot-state-active-view.xml"/>
-	<include file="db/changelog/018-user-codice-ditta-assegnata.xml"/>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+<include file="db/changelog/001-users-role.xml"/>
+<include file="db/changelog/002-registry.xml"/>
+<include file="db/changelog/003-area-source-partition.xml"/>
+<include file="db/changelog/004-etl-sync-log.xml"/>
+<include file="db/changelog/005-area-data-version.xml"/>
+<include file="db/changelog/006-area-source-timestamptz.xml"/>
+<include file="db/changelog/007-area-source-status.xml"/>
+<include file="db/changelog/008-charts.xml"/>
+<include file="db/changelog/009-metric-model.xml"/>
+<include file="db/changelog/010-chart-metrics.xml"/>
+<include file="db/changelog/011-dimensione-valore-grezzo.xml"/>
+<include file="db/changelog/012-role-permissions.xml"/>
+<include file="db/changelog/013-user-pivot-state.xml"/>
+<include file="db/changelog/014-chart-follows-columns.xml"/>
+<include file="db/changelog/015-chart-own-pivot.xml"/>
+<include file="db/changelog/016-pivot-view.xml"/>
+<include file="db/changelog/017-user-pivot-state-active-view.xml"/>
+<include file="db/changelog/018-user-codice-ditta-assegnata.xml"/>
+<include file="db/changelog/019-imported-table-column.xml"/>
+<include file="db/changelog/020-area-dimensione-imported-table.xml"/>
 </databaseChangeLog>
+ 

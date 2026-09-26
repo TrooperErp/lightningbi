@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="020-area-dimensione-imported-table" author="lightningbi">
+        <!-- Nullable: le Aree legacy a view singola non hanno una ImportedTable
+             per le loro dimensioni, colonnaFisica vive già sui Fatti. -->
+        <addColumn tableName="lbi_area_dimensione">
+            <column name="imported_table_id" type="uuid">
+                <constraints nullable="true" foreignKeyName="fk_area_dimensione_imported_table"
+                             references="lbi_imported_table(id)"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

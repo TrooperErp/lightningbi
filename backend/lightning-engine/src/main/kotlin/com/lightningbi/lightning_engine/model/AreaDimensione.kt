@@ -35,7 +35,23 @@ data class AreaDimensione(
      * Default false: ogni dimensione resta categorica come oggi finché
      * non marcata esplicitamente al momento del collegamento.
      */
-    val valoreGrezzo: Boolean = false
+    val valoreGrezzo: Boolean = false,
+    /**
+     * Tabella importata (ImportedTable) in cui vive fisicamente
+     * colonnaFisica, nel modello multi-tabella (TBS).
+     *
+     * Null per le Aree legacy a view singola pre-denormalizzata (dove
+     * colonnaFisica vive direttamente sulla tabella fatti dell'Area, senza
+     * un JOIN separato): in quel caso FilterCardsUi non può raggruppare
+     * per entità di provenienza e AggregateService non deve fare nessun
+     * JOIN per questa dimensione.
+     *
+     * Valorizzato per le Aree costruite con lo schema a stella nativo: la
+     * colonna vive sulla ImportedTable di ruolo DIMENSIONE referenziata,
+     * e AggregateService fa JOIN con i Fatti sulla chiave condivisa
+     * (ImportedTable.colonnaChiave) quando questa dimensione è richiesta.
+     */
+    val importedTableId: UUID? = null
 )
 
 /** Come aggregare la colonna. COUNT non richiede che colonnaFisica sia valorizzata. */

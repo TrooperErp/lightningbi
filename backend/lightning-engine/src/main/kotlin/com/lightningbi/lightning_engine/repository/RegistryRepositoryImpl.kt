@@ -1,6 +1,11 @@
 package com.lightningbi.lightning_engine.repository
 
-import com.lightningbi.lightning_engine.model.*
+import com.lightningbi.lightning_engine.model.Area
+import com.lightningbi.lightning_engine.model.AreaDimensione
+import com.lightningbi.lightning_engine.model.AreaMetrica
+import com.lightningbi.lightning_engine.model.Dimensione
+import com.lightningbi.lightning_engine.model.TipoAggregazione
+import com.lightningbi.lightning_engine.model.TipoMetrica
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
@@ -29,14 +34,7 @@ class RegistryRepositoryImpl(
     override fun findDimensioniByArea(areaId: UUID): List<AreaDimensione> =
         jdbcTemplate.query(
             "SELECT * FROM lbi_area_dimensione WHERE area_id = ?",
-            { rs, _ -> AreaDimensione(
-                UUID.fromString(rs.getString("area_id")),
-                UUID.fromString(rs.getString("dimensione_id")),
-                rs.getString("colonna_fisica"),
-                rs.getBoolean("obbligatoria"),
-                rs.getObject("cardinalita_stimata") as Long?,
-                rs.getBoolean("valore_grezzo")
-            ) },
+            { rs, _ -> mapAreaDimensione(rs) },
             areaId
         )
 
@@ -75,6 +73,21 @@ class RegistryRepositoryImpl(
         TipoAggregazione.valueOf(rs.getString("tipo_aggregazione") ?: "SUM"),
         TipoMetrica.valueOf(rs.getString("tipo_metrica") ?: "AGGREGAZIONE_COLONNA"),
         rs.getString("espressione")
+    )
+
+    /**
+     * imported_table_id è nullable: getObject(...) as UUID? restituisce
+     * null pulito per le Aree legacy a view singola, invece di lanciare
+     * su una colonna NULL come farebbe getString + fromString.
+     */
+    private fun mapAreaDimensione(rs: java.sql.ResultSet): AreaDimensione = AreaDimensione(
+        UUID.fromString(rs.getString("area_id")),
+        UUID.fromString(rs.getString("dimensione_id")),
+        rs.getString("colonna_fisica"),
+        rs.getBoolean("obbligatoria"),
+        rs.getObject("cardinalita_stimata") as Long?,
+        rs.getBoolean("valore_grezzo"),
+        rs.getObject("imported_table_id") as UUID?
     )
 
     override fun findDimensione(id: UUID): Dimensione? =
@@ -116,8 +129,8 @@ class RegistryRepositoryImpl(
 
     override fun saveAreaDimensione(ad: AreaDimensione) {
         jdbcTemplate.update(
-            "INSERT INTO lbi_area_dimensione (area_id, dimensione_id, colonna_fisica, obbligatoria, cardinalita_stimata, valore_grezzo) VALUES (?, ?, ?, ?, ?, ?)",
-            ad.areaId, ad.dimensioneId, ad.colonnaFisica, ad.obbligatoria, ad.cardinalitaStimata, ad.valoreGrezzo
+            "INSERT INTO lbi_area_dimensione (area_id, dimensione_id, colonna_fisica, obbligatoria, cardinalita_stimata, valore_grezzo, imported_table_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ad.areaId, ad.dimensioneId, ad.colonnaFisica, ad.obbligatoria, ad.cardinalitaStimata, ad.valoreGrezzo, ad.importedTableId
         )
     }
 
