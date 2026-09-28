@@ -18,11 +18,35 @@ class TransformService(
         const val NULL_VALUE_LABEL = "(non definito)"
     }
 
+    /**
+     * Trasforma le righe estratte in righe pronte per ClickHouse: dimensioni
+     * sostituite da id di symbol table, metriche convertite in decimali.
+     *
+     * Serve sia il modello legacy (una tabella con dimensioni e metriche)
+     * sia le tabelle importate dello schema a stella: per i Fatti si
+     * passano le dimensioni con importedTableId dei Fatti e le metriche;
+     * per una Dimensione le sue dimensioni e nessuna metrica.
+     *
+     * Le chiavi in ingresso (chiavi di riga e chiavi) sono NOMI FISICI
+     * (Naming.column): chi estrae deve aver già normalizzato i nomi colonna
+     * della sorgente, altrimenti le colonne risultano "mancanti".
+     *
+     * @param chiavi colonne chiave di JOIN (es. keycliente), trasformate in
+     *   id UInt32 con la symbol table che porta il nome della colonna
+     *   chiave. Fatti e Dimensione usano la STESSA symbol table, quindi gli
+     *   id combaciano e il JOIN funziona. Vuoto = nessuna chiave (legacy).
+     * @param chiaveObbligatoria se true, una riga con chiave vuota viene
+     *   scartata (Dimensioni: una riga senza chiave non si collegherebbe a
+     *   nulla). Se false la chiave vuota diventa NULL_VALUE_ID (Fatti: la
+     *   riga resta, come una dimensione non obbligatoria).
+     */
     fun transform(
         rows: List<Map<String, Any?>>,
         dimensioni: List<AreaDimensione>,
         dimensioneNomiById: Map<String, String>,
-        metriche: List<AreaMetrica>
+        metriche: List<AreaMetrica>,
+        chiavi: List<String> = emptyList(),
+        chiaveObbligatoria: Boolean = false
     ): Pair<List<Map<String, Any?>>, List<Map<String, Any?>>> {
 
         if (rows.isEmpty()) return emptyList<Map<String, Any?>>() to emptyList()
@@ -30,7 +54,7 @@ class TransformService(
         val metricheConColonna = metriche.filter { it.colonnaFisica != null }
 
         val colonneDisponibili = rows.first().keys
-        val attese = dimensioni.map { it.colonnaFisica } + metricheConColonna.map { it.colonnaFisica!! }
+        val attese = dimensioni.map { it.colonnaFisica } + chiavi + metricheConColonna.map { it.colonnaFisica!! }
         val mancanti = attese - colonneDisponibili
         require(mancanti.isEmpty()) {
             "La view non espone le colonne attese: ${mancanti.joinToString(", ")}. " +
@@ -61,6 +85,15 @@ class TransformService(
                 .mapNotNull { it?.toString()?.takeIf { s -> s.isNotBlank() } }
                 .toSet()
             symbolLookupService.getOrCreateIds(nome, valori)
+        }
+
+        // Una symbol table per colonna chiave, identificata dal nome della
+        // colonna: è ciò che rende uguali gli id su Fatti e Dimensione.
+        val idMapsChiavi: Map<String, Map<String, Long>> = chiavi.associateWith { chiave ->
+            val valori = rows.asSequence()
+                .mapNotNull { it[chiave]?.toString()?.takeIf { s -> s.isNotBlank() } }
+                .toSet()
+            symbolLookupService.getOrCreateIds(chiave, valori)
         }
 
         val valid = mutableListOf<Map<String, Any?>>()
@@ -121,6 +154,28 @@ class TransformService(
                         break
                     }
                     out[ad.colonnaFisica] = id
+                }
+            }
+
+            if (rowValid) {
+                for (chiave in chiavi) {
+                    val raw = row[chiave]?.toString()?.takeIf { it.isNotBlank() }
+                    if (raw == null) {
+                        if (chiaveObbligatoria) {
+                            rowValid = false
+                            break
+                        }
+                        // Mai null: la colonna è UInt32 NOT NULL.
+                        out[chiave] = NULL_VALUE_ID
+                    } else {
+                        val id = idMapsChiavi[chiave]?.get(raw)
+                        if (id == null) {
+                            log.warn("Valore '{}' senza id nella chiave '{}': riga scartata", raw, chiave)
+                            rowValid = false
+                            break
+                        }
+                        out[chiave] = id
+                    }
                 }
             }
 

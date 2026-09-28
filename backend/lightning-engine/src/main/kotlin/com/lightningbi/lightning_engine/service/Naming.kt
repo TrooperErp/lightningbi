@@ -43,7 +43,11 @@ object Naming {
 
     /** Nome della view generata sul DB locale (modello legacy a view singola). */
     fun viewName(nomeArea: String): String = "vw_lbi_" + slug(nomeArea)
-
+    /** Verifica che un identificatore fisico sia sicuro da inserire in SQL (accetta il doppio underscore delle tabelle importate). */
+    fun requirePhysical(value: String, what: String): String {
+        require(valid.matches(value)) { "Identificatore $what non valido: '$value'" }
+        return value
+    }
     /**
      * Motori sorgente riconosciuti per il naming delle tabelle importate.
      * "altro" è il fallback per driver non ancora mappati esplicitamente:

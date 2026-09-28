@@ -71,17 +71,17 @@ data class SourceConfig(
     val encryptedPassword: String,
     val driverClassName: String,
     val schema: String?,
-    val tabelle: List<ImportedSourceTable>,
+    val tabelle: List<ImportedSourceTable> = emptyList(),
     val syncMode: SyncMode = SyncMode.FULL_RELOAD,
     // Campi legacy, letti solo per compatibilità con Aree create prima del
     // refactor TBS. Popolati insieme quando tabelle è vuota.
-    @Deprecated("Usa tabelle") val mainTable: String? = null,
-    @Deprecated("Usa tabelle") val viewName: String? = null,
+    @Deprecated("Usa tabelle") val mainTable: String = "",
+    @Deprecated("Usa tabelle") val viewName: String = "",
     @Deprecated("Usa tabelle") val directMappings: List<DirectMapping> = emptyList(),
     @Deprecated("Usa tabelle") val lookups: List<LookupConfig> = emptyList()
 ) {
     /** true se questa sorgente usa ancora il vecchio modello a view singola. */
-    fun isLegacy(): Boolean = tabelle.isEmpty() && viewName != null
+    fun isLegacy(): Boolean = tabelle.isEmpty() && viewName.isNotBlank()
 }
 
 data class AreaSource(

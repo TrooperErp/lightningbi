@@ -42,7 +42,7 @@ class SymbolTableService(
     }
 
     /**
-     * Crea la tabella dei fatti di un'area.
+     * Crea la tabella dei fatti di un'area (modello legacy a view singola).
      *
      * Riceve i nomi LOGICI delle colonne e li normalizza internamente:
      * chi chiama non deve preoccuparsi del case. Attenzione: la view
@@ -81,6 +81,67 @@ class SymbolTableService(
         )
         return tabellaFisica
     }
+
+    /**
+     * Crea la tabella ClickHouse di una tabella importata (schema a stella
+     * nativo: Fatti o Dimensione), sostituendo il ruolo di createAreaTable
+     * per i dataset TBS.
+     *
+     * Riceve nomi già fisici della tabella (prodotti da
+     * Naming.importedTable) e nomi LOGICI delle colonne, normalizzati qui
+     * con Naming.column come in createAreaTable.
+     *
+     * @param colonneId colonne UInt32: chiavi di JOIN e attributi
+     *   dimensione, tutti codificati come id di symbol table
+     * @param colonneDecimali colonne Decimal(18,4): metriche (solo Fatti)
+     * @param colonneOrdinamento colonne della ORDER BY; devono essere tra
+     *   colonneId. Vuoto = si usa la prima colonna id.
+     *
+     * IF NOT EXISTS: se la tabella esiste già con colonne diverse NON viene
+     * modificata (serve un ALTER esplicito, come per addColumnToAreaTable).
+     * Nessuna _partition_key: i dataset TBS sono solo FULL_RELOAD, quindi
+     * la tabella si svuota e si ricarica per intero (vedi LoaderService).
+     */
+    fun createImportedTable(
+        tabellaFisica: String,
+        colonneId: List<String>,
+        colonneDecimali: List<String> = emptyList(),
+        colonneOrdinamento: List<String> = emptyList()
+    ): String {
+        require(Regex("^[a-z][a-z0-9_]*$").matches(tabellaFisica)) {
+            "Nome tabella non valido: '$tabellaFisica'"
+        }
+        require(colonneId.isNotEmpty()) { "Serve almeno una colonna id (chiave o dimensione) per $tabellaFisica" }
+
+        val ids = colonneId.map { Naming.column(it) }
+        val decimali = colonneDecimali.map { Naming.column(it) }
+        val ordinamento = colonneOrdinamento.map { Naming.column(it) }.ifEmpty { listOf(ids.first()) }
+
+        val duplicati = (ids + decimali).groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        require(duplicati.isEmpty()) {
+            "Colonne che collidono dopo la normalizzazione in $tabellaFisica: ${duplicati.joinToString(", ")}"
+        }
+        val fuori = ordinamento.filter { it !in ids }
+        require(fuori.isEmpty()) {
+            "Colonne di ordinamento non presenti tra le colonne id di $tabellaFisica: ${fuori.joinToString(", ")}"
+        }
+
+        val defs = buildList {
+            ids.forEach { add("$it UInt32") }
+            decimali.forEach { add("$it Decimal(18,4)") }
+        }.joinToString(",\n                ")
+
+        jdbcTemplate.execute(
+            """
+            CREATE TABLE IF NOT EXISTS $tabellaFisica (
+                $defs
+            ) ENGINE = MergeTree()
+            ORDER BY (${ordinamento.joinToString(", ")})
+            """.trimIndent()
+        )
+        return tabellaFisica
+    }
+
     /**
      * Aggiunge una colonna dimensione alla tabella fatti di un'area già
      * esistente, per collegare una dimensione dopo la creazione (vedi

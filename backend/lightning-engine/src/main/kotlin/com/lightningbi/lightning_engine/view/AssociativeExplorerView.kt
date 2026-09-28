@@ -68,6 +68,13 @@ import com.vaadin.flow.component.icon.Icon
  * campi del Dataset (un'Analisi può usare 3 campi, un'altra Analisi
  * sullo stesso Dataset può usarne 3 completamente diversi).
  *
+ * RUOLI: esiste un solo tipo di amministratore (permesso MANAGE_USERS).
+ * Tutto ciò che riguarda la costruzione e la manutenzione dei Dataset
+ * (nuovo dataset, modifica schema, sincronizzazione, verifica sorgente,
+ * eliminazione) è riservato all'admin: nascosto nel menu E rifiutato
+ * lato server da isCurrentUserAdmin(). L'utente normale vede e agisce
+ * solo su Dataset (già importati), Analisi, Grafici, Report.
+ *
  * PIVOT: il PivotPanel vive DENTRO questa pagina (non più su una
  * pagina "Configura Analisi" separata): trascinare un campo in Righe/
  * Colonne/Valori aggiorna subito AggregateService (query leggera), e
@@ -172,20 +179,31 @@ class AssociativeExplorerView(
         }
     }
 
-
-//==========================================================================================================================
     override fun beforeLeave(event: com.vaadin.flow.router.BeforeLeaveEvent) {
         // Il pivot si salva ad ogni modifica (PivotViewService.updatePivot),
         // le selezioni ad ogni click (persistSelections): nessuna modifica
         // pendente da confermare prima di lasciare la pagina.
     }
 
+    // ================= Permessi =================
+
+    /**
+     * Unico tipo di admin: chi ha MANAGE_USERS. Usato sia per nascondere le
+     * voci di menu sia come guardia lato server nelle azioni amministrative
+     * (il menu nascosto da solo non basta: le azioni vanno rifiutate anche
+     * se invocate per altre vie).
+     */
+    private fun isCurrentUserAdmin(): Boolean {
+        val user = CurrentUserHolder.get() ?: return false
+        return permissionCheckService.hasPermission(user.roleName, "MANAGE_USERS")
+    }
+
     // ================= Sidebar =================
 
     /**
-     * Gruppo "Dataset": elenco delle Aree (i Dataset), invariato nel
-     * meccanismo (switchArea), solo l'etichetta riflette la nuova
-     * terminologia.
+     * Gruppo "Dataset": elenco delle Aree (i Dataset). Le voci di gestione
+     * (Nuovo dataset, Modifica Schema, Sincronizza) compaiono solo per
+     * l'admin.
      *
      * Gruppo "Analisi": elenco delle PivotView del Dataset corrente. Ogni
      * voce chiama switchToAnalysis(view.id) per rendere quella vista
@@ -194,18 +212,26 @@ class AssociativeExplorerView(
      */
     private fun buildMenuGroups(): List<LbiSidebarMenu.MenuGroup> {
         val currentAreaId = areaId
+        val isAdmin = isCurrentUserAdmin()
+
+        val adminDatasetEntries: List<LbiSidebarMenu.MenuEntry> = if (isAdmin) {
+            listOf(
+                LbiSidebarMenu.MenuEntry("+ Nuovo dataset") {
+                    getUI().ifPresent { it.navigate(NewDatasetView::class.java) }
+                },
+                LbiSidebarMenu.MenuEntry("Modifica Schema", enabled = currentAreaId != null) {
+                    if (currentAreaId != null) getUI().ifPresent { it.navigate(EditFieldsView::class.java, currentAreaId.toString()) }
+                },
+                LbiSidebarMenu.MenuEntry("Sincronizza", enabled = hasSource && sourceStatus == SourceStatus.VERIFIED) { runEtl() }
+            )
+        } else emptyList()
+
         val groups = mutableListOf(
             LbiSidebarMenu.MenuGroup(
                 label = "Dataset",
                 entries = currentAreas.map { area ->
                     LbiSidebarMenu.MenuEntry(area.nome) { switchArea(area.id) }
-                } + listOf(
-                    LbiSidebarMenu.MenuEntry("+ Nuovo dataset") { openNewAnalysisWizard() },
-                    LbiSidebarMenu.MenuEntry("Modifica Schema", enabled = currentAreaId != null) {
-                        if (currentAreaId != null) getUI().ifPresent { it.navigate(EditFieldsView::class.java, currentAreaId.toString()) }
-                    },
-                    LbiSidebarMenu.MenuEntry("Sincronizza", enabled = hasSource && sourceStatus == SourceStatus.VERIFIED) { runEtl() }
-                ),
+                } + adminDatasetEntries,
                 active = true
             ),
             LbiSidebarMenu.MenuGroup(
@@ -235,15 +261,13 @@ class AssociativeExplorerView(
             )
         )
 
-        // "Amministrazione" compare SOLO per chi ha il permesso MANAGE_USERS
-        // sul proprio ruolo corrente. Raggruppa "Connessioni" (verifica
-        // sorgente, SQL view, eliminazione dataset - operazioni sulla
-        // connessione al DB origine, non sul contenuto analitico) e
-        // "Gestione utenti". Stesso controllo viene rifatto dentro
-        // AdminView.beforeEnter, perché l'URL /admin resta raggiungibile a
-        // mano anche se la voce di menu è nascosta qui.
-        val currentUser = CurrentUserHolder.get()
-        if (currentUser != null && permissionCheckService.hasPermission(currentUser.roleName, "MANAGE_USERS")) {
+        // "Amministrazione" compare SOLO per l'admin (MANAGE_USERS).
+        // Raggruppa "Verifica sorgente", "Mostra SQL view", "Elimina
+        // dataset" (operazioni sulla connessione al DB origine, non sul
+        // contenuto analitico) e "Gestione utenti". Stesso controllo
+        // rifatto dentro AdminView.beforeEnter, perché l'URL /admin resta
+        // raggiungibile a mano anche se la voce di menu è nascosta qui.
+        if (isAdmin) {
             groups.add(
                 LbiSidebarMenu.MenuGroup(
                     label = "Amministrazione",
@@ -282,7 +306,7 @@ class AssociativeExplorerView(
         getUI().ifPresent { it.navigate(ChartsView::class.java, param) }
     }
 
-    // ================= Sorgente =================
+    // ================= Sorgente (solo admin) =================
 
     private fun refreshSourceStatus() {
         val currentAreaId = areaId
@@ -310,6 +334,7 @@ class AssociativeExplorerView(
     }
 
     private fun verifySource() {
+        if (!isCurrentUserAdmin()) return
         val currentAreaId = areaId ?: return
         val vaadinUi = getUI().orElse(null) ?: return
         val scope = viewScope ?: return
@@ -342,6 +367,7 @@ class AssociativeExplorerView(
     }
 
     private fun runEtl() {
+        if (!isCurrentUserAdmin()) return
         val currentAreaId = areaId ?: return
         val vaadinUi = getUI().orElse(null) ?: return
         val scope = viewScope ?: return
@@ -377,6 +403,7 @@ class AssociativeExplorerView(
     }
 
     private fun showViewSql() {
+        if (!isCurrentUserAdmin()) return
         val currentAreaId = areaId ?: return
         val source = data.findSourceByArea(currentAreaId) ?: return
 
@@ -402,7 +429,9 @@ class AssociativeExplorerView(
         dialog.footer.add(Button("Chiudi") { dialog.close() })
         dialog.open()
     }
+
     private fun openEditDimensions() {
+        if (!isCurrentUserAdmin()) return
         val currentAreaId = areaId ?: return
         EditDimensionsDialog(
             areaId = currentAreaId,
@@ -415,9 +444,11 @@ class AssociativeExplorerView(
             refresh()
         }.open()
     }
-    // ================= Metriche / Eliminazione =================
+
+    // ================= Metriche / Eliminazione (solo admin) =================
 
     private fun openEditMetrics() {
+        if (!isCurrentUserAdmin()) return
         val currentAreaId = areaId ?: return
         EditMetricsDialog(currentAreaId, registryService) {
             refreshPivotFields(currentAreaId)
@@ -426,6 +457,7 @@ class AssociativeExplorerView(
     }
 
     private fun confirmDeleteArea() {
+        if (!isCurrentUserAdmin()) return
         val currentAreaId = areaId ?: return
         val areaNome = currentAreas.find { it.id == currentAreaId }?.nome ?: "questo dataset"
 
@@ -444,6 +476,7 @@ class AssociativeExplorerView(
     }
 
     private fun performDeleteArea(targetAreaId: UUID) {
+        if (!isCurrentUserAdmin()) return
         try {
             registryService.deleteAreaCompleta(targetAreaId)
         } catch (e: Exception) {
@@ -461,6 +494,7 @@ class AssociativeExplorerView(
     }
 
     private fun openNewAnalysisWizard() {
+        if (!isCurrentUserAdmin()) return
         NewAnalysisWizardDialog(
             registryService, registryRepository, symbolTableService,
             areaSourceRepository, cryptoService, metadataService, viewSqlGenerator
@@ -712,7 +746,6 @@ class AssociativeExplorerView(
             }
         }
     }
-
 
     private fun deleteAnalysis(viewId: UUID) {
         val currentAreaId = areaId ?: return

@@ -2,6 +2,7 @@ package com.lightningbi.lightning_engine.service
 
 import com.lightningbi.lightning_engine.model.*
 import com.lightningbi.lightning_engine.repository.AreaSourceRepository
+import com.lightningbi.lightning_engine.repository.ImportedTableRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -11,6 +12,7 @@ import java.util.UUID
 class RegistryService(
     private val registryRepository: RegistryRepository,
     private val areaSourceRepository: AreaSourceRepository,
+    private val importedTableRepository: ImportedTableRepository,
     private val symbolTableService: SymbolTableService
 ) {
     fun getArea(nome: String) = registryRepository.findAreaByNome(nome)
@@ -139,8 +141,9 @@ class RegistryService(
     }
 
     /**
-     * Cancellazione completa di un'area: sorgenti, metriche, collegamenti
-     * a dimensioni, la riga area, e la tabella fatti su ClickHouse.
+     * Cancellazione completa di un'area: metriche, collegamenti a
+     * dimensioni, tabelle importate (e le loro colonne), sorgenti, la riga
+     * area, e le tabelle su ClickHouse.
      *
      * Non tocca lbi_dimensione: le dimensioni possono essere condivise con
      * altre aree (conformate), cancellarle qui romperebbe quelle altre aree
@@ -148,31 +151,59 @@ class RegistryService(
      * area che le usava - orfane ma innocue, si possono ripulire a parte
      * in futuro con un controllo esplicito di utilizzo.
      *
-     * L'ordine conta: prima le righe che referenziano l'area (sorgenti,
-     * metriche, collegamenti dimensione), poi l'area stessa, poi la tabella
-     * fisica ClickHouse per ultima - se qualcosa fallisce a metà, meglio
-     * un'area orfana in Postgres (recuperabile) che una tabella ClickHouse
-     * sparita mentre il registry pensa ancora che esista.
+     * L'ORDINE CONTA per le chiavi esterne:
+     *  1. metriche e collegamenti dimensione (questi ultimi puntano alle
+     *     tabelle importate tramite imported_table_id)
+     *  2. tabelle importate (le colonne cadono in cascata; puntano alla
+     *     sorgente tramite source_id)
+     *  3. sorgenti
+     *  4. area
+     *  5. tabelle fisiche ClickHouse per ultime - se qualcosa fallisce a
+     *     metà, meglio un'area orfana in Postgres (recuperabile) che una
+     *     tabella ClickHouse sparita mentre il registry pensa ancora che
+     *     esista.
+     *
+     * Tabelle ClickHouse eliminate: la tabella fatti dell'area
+     * (Area.tabellaFisica, per i dataset legacy a view singola) e la
+     * tabella fisica di ogni ImportedTable (dataset a schema a stella).
      */
     @Transactional("postgresTransactionManager")
     fun deleteAreaCompleta(areaId: UUID) {
         val area = registryRepository.findAreaById(areaId) ?: error("Area $areaId non trovata")
 
-        areaSourceRepository.findByArea(areaId).forEach { areaSourceRepository.delete(it.id) }
+        // Da leggere PRIMA di cancellare le righe: dopo non c'è più modo di
+        // sapere quali tabelle ClickHouse appartenevano all'area.
+        val tabelleFisiche = (
+                listOf(area.tabellaFisica) +
+                        importedTableRepository.findByArea(areaId).map { it.tabellaFisica }
+                ).distinct()
+
         registryRepository.deleteAreaMetricheByArea(areaId)
         registryRepository.deleteAreaDimensioniByArea(areaId)
+        importedTableRepository.deleteByArea(areaId)
+        areaSourceRepository.findByArea(areaId).forEach { areaSourceRepository.delete(it.id) }
         registryRepository.deleteArea(areaId)
         registryRepository.bumpVersion()
 
-        try {
-            symbolTableService.dropTable(area.tabellaFisica)
-        } catch (e: Exception) {
-            // Il registry è già pulito: un fallimento qui lascia una
-            // tabella ClickHouse orfana, non un'area rotta. Va segnalato
-            // ma non deve far fallire l'intera cancellazione.
+        val nonEliminate = mutableListOf<String>()
+        var primoErrore: Exception? = null
+        tabelleFisiche.forEach { tabella ->
+            try {
+                symbolTableService.dropTable(tabella)
+            } catch (e: Exception) {
+                nonEliminate += tabella
+                if (primoErrore == null) primoErrore = e
+            }
+        }
+
+        if (nonEliminate.isNotEmpty()) {
+            // Il registry è già pulito: un fallimento qui lascia tabelle
+            // ClickHouse orfane, non un'area rotta. Va segnalato ma non
+            // deve far fallire l'intera cancellazione.
             throw IllegalStateException(
-                "Area \"${area.nome}\" rimossa dal registry, ma la tabella ${area.tabellaFisica} " +
-                        "su ClickHouse non è stata eliminata: ${e.message}. Va rimossa a mano.", e
+                "Area \"${area.nome}\" rimossa dal registry, ma su ClickHouse non sono state eliminate: " +
+                        "${nonEliminate.joinToString(", ")} (${primoErrore?.message}). Vanno rimosse a mano.",
+                primoErrore
             )
         }
     }
@@ -188,9 +219,8 @@ class RegistryService(
      * la colonna fisica sulla tabella fatti ClickHouse se non c'è già.
      * A differenza di linkDimensioneToArea (usato anche in creazione area,
      * dove la tabella non esiste ancora), questo presume la tabella già
-     * creata e la alterà in place - usarlo SOLO per aree esistenti.
+     * creata e la altera in place - usarlo SOLO per aree esistenti.
      */
-
     @Transactional("postgresTransactionManager")
     fun linkDimensioneToExistingArea(
         areaId: UUID,
@@ -204,5 +234,4 @@ class RegistryService(
         symbolTableService.addColumnToAreaTable(area.tabellaFisica, colonnaFisica)
         linkDimensioneToArea(areaId, dimensioneId, colonnaFisica, obbligatoria, cardinalita, valoreGrezzo)
     }
-
 }

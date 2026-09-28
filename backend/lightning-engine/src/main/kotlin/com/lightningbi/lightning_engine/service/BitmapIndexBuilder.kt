@@ -32,11 +32,22 @@ import java.util.UUID
  *
  * I valori NULL delle dimensioni diventano 0, coerente con il motore a
  * query esistente che legge i valori con rs.getLong (NULL -> 0).
+ *
+ * SCHEMA A STELLA: la scansione parte dai Fatti con il JOIN sulle tabelle
+ * Dimensione (StarQueryBuilder), fatto UNA volta sola qui. Il numero di
+ * riga è quello delle righe dei Fatti, e gli attributi delle Dimensioni
+ * vengono "esplosi" come quelli dei Fatti: dopo la ricostruzione il calcolo
+ * degli stati non fa più nessun JOIN. Nel dataset legacy (tabella unica) la
+ * query è identica a prima.
+ *
+ * Costo: righe dei Fatti x numero di dimensioni. Le colonne messe su
+ * "Ignora" nel wizard non pesano.
  */
 @Service
 class BitmapIndexBuilder(
     private val jdbcTemplate: JdbcTemplate,
-    private val registryRepository: RegistryRepository
+    private val registryRepository: RegistryRepository,
+    private val starQueryBuilder: StarQueryBuilder
 ) {
     private val log = LoggerFactory.getLogger(BitmapIndexBuilder::class.java)
 
@@ -48,7 +59,11 @@ class BitmapIndexBuilder(
 
         val area = registryRepository.findAreaById(areaId) ?: error("Area $areaId non trovata")
         val dimensioni = registryRepository.findDimensioniByArea(areaId)
-        val table = requireIdentifier(area.tabellaFisica, "table")
+        // Nello schema a stella il FROM è Fatti + JOIN sulle Dimensioni (nomi
+        // già validati dal builder: i nomi <motore>_<db>__<nome> non passano
+        // da Naming.slug). Nel legacy resta la sola tabella fatti.
+        val plan = starQueryBuilder.plan(areaId, area.tabellaFisica, dimensioni.map { it.dimensioneId }.toSet(), dimensioni)
+        val table = if (plan.isStar) plan.fromClause else requireIdentifier(area.tabellaFisica, "table")
 
         // L'UUID in forma stringa è sicuro da interpolare (formato fisso,
         // solo esadecimali e trattini): serve come letterale perché i
@@ -66,7 +81,8 @@ class BitmapIndexBuilder(
         }
 
         val coppie = dimensioni.joinToString(", ") { d ->
-            val col = requireIdentifier(d.colonnaFisica, "column")
+            requireIdentifier(d.colonnaFisica, "column")
+            val col = plan.dimColumn(d.dimensioneId) ?: error("Colonna non risolta per la dimensione ${d.dimensioneId}")
             "('${d.dimensioneId}', toInt64(ifNull($col, 0)))"
         }
 

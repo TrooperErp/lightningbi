@@ -28,7 +28,8 @@ class AggregateService(
     private val versionService: VersionService,
     private val redisTemplate: StringRedisTemplate,
     private val objectMapper: ObjectMapper,
-    private val symbolLookupService: SymbolLookupService
+    private val symbolLookupService: SymbolLookupService,
+    private val starQueryBuilder: StarQueryBuilder
 ) {
     private val log = LoggerFactory.getLogger(AggregateService::class.java)
     private val cacheTtl = Duration.ofHours(6)
@@ -79,6 +80,7 @@ class AggregateService(
         }
 
         var flat = computeFlatAggregates(
+            areaId = req.areaId,
             table = area.tabellaFisica,
             selections = cleanSelections,
             groupBy = cleanGroupBy,
@@ -167,6 +169,7 @@ class AggregateService(
     // ================= Query piatta =================
 
     private fun computeFlatAggregates(
+        areaId: UUID,
         table: String,
         selections: Map<UUID, Set<Long>>,
         groupBy: List<UUID>,
@@ -177,7 +180,15 @@ class AggregateService(
         orderMetrica: AreaMetrica?,
         limit: Int
     ): AggregateResult {
-        val t = requireIdentifier(table, "table")
+        // Dimensioni realmente usate dalla richiesta: solo le loro tabelle
+        // entrano nel JOIN (schema a stella). Nel legacy il piano è la sola
+        // tabella fatti, query identica a prima.
+        val allGroupDims = groupBy + columnBy
+        val dimsUsate = allGroupDims.toSet() + selections.filterValues { it.isNotEmpty() }.keys
+        val plan = starQueryBuilder.plan(areaId, table, dimsUsate, dimById.values.toList())
+        // Nello schema a stella il nome tabella è già validato dal builder
+        // (i nomi <motore>_<db>__<nome> non passano da Naming.slug).
+        val t = if (plan.isStar) plan.fromClause else requireIdentifier(table, "table")
 
         metriche.forEach { m ->
             require(m.colonnaFisica != null || m.tipoAggregazione == TipoAggregazione.COUNT) {
@@ -186,15 +197,19 @@ class AggregateService(
             m.colonnaFisica?.let { requireIdentifier(it, "metric column") }
         }
 
-        val allGroupDims = groupBy + columnBy
-        val groupCols = allGroupDims.mapNotNull { dimById[it]?.colonnaFisica }
-        groupCols.forEach { requireIdentifier(it, "group column") }
+        allGroupDims.mapNotNull { dimById[it]?.colonnaFisica }.forEach { requireIdentifier(it, "group column") }
+        val groupCols = allGroupDims.mapNotNull { plan.dimColumn(it) }
 
-        val (where, args) = buildWhere(selections, dimById)
+        // Nello schema a stella le colonne sono qualificate (d0.x, f.y): si
+        // danno alias espliciti per leggerle per nome dal risultato.
+        val groupAliases = if (plan.isStar) groupCols.indices.map { "g_$it" } else groupCols
+        val groupSelect = if (plan.isStar) groupCols.mapIndexed { i, c -> "$c AS g_$i" } else groupCols
+
+        val (where, args) = buildWhere(selections, dimById, plan)
 
         val metricAliases = metriche.mapIndexed { i, m -> m to "m_$i" }
-        val selectCols = groupCols +
-                metricAliases.map { (m, alias) -> "${sqlExpression(m)} AS $alias" }
+        val selectCols = groupSelect +
+                metricAliases.map { (m, alias) -> "${sqlExpression(m, plan)} AS $alias" }
 
         val groupClause = if (groupCols.isEmpty()) "" else "GROUP BY ${groupCols.joinToString(",")}"
         val whereClause = if (where.isEmpty()) "" else "WHERE $where"
@@ -212,7 +227,7 @@ class AggregateService(
         println("DEBUG SQL: $sql")
 
         val rawRows = jdbcTemplate.query(sql, { rs, _ ->
-            val groupKeys = allGroupDims.zip(groupCols).associate { (dimId, col) -> dimId to rs.getLong(col) }
+            val groupKeys = allGroupDims.zip(groupAliases).associate { (dimId, col) -> dimId to rs.getLong(col) }
             val values = metricAliases.associate { (m, alias) ->
                 m.nome to (rs.getBigDecimal(alias) ?: BigDecimal.ZERO)
             }
@@ -357,8 +372,8 @@ class AggregateService(
         }
     }
 
-    private fun sqlExpression(m: AreaMetrica): String {
-        val col = m.colonnaFisica
+    private fun sqlExpression(m: AreaMetrica, plan: StarQueryBuilder.Plan): String {
+        val col = m.colonnaFisica?.let { plan.metricColumn(it) }
         return when (m.tipoAggregazione) {
             TipoAggregazione.COUNT -> if (col != null) "COUNT($col)" else "COUNT(*)"
             TipoAggregazione.COUNT_DISTINCT -> "COUNT(DISTINCT $col)"
@@ -407,16 +422,18 @@ class AggregateService(
 
     private fun buildWhere(
         selections: Map<UUID, Set<Long>>,
-        dimById: Map<UUID, AreaDimensione>
+        dimById: Map<UUID, AreaDimensione>,
+        plan: StarQueryBuilder.Plan
     ): Pair<String, List<Any>> {
         val whereClauses = mutableListOf<String>()
         val args = mutableListOf<Any>()
 
         selections.forEach { (dimId, values) ->
             if (values.isEmpty()) return@forEach
-            val col = dimById[dimId]?.colonnaFisica ?: return@forEach
-            val safeCol = requireIdentifier(col, "column")
-            whereClauses += "$safeCol IN (${values.joinToString(",") { "?" }})"
+            val grezza = dimById[dimId]?.colonnaFisica ?: return@forEach
+            requireIdentifier(grezza, "column")
+            val col = plan.dimColumn(dimId) ?: return@forEach
+            whereClauses += "$col IN (${values.joinToString(",") { "?" }})"
             args.addAll(values)
         }
 

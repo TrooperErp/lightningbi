@@ -46,6 +46,12 @@ class LoaderService(
         log.info("Load su {}: {} righe inserite", table, rows.size)
     }
 
+    /** Svuota la tabella, senza caricare nulla: per i caricamenti a blocchi che poi accodano con load(). */
+    fun truncate(tabellaFisica: String) {
+        val table = requireIdentifier(tabellaFisica, "table")
+        jdbcTemplate.execute("TRUNCATE TABLE $table")
+        log.info("Truncate su {}", table)
+    }
     /**
      * Ricarico completo: svuota la tabella e reinserisce tutto.
      *
@@ -100,11 +106,8 @@ class LoaderService(
      * alla creazione. Qui si verifica soltanto, come difesa contro SQL
      * injection su dati preesistenti o inseriti a mano.
      */
-    private fun requireIdentifier(value: String, what: String): String {
-        val normalized = Naming.slug(value)
-        require(normalized == value) {
-            "Identificatore $what non normalizzato nel registry: '$value' (atteso '$normalized')."
-        }
-        return value
-    }
+    private fun requireIdentifier(value: String, what: String): String =
+        Naming.requirePhysical(value, what)
+
+
 }
