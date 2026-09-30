@@ -1,10 +1,10 @@
 import '@vaadin/vertical-layout/src/vaadin-vertical-layout.js';
-import '@vaadin/horizontal-layout/src/vaadin-horizontal-layout.js';
-import '@vaadin/button/src/vaadin-button.js';
-import '@vaadin/tooltip/src/vaadin-tooltip.js';
-import 'Frontend/generated/jar-resources/disableOnClickFunctions.js';
 import '@vaadin/icons/vaadin-iconset.js';
 import '@vaadin/icon/src/vaadin-icon.js';
+import '@vaadin/tooltip/src/vaadin-tooltip.js';
+import '@vaadin/horizontal-layout/src/vaadin-horizontal-layout.js';
+import '@vaadin/button/src/vaadin-button.js';
+import 'Frontend/generated/jar-resources/disableOnClickFunctions.js';
 import 'Frontend/generated/jar-resources/dndConnector.js';
 import '@vaadin/grid/src/vaadin-grid-tree-toggle.js';
 import 'Frontend/generated/jar-resources/treeGridConnector.ts';
