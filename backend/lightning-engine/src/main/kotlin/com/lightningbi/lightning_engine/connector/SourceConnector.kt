@@ -44,13 +44,18 @@ interface SourceConnector {
     ): List<Map<String, Any?>>
 
     /**
-     * Legge per intero una tabella, riga per riga (streaming). Le chiavi di
-     * ogni riga sono i nomi colonna in minuscolo.
+     * Legge per intero una tabella, riga per riga (streaming), e passa le righe
+     * a `consumatore`. Le chiavi di ogni riga sono i nomi colonna in minuscolo.
      *
-     * La connessione resta aperta finché la sequenza viene consumata e si
-     * chiude alla fine (o se il consumo si interrompe): chi la usa deve
-     * consumarla per intero, oppure fermarsi con un'eccezione, non
-     * abbandonarla a metà.
+     * La connessione si apre prima di chiamare `consumatore` e si chiude
+     * sempre al suo ritorno, anche se lancia un'eccezione: chi la usa non deve
+     * chiudere niente. La sequenza vale solo dentro `consumatore` e si può
+     * percorrere una volta sola: non va restituita né conservata.
      */
-    fun extract(connection: SourceConnection, schema: String?, tabella: String): Sequence<Map<String, Any?>>
+    fun extract(
+        connection: SourceConnection,
+        schema: String?,
+        tabella: String,
+        consumatore: (Sequence<Map<String, Any?>>) -> Unit
+    )
 }

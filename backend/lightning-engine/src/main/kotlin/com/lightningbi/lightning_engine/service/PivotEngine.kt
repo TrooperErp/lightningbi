@@ -115,14 +115,18 @@ object PivotEngine {
     private fun sumChildValues(children: List<PivotNode>, metriche: List<AreaMetrica>): Map<String, BigDecimal> {
         if (children.isEmpty()) return emptyMap()
 
+        // Si sommano solo le metriche additive: SUM e COUNT. COUNT_DISTINCT non lo è
+        // (un cliente presente in due mesi conta una volta sola nel padre), AVG/MIN/MAX
+        // neppure. Anche le colonne "Variaz.%" sono percentuali: non si sommano.
         val summableMetricNames = metriche
-            .filter { it.tipoAggregazione in setOf(TipoAggregazione.SUM, TipoAggregazione.COUNT, TipoAggregazione.COUNT_DISTINCT) }
+            .filter { it.tipoAggregazione in setOf(TipoAggregazione.SUM, TipoAggregazione.COUNT) }
             .map { it.nome }
             .toSet()
 
         val allKeys = children.flatMap { it.values.keys }.distinct()
 
         return allKeys
+            .filter { key -> !key.endsWith("|Variaz.%") }
             .filter { key -> summableMetricNames.any { metricName -> key == metricName || key.startsWith("$metricName|") } }
             .associateWith { key ->
                 children.fold(BigDecimal.ZERO) { acc, child -> acc + (child.values[key] ?: BigDecimal.ZERO) }

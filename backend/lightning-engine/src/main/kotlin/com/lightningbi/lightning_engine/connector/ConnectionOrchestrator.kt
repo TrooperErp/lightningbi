@@ -99,12 +99,18 @@ class ConnectionOrchestrator(
     }
 
     /**
-     * Lettura a streaming di una tabella intera. Va consumata per intero
-     * (vedi SourceConnector.extract).
+     * Lettura a streaming di una tabella intera: le righe vanno a `consumatore`
+     * e la connessione si chiude sempre al suo ritorno, anche in caso di
+     * errore (vedi SourceConnector.extract).
      */
-    fun extract(connectionId: UUID, schema: String?, tabella: String): Sequence<Map<String, Any?>> {
+    fun extract(
+        connectionId: UUID,
+        schema: String?,
+        tabella: String,
+        consumatore: (Sequence<Map<String, Any?>>) -> Unit
+    ) {
         val connessione = connessione(connectionId)
-        return connettoreDi(connessione.tipo).extract(connessione, schema, tabella)
+        connettoreDi(connessione.tipo).extract(connessione, schema, tabella, consumatore)
     }
 
     // ---------- interni ----------

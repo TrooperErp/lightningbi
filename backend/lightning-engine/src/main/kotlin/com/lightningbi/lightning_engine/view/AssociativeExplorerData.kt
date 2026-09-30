@@ -99,12 +99,12 @@ class AssociativeExplorerData(
                 columnBy = pivotColumns,
                 metricIds = pivotValues,
                 resolveLabels = true,
-                // La % di variazione ha senso solo per un confronto netto fra
-                // esattamente due valori in Colonne (es. 2025 vs 2026): con 1
-                // o 3+ valori il confronto sarebbe parziale o fuorviante, e
-                // AggregateService.addVariationColumns già scarta gli altri
-                // casi, ma evitiamo comunque di chiederla inutilmente.
-                showVariationPercent = pivotColumns.size == 2
+                // La variazione % si chiede ogni volta che ci sono Colonne:
+                // AggregateService.addVariationColumns la genera solo se il livello
+                // interno ha esattamente due valori (es. 2025 vs 2026) e la scarta
+                // negli altri casi. Contare le dimensioni in Colonne non basta: con
+                // solo "Anno" i valori sono due ma la dimensione è una.
+                showVariationPercent = pivotColumns.isNotEmpty()
             ),
             versions
         )

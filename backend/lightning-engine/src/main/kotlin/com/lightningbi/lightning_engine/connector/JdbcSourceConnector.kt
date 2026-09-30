@@ -130,40 +130,49 @@ class JdbcSourceConnector(
             righe
         }
 
-    override fun extract(connection: SourceConnection, schema: String?, tabella: String): Sequence<Map<String, Any?>> {
+    override fun extract(
+        connection: SourceConnection,
+        schema: String?,
+        tabella: String,
+        consumatore: (Sequence<Map<String, Any?>>) -> Unit
+    ) {
         val qualificata = qualifica(schema, tabella)
 
-        return sequence {
-            apri(connection).use { conn ->
-                if (connection.tipo == "psql") conn.autoCommit = false
-                conn.prepareStatement("SELECT * FROM $qualificata").use { stmt ->
-                    stmt.fetchSize = 5000
-                    stmt.executeQuery().use { rs ->
-                        val meta = rs.metaData
+        apri(connection).use { conn ->
+            if (connection.tipo == "psql") conn.autoCommit = false
+            conn.prepareStatement("SELECT * FROM $qualificata").use { stmt ->
+                stmt.fetchSize = 5000
+                stmt.executeQuery().use { rs ->
+                    val meta = rs.metaData
 
-                        // getColumnLabel, non getColumnName. Minuscolo per far
-                        // combaciare le chiavi con le colonne normalizzate da Naming.
-                        val etichette = (1..meta.columnCount).map { meta.getColumnLabel(it).lowercase() }
+                    // getColumnLabel, non getColumnName. Minuscolo per far
+                    // combaciare le chiavi con le colonne normalizzate da Naming.
+                    val etichette = (1..meta.columnCount).map { meta.getColumnLabel(it).lowercase() }
 
-                        val duplicati = etichette.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
-                        if (duplicati.isNotEmpty()) {
-                            throw IllegalStateException(
-                                "La tabella $qualificata espone colonne con etichetta duplicata: " +
-                                        "${duplicati.joinToString(", ")}. Ogni colonna deve avere un alias univoco."
-                            )
-                        }
+                    val duplicati = etichette.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+                    if (duplicati.isNotEmpty()) {
+                        throw IllegalStateException(
+                            "La tabella $qualificata espone colonne con etichetta duplicata: " +
+                                    "${duplicati.joinToString(", ")}. Ogni colonna deve avere un alias univoco."
+                        )
+                    }
 
-                        log.debug("Estrazione da {}: colonne {}", qualificata, etichette)
+                    log.debug("Estrazione da {}: colonne {}", qualificata, etichette)
 
-                        var conteggio = 0L
-                        while (rs.next()) {
+                    var conteggio = 0L
+                    val righe = generateSequence {
+                        if (!rs.next()) {
+                            null
+                        } else {
                             val riga = HashMap<String, Any?>(etichette.size)
                             etichette.forEachIndexed { i, etichetta -> riga[etichetta] = rs.getObject(i + 1) }
                             conteggio++
-                            yield(riga)
+                            riga
                         }
-                        log.debug("Estrazione da {}: {} righe", qualificata, conteggio)
                     }
+
+                    consumatore(righe)
+                    log.debug("Estrazione da {}: {} righe", qualificata, conteggio)
                 }
             }
         }

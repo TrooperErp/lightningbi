@@ -242,9 +242,8 @@ class EtlOrchestrator(
             var validTabella = 0L
             var scartateTabella = 0L
 
-            connectionOrchestrator.extract(source.connectionId, source.config.schema, viewDi(t))
-                .chunked(etlChunkSize)
-                .forEach { blocco ->
+            connectionOrchestrator.extract(source.connectionId, source.config.schema, viewDi(t)) { righe ->
+                righe.chunked(etlChunkSize).forEach { blocco ->
                     val rows = normalizzaNomiColonna(blocco, necessarie, grezzeNecessarie, t.nomeLogico)
 
                     val (valid, errors) = transformService.transform(
@@ -266,6 +265,7 @@ class EtlOrchestrator(
                         area.nome, t.nomeLogico, validTabella
                     )
                 }
+            }
 
             if (validTabella == 0L && scartateTabella == 0L) {
                 log.warn("ETL area '{}': la tabella '{}' non ha restituito righe", area.nome, t.nomeLogico)
@@ -363,7 +363,7 @@ class EtlOrchestrator(
             val messaggio = "Il dataset '${area.nome}' (id=${area.id}) ha colonne importate non più presenti " +
                     "nella sorgente. $dettaglio. L'ETL è stato bloccato per evitare un fallimento a metà. " +
                     "Vai in \"Modifica Schema\" per sistemare, poi rilancia la sincronizzazione manualmente."
-            emailService.sendAdminAlert("URGENTE - ETL bloccato: colonne mancanti su '${area.nome}'", messaggio)
+
             error(messaggio)
         }
     }

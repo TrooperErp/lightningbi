@@ -11,7 +11,7 @@ import com.vaadin.flow.data.provider.hierarchy.TreeDataProvider
 import java.text.NumberFormat
 import java.util.Locale
 import java.util.UUID
-
+import com.lightningbi.lightning_engine.service.DimensionSortOrders
 /**
  * Griglia risultati (TreeGrid) dell'Analisi: disegna la gerarchia di
  * Righe già costruita da AggregateService.buildRowHierarchy, con header
@@ -80,12 +80,16 @@ class ResultsGridUi {
         // di una sola colonna e far fallire HeaderRow.join() con
         // "Cannot join less than 2 cells".
         val columnLevelsRaw = allValueKeysRaw.maxOfOrNull { it.split("|").size - 1 } ?: 0
-        val allValueKeys = allValueKeysRaw.sortedWith(compareBy(
-            *(1..columnLevelsRaw).map { level ->
-                { key: String -> key.split("|").getOrNull(level) ?: "" }
-            }.toTypedArray(),
-            { key: String -> key.split("|").first() }
-        ))
+        fun parte(key: String, livello: Int): String = key.split("|").getOrNull(livello) ?: ""
+
+        val confrontoHeader = Comparator<String> { a, b ->
+            for (level in 1..columnLevelsRaw) {
+                val c = DimensionSortOrders.confrontoNaturale(parte(a, level), parte(b, level))
+                if (c != 0) return@Comparator c
+            }
+            DimensionSortOrders.confrontoNaturale(parte(a, 0), parte(b, 0))
+        }
+        val allValueKeys = allValueKeysRaw.sortedWith(confrontoHeader)
 
         val dataColumns = allValueKeys.map { key ->
             val parts = key.split("|")
