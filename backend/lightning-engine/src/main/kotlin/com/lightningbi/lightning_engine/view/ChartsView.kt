@@ -6,7 +6,6 @@ import com.lightningbi.lightning_engine.model.ChartType
 import com.lightningbi.lightning_engine.repository.AreaSourceRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import com.lightningbi.lightning_engine.service.ChartService
-import com.lightningbi.lightning_engine.service.SourceVerificationService
 import com.lightningbi.lightning_engine.repository.UserPivotStateRepository
 import com.vaadin.flow.component.Component
 import com.vaadin.flow.component.button.Button
@@ -63,7 +62,6 @@ class ChartsView(
     private val chartService: ChartService,
     private val registryRepository: RegistryRepository,
     private val areaSourceRepository: AreaSourceRepository,
-    private val sourceVerificationService: SourceVerificationService,
     private val authService: AuthService,
     private val userPivotStateRepository: UserPivotStateRepository,
     private val pivotViewService: com.lightningbi.lightning_engine.service.PivotViewService

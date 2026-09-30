@@ -1,12 +1,13 @@
 package com.lightningbi.lightning_engine.view
 
+import com.lightningbi.lightning_engine.connector.ConnectionOrchestrator
+import com.lightningbi.lightning_engine.connector.JdbcSourceConnector
 import com.lightningbi.lightning_engine.model.*
 import com.lightningbi.lightning_engine.repository.AreaSourceRepository
 import com.lightningbi.lightning_engine.repository.ImportedTableRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import com.lightningbi.lightning_engine.service.*
 import com.vaadin.flow.component.Component
-import com.vaadin.flow.component.DetachEvent
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant
 import com.vaadin.flow.component.checkbox.Checkbox
@@ -27,7 +28,6 @@ import com.vaadin.flow.component.textfield.TextField
 import com.vaadin.flow.router.BeforeEnterEvent
 import com.vaadin.flow.router.BeforeEnterObserver
 import com.vaadin.flow.router.Route
-import java.sql.Connection
 import java.time.Instant
 import java.util.UUID
 
@@ -40,8 +40,8 @@ import java.util.UUID
  * non un'Analisi (PivotView), che si crea dal menu Analisi.
  *
  * Flusso a 6 step, tutti su questa pagina:
- *   1 ORIGINE   nuova connessione / riuso dei parametri di una esistente
- *   2 CONNETTI  credenziali, connessione, schema
+ *   1 ORIGINE   nuova connessione oppure una già salvata
+ *   2 CONNETTI  nuova connessione (salvata e provata) o prova di quella scelta; schema
  *   3 TABELLE   scelta di esattamente 1 Fatti + N Dimensioni, con nome logico
  *   4 CHIAVI    chiave di JOIN per ogni Dimensione (proposta da nome colonna condiviso)
  *   5 COLONNE   una scheda per tabella, TUTTE le colonne importate di default
@@ -69,12 +69,11 @@ import java.util.UUID
 class NewDatasetView(
     private val permissionCheckService: PermissionCheckService,
     private val authService: AuthService,
-    private val metadataService: MetadataService,
     private val areaSourceRepository: AreaSourceRepository,
     private val registryService: RegistryService,
     private val registryRepository: RegistryRepository,
     private val importedTableRepository: ImportedTableRepository,
-    private val cryptoService: CryptoService
+    private val connectionOrchestrator: ConnectionOrchestrator
 ) : VerticalLayout(), BeforeEnterObserver {
 
     // ================= Tipi interni =================
@@ -116,15 +115,15 @@ class NewDatasetView(
 
     private class WizardState {
         // ORIGINE
-        var riusaSorgente: Boolean = false
-        var sorgenteRiusata: AreaSource? = null
+        var riusaConnessione: Boolean = false
 
-        // CONNETTI
-        var connection: Connection? = null
-        var jdbcUrl: String = ""
-        var username: String = ""
-        var password: String = ""
-        var driverClassName: String? = null
+        // CONNETTI: la connessione è già salvata (nuova o scelta); nel wizard
+        // non c'è nessuna connessione aperta, ogni lettura ne apre una sua.
+        var connessione: SourceConnection? = null
+        /** true se la connessione è stata creata in questa sessione del wizard (si può aggiornare). */
+        var creataQui: Boolean = false
+        /** true dopo una prova riuscita e il caricamento degli schemi. */
+        var schemiCaricati: Boolean = false
         var schemiDisponibili: List<String> = emptyList()
         var schema: String? = null
 
@@ -143,14 +142,6 @@ class NewDatasetView(
         var nomeDataset: String = ""
     }
 
-    private val driverOptions = listOf(
-        "com.microsoft.sqlserver.jdbc.SQLServerDriver" to "SQL Server",
-        "org.postgresql.Driver" to "PostgreSQL",
-        "com.mysql.cj.jdbc.Driver" to "MySQL",
-        "oracle.jdbc.OracleDriver" to "Oracle",
-        "com.ibm.db2.jcc.DB2Driver" to "DB2"
-    )
-
     private var state = WizardState()
     private var currentStep = Step.ORIGINE
 
@@ -159,7 +150,7 @@ class NewDatasetView(
         isSpacing = true
     }
     private val stepBody = Div().apply { setWidthFull() }
-    private val backButton = Button("← Indietro") { goBack() }
+    private val backButton = Button("â† Indietro") { goBack() }
     private val nextButton = Button("Avanti →") { goNext() }.apply {
         addThemeVariants(ButtonVariant.LUMO_PRIMARY)
     }
@@ -178,20 +169,9 @@ class NewDatasetView(
             event.forwardTo(AssociativeExplorerView::class.java)
             return
         }
-        closeConnectionQuietly()
         state = WizardState()
         currentStep = Step.ORIGINE
         buildPage()
-    }
-
-    override fun onDetach(detachEvent: DetachEvent) {
-        closeConnectionQuietly()
-        super.onDetach(detachEvent)
-    }
-
-    private fun closeConnectionQuietly() {
-        try { state.connection?.close() } catch (_: Exception) { }
-        state.connection = null
     }
 
     // ================= Pagina e navigazione =================
@@ -290,10 +270,11 @@ class NewDatasetView(
     /** Messaggio d'errore se lo step corrente non è completo, null se si può avanzare. */
     private fun validateCurrentStep(): String? = when (currentStep) {
         Step.ORIGINE ->
-            if (state.riusaSorgente && state.sorgenteRiusata == null) "Seleziona una connessione esistente" else null
+            if (state.riusaConnessione && state.connessione == null) "Seleziona una connessione salvata" else null
 
         Step.CONNETTI -> when {
-            state.connection == null -> "Premi \"Connetti\" prima di proseguire"
+            state.connessione == null -> "Salva e prova la connessione prima di proseguire"
+            !state.schemiCaricati -> "Prova la connessione prima di proseguire"
             state.schemiDisponibili.isNotEmpty() && state.schema == null -> "Scegli lo schema"
             else -> null
         }
@@ -315,47 +296,50 @@ class NewDatasetView(
 
     // ================= STEP 1: Origine =================
 
+    /**
+     * Nuova connessione oppure una già salvata. Le connessioni sono
+     * indipendenti dai dataset: una connessione salvata si riusa senza
+     * riscrivere indirizzo, utente e password (che restano cifrati).
+     */
     private fun buildStepOrigine(): Component {
         val layout = VerticalLayout().apply { isPadding = false }
         layout.add(Span("Da dove arrivano i dati del nuovo dataset?").apply { className = "lbi-wizard-label" })
 
-        val existingSources = try {
-            areaSourceRepository.findAll().distinctBy { it.config.jdbcUrl to it.config.username }
+        val salvate = try {
+            connectionOrchestrator.findAll()
         } catch (e: Exception) {
-            Notification.show("Impossibile leggere le sorgenti esistenti: ${e.message}", 5000, Notification.Position.MIDDLE)
+            Notification.show("Impossibile leggere le connessioni salvate: ${e.message}", 5000, Notification.Position.MIDDLE)
             emptyList()
         }
 
         val nuova = "Nuova connessione"
-        val esistente = "Riusa una connessione già configurata"
+        val esistente = "Usa una connessione già salvata"
 
         val modeGroup = RadioButtonGroup<String>().apply {
             setItems(nuova, esistente)
-            isEnabled = existingSources.isNotEmpty()
-            value = if (state.riusaSorgente && existingSources.isNotEmpty()) esistente else nuova
+            isEnabled = salvate.isNotEmpty()
+            value = if (state.riusaConnessione && salvate.isNotEmpty()) esistente else nuova
         }
 
-        val existingCombo = ComboBox<AreaSource>("Connessione esistente").apply {
-            setItems(existingSources)
-            setItemLabelGenerator { src -> "${src.config.jdbcUrl} · ${src.config.username}" }
+        val existingCombo = ComboBox<SourceConnection>("Connessione salvata").apply {
+            setItems(salvate)
+            setItemLabelGenerator { "${it.nome} · ${etichettaTipo(it.tipo)}" }
             setWidthFull()
-            value = state.sorgenteRiusata
+            value = if (state.riusaConnessione) salvate.find { it.id == state.connessione?.id } else null
             isVisible = modeGroup.value == esistente
             addValueChangeListener { ev ->
-                val src = ev.value
-                state.sorgenteRiusata = src
-                if (src != null) applySourceCredentials(src)
+                if (ev.value?.id != state.connessione?.id) selezionaConnessione(ev.value)
             }
         }
 
         modeGroup.addValueChangeListener { ev ->
-            state.riusaSorgente = ev.value == esistente
-            existingCombo.isVisible = state.riusaSorgente
-            if (!state.riusaSorgente) state.sorgenteRiusata = null
+            state.riusaConnessione = ev.value == esistente
+            existingCombo.isVisible = state.riusaConnessione
+            selezionaConnessione(if (state.riusaConnessione) existingCombo.value else null)
         }
 
-        if (existingSources.isEmpty()) {
-            layout.add(Span("Nessuna connessione ancora configurata: si parte da una nuova.").apply {
+        if (salvate.isEmpty()) {
+            layout.add(Span("Nessuna connessione ancora salvata: si parte da una nuova.").apply {
                 className = "lbi-wizard-label"
             })
         }
@@ -363,120 +347,216 @@ class NewDatasetView(
         return layout
     }
 
-    /** Precompila i parametri di connessione da una sorgente esistente (password esclusa). */
-    private fun applySourceCredentials(src: AreaSource) {
-        invalidateConnection()
-        state.jdbcUrl = src.config.jdbcUrl
-        state.username = src.config.username
-        state.driverClassName = src.config.driverClassName
-        state.password = ""
-        state.schema = src.config.schema
+    /** Cambia la connessione in uso: schemi e tabelle già letti non valgono più. */
+    private fun selezionaConnessione(connessione: SourceConnection?) {
+        state.connessione = connessione
+        state.creataQui = false
+        state.schemiCaricati = false
+        state.schemiDisponibili = emptyList()
+        state.schema = null
+        resetTabelleState()
     }
 
     // ================= STEP 2: Connessione + schema =================
 
-    private fun buildStepConnetti(): Component {
+    private val etichetteTipo = mapOf("mssql" to "SQL Server", "psql" to "PostgreSQL")
+
+    private fun etichettaTipo(tipo: String): String = etichetteTipo[tipo] ?: tipo
+
+    private fun buildStepConnetti(): Component =
+        if (state.riusaConnessione) buildConnettiSalvata() else buildConnettiNuova()
+
+    /** Connessione già salvata: si mostra un riepilogo e si prova, senza riscrivere nulla. */
+    private fun buildConnettiSalvata(): Component {
         val layout = VerticalLayout().apply { isPadding = false }
-        layout.add(Span("Connessione al database di origine").apply { className = "lbi-wizard-label" })
+        val connessione = state.connessione ?: return Span("Torna indietro e scegli una connessione salvata")
 
-        if (state.riusaSorgente) {
-            layout.add(Span("Parametri precompilati dalla connessione esistente. Reinserisci la password.").apply {
-                className = "lbi-wizard-label"
-            })
-        }
-
-        val jdbcUrlField = TextField("Indirizzo database (JDBC URL)").apply {
-            placeholder = "jdbc:sqlserver://server:1433;databaseName=SEM;trustServerCertificate=true"
-            value = state.jdbcUrl
-            setWidthFull()
-        }
-        val driverCombo = ComboBox<Pair<String, String>>("Tipo database").apply {
-            setItems(driverOptions)
-            setItemLabelGenerator { it.second }
-            value = driverOptions.find { it.first == state.driverClassName }
-            setWidthFull()
-        }
-        val usernameField = TextField("Utente").apply { value = state.username; setWidthFull() }
-        val passwordField = PasswordField("Password").apply { value = state.password; setWidthFull() }
+        layout.add(Span("Connessione: ${connessione.nome} · ${etichettaTipo(connessione.tipo)}").apply {
+            className = "lbi-wizard-label"
+        })
+        layout.add(Span("Indirizzo: ${connessione.parametri[JdbcSourceConnector.PARAM_JDBC_URL] ?: "—"}"))
+        layout.add(Span("Utente: ${connessione.parametri[JdbcSourceConnector.PARAM_USERNAME] ?: "—"}"))
+        layout.add(Span("Database: ${connessione.parametri[JdbcSourceConnector.PARAM_DATABASE] ?: "—"}"))
 
         val statusSpan = Span().apply { className = "lbi-wizard-label" }
-        val schemaCombo = ComboBox<String>("Schema").apply {
-            setWidthFull()
-            setItems(state.schemiDisponibili)
-            value = state.schema
-            isEnabled = state.connection != null && state.schemiDisponibili.isNotEmpty()
-            addValueChangeListener { ev ->
-                if (ev.isFromClient && ev.value != state.schema) resetTabelleState()
-                state.schema = ev.value
-            }
-        }
+        val schemaCombo = costruisciSchemaCombo()
 
-        // Cambiare un parametro dopo aver connesso rende la connessione
-        // stantia: si invalida, così Avanti non procede con credenziali
-        // diverse da quelle realmente testate.
-        val onCredentialEdit: () -> Unit = {
-            statusSpan.text = ""
-            invalidateConnection()
-            schemaCombo.setItems(emptyList<String>())
-            schemaCombo.isEnabled = false
-        }
-        jdbcUrlField.addValueChangeListener { if (it.isFromClient) { state.jdbcUrl = it.value; onCredentialEdit() } }
-        driverCombo.addValueChangeListener { if (it.isFromClient) { state.driverClassName = it.value?.first; onCredentialEdit() } }
-        usernameField.addValueChangeListener { if (it.isFromClient) { state.username = it.value; onCredentialEdit() } }
-        passwordField.addValueChangeListener { if (it.isFromClient) { state.password = it.value; onCredentialEdit() } }
-
-        val connectButton = Button("Connetti") {
-            val driver = driverCombo.value
-            if (jdbcUrlField.value.isNullOrBlank() || driver == null || usernameField.value.isNullOrBlank()) {
-                Notification.show("Compila indirizzo, tipo database e utente")
-                return@Button
-            }
+        val provaButton = Button("Prova e carica schemi") {
             try {
-                closeConnectionQuietly()
-                state.jdbcUrl = jdbcUrlField.value
-                state.username = usernameField.value
-                state.password = passwordField.value
-                state.driverClassName = driver.first
-                val conn = metadataService.connect(state.jdbcUrl, state.username, state.password, driver.first)
-                state.connection = conn
-
-                // Gli schemi di sistema non sono mai sorgenti dati.
-                val sistema = setOf("information_schema", "sys", "guest", "pg_catalog", "pg_toast")
-                state.schemiDisponibili = metadataService.listSchemas(conn)
-                    .filter { it.lowercase() !in sistema && !it.startsWith("db_") }
-                    .sorted()
-
-                // Se lo schema precompilato (riuso) non esiste più, si riparte da vuoto.
-                if (state.schema != null && state.schema !in state.schemiDisponibili) state.schema = null
-                // Con un solo schema disponibile la scelta è ovvia.
-                if (state.schema == null && state.schemiDisponibili.size == 1) state.schema = state.schemiDisponibili.first()
-
-                resetTabelleState()
-                schemaCombo.setItems(state.schemiDisponibili)
-                schemaCombo.value = state.schema
-                schemaCombo.isEnabled = state.schemiDisponibili.isNotEmpty()
-                statusSpan.text = "Connessione riuscita: ${state.schemiDisponibili.size} schemi disponibili"
+                provaECaricaSchemi(connessione, statusSpan, schemaCombo)
             } catch (e: Exception) {
-                invalidateConnection()
                 statusSpan.text = ""
                 Notification.show("Errore di connessione: ${e.message}", 6000, Notification.Position.MIDDLE)
             }
         }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
 
-        if (state.connection != null) {
+        if (state.schemiCaricati) {
             statusSpan.text = "Connessione attiva: ${state.schemiDisponibili.size} schemi disponibili"
         }
 
-        layout.add(jdbcUrlField, driverCombo, usernameField, passwordField, connectButton, statusSpan, schemaCombo)
+        layout.add(provaButton, statusSpan, schemaCombo)
         return layout
     }
 
-    /** Chiude la connessione e azzera tutto ciò che ne dipende. */
-    private fun invalidateConnection() {
-        closeConnectionQuietly()
-        state.schemiDisponibili = emptyList()
-        state.schema = null
+    /**
+     * Nuova connessione: si salva e si prova in un colpo. Se la prova fallisce
+     * su una connessione appena creata, la si elimina: non restano
+     * connessioni rotte in elenco. Dopo il primo salvataggio i campi
+     * restano modificabili (si aggiorna la stessa connessione); la password
+     * lasciata vuota non cambia.
+     */
+    private fun buildConnettiNuova(): Component {
+        val layout = VerticalLayout().apply { isPadding = false }
+        layout.add(Span("Nuova connessione al database di origine").apply { className = "lbi-wizard-label" })
+
+        val salvata = state.connessione?.takeIf { state.creataQui }
+
+        val nomeField = TextField("Nome della connessione").apply {
+            placeholder = "es. SEM TeamSystem"
+            value = salvata?.nome ?: ""
+            setWidthFull()
+        }
+        val tipoCombo = ComboBox<String>("Tipo database").apply {
+            setItems(connectionOrchestrator.tipiDisponibili())
+            setItemLabelGenerator { etichettaTipo(it) }
+            value = salvata?.tipo
+            isEnabled = salvata == null
+            setWidthFull()
+        }
+        val jdbcUrlField = TextField("Indirizzo database (JDBC URL)").apply {
+            placeholder = "jdbc:sqlserver://;serverName=host\\ISTANZA;databaseName=SEM;trustServerCertificate=true"
+            value = salvata?.parametri?.get(JdbcSourceConnector.PARAM_JDBC_URL) ?: ""
+            setWidthFull()
+        }
+        val databaseField = TextField("Nome database").apply {
+            helperText = "Usato nel nome delle tabelle importate (es. mssql_sem__clienti)"
+            value = salvata?.parametri?.get(JdbcSourceConnector.PARAM_DATABASE) ?: ""
+            setWidthFull()
+        }
+        val usernameField = TextField("Utente").apply {
+            value = salvata?.parametri?.get(JdbcSourceConnector.PARAM_USERNAME) ?: ""
+            setWidthFull()
+        }
+        val passwordField = PasswordField("Password").apply {
+            if (salvata != null) helperText = "Lascia vuoto per non cambiarla"
+            setWidthFull()
+        }
+
+        // Il nome database si propone dall'indirizzo, finché l'admin non lo scrive a mano.
+        var ultimoDerivato = deriveDatabaseName(jdbcUrlField.value ?: "")
+        jdbcUrlField.addValueChangeListener { ev ->
+            if (!ev.isFromClient) return@addValueChangeListener
+            val derivato = deriveDatabaseName(ev.value ?: "")
+            if (databaseField.value.isNullOrBlank() || databaseField.value == ultimoDerivato) {
+                databaseField.value = derivato
+            }
+            ultimoDerivato = derivato
+        }
+
+        val statusSpan = Span().apply { className = "lbi-wizard-label" }
+        val schemaCombo = costruisciSchemaCombo()
+
+        val salvaButton = Button(if (salvata != null) "Aggiorna e prova" else "Salva e prova") { click ->
+            val nome = nomeField.value?.trim().orEmpty()
+            val tipo = tipoCombo.value
+            val url = jdbcUrlField.value?.trim().orEmpty()
+            val database = databaseField.value?.trim().orEmpty()
+            val utente = usernameField.value?.trim().orEmpty()
+            val password = passwordField.value.orEmpty()
+            val esistente = state.connessione?.takeIf { state.creataQui }
+
+            if (nome.isBlank() || tipo == null || url.isBlank() || database.isBlank() || utente.isBlank() ||
+                (esistente == null && password.isEmpty())
+            ) {
+                Notification.show("Compila nome, tipo, indirizzo, database, utente e password")
+                return@Button
+            }
+
+            val parametri = mapOf(
+                JdbcSourceConnector.PARAM_JDBC_URL to url,
+                JdbcSourceConnector.PARAM_USERNAME to utente,
+                JdbcSourceConnector.PARAM_DATABASE to database
+            )
+            val segreti = mapOf(JdbcSourceConnector.SECRET_PASSWORD to password)
+
+            try {
+                val connessione = if (esistente != null) {
+                    connectionOrchestrator.update(esistente.id, nome, parametri, segreti)
+                } else {
+                    connectionOrchestrator.create(nome, tipo, parametri, segreti)
+                }
+                state.connessione = connessione
+                state.creataQui = true
+                state.schemiCaricati = false
+                tipoCombo.isEnabled = false
+                try {
+                    provaECaricaSchemi(connessione, statusSpan, schemaCombo)
+                } catch (e: Exception) {
+                    if (esistente == null) {
+                        // Appena creata e non funziona: non la si lascia salvata.
+                        try { connectionOrchestrator.delete(connessione.id) } catch (_: Exception) { }
+                        state.connessione = null
+                        state.creataQui = false
+                        tipoCombo.isEnabled = true
+                    }
+                    throw e
+                }
+                click.source.text = "Aggiorna e prova"
+            } catch (e: Exception) {
+                statusSpan.text = ""
+                Notification.show("Errore: ${e.message}", 6000, Notification.Position.MIDDLE)
+            }
+        }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
+
+        if (state.schemiCaricati) {
+            statusSpan.text = "Connessione attiva: ${state.schemiDisponibili.size} schemi disponibili"
+        }
+
+        layout.add(
+            nomeField, tipoCombo, jdbcUrlField, databaseField, usernameField, passwordField,
+            salvaButton, statusSpan, schemaCombo
+        )
+        return layout
+    }
+
+    private fun costruisciSchemaCombo(): ComboBox<String> = ComboBox<String>("Schema").apply {
+        setWidthFull()
+        setItems(state.schemiDisponibili)
+        value = state.schema
+        isEnabled = state.schemiCaricati && state.schemiDisponibili.isNotEmpty()
+        addValueChangeListener { ev ->
+            if (ev.isFromClient && ev.value != state.schema) resetTabelleState()
+            state.schema = ev.value
+        }
+    }
+
+    /**
+     * Prova la connessione e carica gli schemi. Lancia un'eccezione se non
+     * riesce: chi chiama decide cosa mostrare.
+     */
+    private fun provaECaricaSchemi(connessione: SourceConnection, statusSpan: Span, schemaCombo: ComboBox<String>) {
+        connectionOrchestrator.testConnection(connessione.id)
+        val schemi = connectionOrchestrator.listSchemas(connessione.id)
+
+        state.schemiDisponibili = schemi
+        // Se lo schema scelto prima non esiste più, si riparte da vuoto.
+        if (state.schema != null && state.schema !in schemi) state.schema = null
+        // Con un solo schema disponibile la scelta è ovvia.
+        if (state.schema == null && schemi.size == 1) state.schema = schemi.first()
+        state.schemiCaricati = true
+
         resetTabelleState()
+        schemaCombo.setItems(schemi)
+        schemaCombo.value = state.schema
+        schemaCombo.isEnabled = schemi.isNotEmpty()
+        statusSpan.text = "Connessione riuscita: ${schemi.size} schemi disponibili"
+    }
+
+    /** Nome del database dall'indirizzo JDBC (SQL Server: databaseName=..., PostgreSQL: /nome). */
+    private fun deriveDatabaseName(url: String): String {
+        Regex("databaseName=([^;]+)", RegexOption.IGNORE_CASE).find(url)?.let { return it.groupValues[1].trim() }
+        Regex("^jdbc:postgresql://[^/]+/([^?;]+)").find(url)?.let { return it.groupValues[1].trim() }
+        return ""
     }
 
     /** Azzera tabelle, chiavi e colonne (cambiano con lo schema). */
@@ -492,11 +572,11 @@ class NewDatasetView(
 
     private fun buildStepTabelle(): Component {
         val layout = VerticalLayout().apply { isPadding = false; setSizeFull() }
-        val conn = state.connection ?: return Span("Connessione non disponibile: torna indietro")
+        val connessione = state.connessione ?: return Span("Connessione non disponibile: torna indietro")
 
         if (state.tabelleDisponibili.isEmpty()) {
             state.tabelleDisponibili = try {
-                metadataService.listTables(conn, state.schema).sortedBy { it.name.lowercase() }
+                connectionOrchestrator.listTables(connessione.id, state.schema).sortedBy { it.name.lowercase() }
             } catch (e: Exception) {
                 return Span("Errore lettura tabelle: ${e.message}")
             }
@@ -625,7 +705,7 @@ class NewDatasetView(
 
     private fun buildStepChiavi(): Component {
         val layout = VerticalLayout().apply { isPadding = false }
-        val conn = state.connection ?: return Span("Connessione non disponibile: torna indietro")
+        val connessione = state.connessione ?: return Span("Connessione non disponibile: torna indietro")
         val fatti = fattiScelta() ?: return Span("Nessuna tabella Fatti: torna indietro")
         val dimensioni = dimensioniScelte()
 
@@ -644,7 +724,7 @@ class NewDatasetView(
 
         dimensioni.forEach { dim ->
             val candidate = try {
-                proposeJoinKeys(conn, fatti.viewName, dim.viewName)
+                proposeJoinKeys(connessione.id, fatti.viewName, dim.viewName)
             } catch (e: Exception) {
                 layout.add(Span("${dim.nomeLogico}: errore lettura colonne (${e.message})"))
                 return@forEach
@@ -680,9 +760,9 @@ class NewDatasetView(
      * Qlik. Prima le chiavi TeamSystem (_KEY*), poi le altre in ordine
      * alfabetico. Nessun risultato = tabelle non collegabili.
      */
-    private fun proposeJoinKeys(conn: Connection, tabellaFatti: String, tabellaDimensione: String): List<String> {
-        val colonneFatti = metadataService.listColumns(conn, state.schema, tabellaFatti).map { it.name }
-        val colonneDimensione = metadataService.listColumns(conn, state.schema, tabellaDimensione)
+    private fun proposeJoinKeys(connectionId: UUID, tabellaFatti: String, tabellaDimensione: String): List<String> {
+        val colonneFatti = connectionOrchestrator.listColumns(connectionId, state.schema, tabellaFatti).map { it.name }
+        val colonneDimensione = connectionOrchestrator.listColumns(connectionId, state.schema, tabellaDimensione)
             .map { it.name.lowercase() }
             .toSet()
         return colonneFatti
@@ -703,7 +783,7 @@ class NewDatasetView(
      * Ritorna un messaggio d'errore, o null se ok.
      */
     private fun prepareColonne(): String? {
-        val conn = state.connection ?: return "Connessione non disponibile: torna indietro"
+        val connessione = state.connessione ?: return "Connessione non disponibile: torna indietro"
         val tabelle = tabelleScelte()
         val firma = tabelle.joinToString("|") { "${it.viewName}:${it.ruolo}:${it.colonnaChiave}" }
         if (state.firmaColonne == firma && state.colonne.isNotEmpty()) return null
@@ -714,8 +794,8 @@ class NewDatasetView(
 
         val infoPerTabella = try {
             tabelle.associate { t ->
-                val cols = metadataService.listColumns(conn, state.schema, t.viewName)
-                val samples = try { metadataService.sampleRows(conn, state.schema, t.viewName, 3) } catch (_: Exception) { emptyList() }
+                val cols = connectionOrchestrator.listColumns(connessione.id, state.schema, t.viewName)
+                val samples = try { connectionOrchestrator.sampleRows(connessione.id, state.schema, t.viewName, 3) } catch (_: Exception) { emptyList() }
                 t.viewName to (cols to samples)
             }
         } catch (e: Exception) {
@@ -971,15 +1051,15 @@ class NewDatasetView(
 
     // ================= Nomi fisici =================
 
-    /** Nome del database sorgente per il naming (catalog della connessione, poi schema). */
-    private fun nomeDbSorgente(): String {
-        val catalog = try { state.connection?.catalog } catch (_: Exception) { null }
-        return catalog?.takeIf { it.isNotBlank() } ?: state.schema?.takeIf { it.isNotBlank() } ?: "db"
-    }
+    /** Nome del database sorgente per il naming: parametro della connessione, poi schema. */
+    private fun nomeDbSorgente(): String =
+        state.connessione?.parametri?.get(JdbcSourceConnector.PARAM_DATABASE)?.takeIf { it.isNotBlank() }
+            ?: state.schema?.takeIf { it.isNotBlank() }
+            ?: "db"
 
     /** viewName -> nome fisico ClickHouse (<motore>_<db>__<nome>). */
     private fun nomiFisici(): Map<String, String> {
-        val motore = Naming.motoreFromDriver(state.driverClassName ?: "")
+        val motore = state.connessione?.tipo ?: error("Connessione non disponibile")
         val db = nomeDbSorgente()
         return tabelleScelte().associate { it.viewName to Naming.importedTable(motore, db, it.nomeLogico) }
     }
@@ -987,7 +1067,7 @@ class NewDatasetView(
     private fun validateConferma(): String? {
         val nome = state.nomeDataset.trim()
         if (nome.isBlank()) return "Indica il nome del dataset"
-        try { Naming.areaTable(nome) } catch (e: Exception) { return "Nome dataset non utilizzabile: ${e.message}" }
+        try { Naming.slug(nome) } catch (e: Exception) { return "Nome dataset non utilizzabile: ${e.message}" }
         if (registryRepository.findAreaByNome(nome) != null) return "Esiste già un dataset chiamato \"$nome\""
 
         val fisici = try { nomiFisici() } catch (e: Exception) { return "Nome tabella non utilizzabile: ${e.message}" }
@@ -1019,6 +1099,7 @@ class NewDatasetView(
         val tabelle = tabelleScelte()
         val fatti = tabelle.first { it.ruolo == RuoloTabella.FATTI }
         val fisici = nomiFisici()
+        val connessione = state.connessione ?: error("Connessione non disponibile")
         var areaId: UUID? = null
 
         try {
@@ -1030,12 +1111,9 @@ class NewDatasetView(
                 AreaSource(
                     id = sourceId,
                     areaId = area.id,
-                    tipoSorgente = "jdbc",
+                    tipoSorgente = connessione.tipo,
+                    connectionId = connessione.id,
                     config = SourceConfig(
-                        jdbcUrl = state.jdbcUrl,
-                        username = state.username,
-                        encryptedPassword = cryptoService.encrypt(state.password),
-                        driverClassName = state.driverClassName!!,
                         schema = state.schema,
                         tabelle = tabelle,
                         syncMode = SyncMode.FULL_RELOAD
@@ -1103,7 +1181,6 @@ class NewDatasetView(
             }
             registryRepository.bumpVersion()
 
-            closeConnectionQuietly()
             Notification.show(
                 "Dataset \"$nome\" creato. Premi \"Sincronizza\" per caricare i dati.",
                 6000, Notification.Position.MIDDLE

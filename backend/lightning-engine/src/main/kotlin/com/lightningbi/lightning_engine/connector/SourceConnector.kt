@@ -1,0 +1,56 @@
+package com.lightningbi.lightning_engine.connector
+
+import com.lightningbi.lightning_engine.model.SourceConnection
+import com.lightningbi.lightning_engine.service.ColumnInfo
+import com.lightningbi.lightning_engine.service.TableInfo
+
+/**
+ * Contratto di un connettore verso un tipo di sorgente dati.
+ *
+ * Un connettore sa parlare con UN tipo di sistema (o una famiglia: mssql e
+ * psql sono entrambi JDBC). Non tiene connessioni aperte tra una chiamata e
+ * l'altra: ogni operazione apre la sua e la chiude, così lo stesso
+ * contratto vale per sorgenti con modelli di connessione diversi (JDBC,
+ * Influx, ...).
+ *
+ * Chi usa i connettori non li chiama direttamente: passa da
+ * ConnectionOrchestrator, che sceglie quello giusto dal tipo della
+ * connessione.
+ *
+ * I segreti della connessione sono cifrati: il connettore li decifra solo
+ * al momento di aprire la connessione (SourceConnectionService.decryptSecret).
+ */
+interface SourceConnector {
+
+    /** Codici tipo gestiti da questo connettore (gli stessi di SourceConnection.tipo). */
+    val tipiSupportati: Set<String>
+
+    /** Apre la connessione e la richiude. Lancia un'eccezione con la causa se non riesce. */
+    fun testConnection(connection: SourceConnection)
+
+    fun listSchemas(connection: SourceConnection): List<String>
+
+    /** @param schema null = nessuno schema (o quello di default della sorgente) */
+    fun listTables(connection: SourceConnection, schema: String?): List<TableInfo>
+
+    fun listColumns(connection: SourceConnection, schema: String?, tabella: String): List<ColumnInfo>
+
+    /** Poche righe di esempio, per mostrare all'admin cosa contiene davvero una colonna. */
+    fun sampleRows(
+        connection: SourceConnection,
+        schema: String?,
+        tabella: String,
+        limit: Int = 3
+    ): List<Map<String, Any?>>
+
+    /**
+     * Legge per intero una tabella, riga per riga (streaming). Le chiavi di
+     * ogni riga sono i nomi colonna in minuscolo.
+     *
+     * La connessione resta aperta finché la sequenza viene consumata e si
+     * chiude alla fine (o se il consumo si interrompe): chi la usa deve
+     * consumarla per intero, oppure fermarsi con un'eccezione, non
+     * abbandonarla a metà.
+     */
+    fun extract(connection: SourceConnection, schema: String?, tabella: String): Sequence<Map<String, Any?>>
+}

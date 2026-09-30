@@ -66,27 +66,6 @@ class RegistryService(
     }
 
     @Transactional("postgresTransactionManager")
-    fun linkDimensioneToArea(
-        areaId: UUID,
-        dimensioneId: UUID,
-        colonnaFisica: String,
-        obbligatoria: Boolean,
-        cardinalita: Long?,
-        valoreGrezzo: Boolean = false
-    ) {
-        registryRepository.saveAreaDimensione(
-            AreaDimensione(areaId, dimensioneId, Naming.column(colonnaFisica), obbligatoria, cardinalita, valoreGrezzo)
-        )
-        registryRepository.bumpVersion()
-    }
-
-    fun getColonneMetricheDisponibili(areaId: UUID): List<String> =
-        registryRepository.findMetricheByArea(areaId)
-            .mapNotNull { it.colonnaFisica }
-            .distinct()
-            .sorted()
-
-    @Transactional("postgresTransactionManager")
     fun addMetrica(
         areaId: UUID,
         nome: String,
@@ -212,26 +191,5 @@ class RegistryService(
         val esistenti = registryRepository.findMetricheByArea(areaId)
         val collisione = esistenti.any { it.nome.equals(nome, ignoreCase = true) && it.id != escludiId }
         require(!collisione) { "Esiste già una metrica chiamata \"$nome\" in questa area" }
-    }
-
-    /**
-     * Collega una dimensione a un'area già esistente, aggiungendo anche
-     * la colonna fisica sulla tabella fatti ClickHouse se non c'è già.
-     * A differenza di linkDimensioneToArea (usato anche in creazione area,
-     * dove la tabella non esiste ancora), questo presume la tabella già
-     * creata e la altera in place - usarlo SOLO per aree esistenti.
-     */
-    @Transactional("postgresTransactionManager")
-    fun linkDimensioneToExistingArea(
-        areaId: UUID,
-        dimensioneId: UUID,
-        colonnaFisica: String,
-        obbligatoria: Boolean,
-        cardinalita: Long? = null,
-        valoreGrezzo: Boolean = false
-    ) {
-        val area = registryRepository.findAreaById(areaId) ?: error("Area $areaId non trovata")
-        symbolTableService.addColumnToAreaTable(area.tabellaFisica, colonnaFisica)
-        linkDimensioneToArea(areaId, dimensioneId, colonnaFisica, obbligatoria, cardinalita, valoreGrezzo)
     }
 }

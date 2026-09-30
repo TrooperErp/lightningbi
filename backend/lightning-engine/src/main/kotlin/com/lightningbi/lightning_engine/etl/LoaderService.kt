@@ -21,23 +21,12 @@ class LoaderService(
     private val batchSize = 10_000
 
     /**
-     * Carico incrementale: aggiunge righe senza toccare quelle esistenti.
-     *
-     * NOTA sul partizionamento: la versione precedente tentava un
-     * DROP PARTITION basato su una colonna _partition_key che nessuno
-     * popolava, su tabelle create senza clausola PARTITION BY. Non poteva
-     * funzionare in nessun caso: senza partizioni dichiarate ClickHouse
-     * rifiuta il comando, e senza chiave valorizzata non c'era comunque
-     * niente da rilasciare.
-     *
-     * Finché le tabelle d'area non dichiarano una PARTITION BY, l'unico
-     * incrementale corretto è l'append puro. Chi lo usa deve sapere che
-     * righe già presenti verranno duplicate se la view le riespone: il
-     * filtro su lbi_updated_at serve esattamente a evitarlo.
+     * Append puro: aggiunge righe senza toccare quelle esistenti. Righe già
+     * presenti verranno duplicate se la sorgente le riespone.
      */
     fun load(tabellaFisica: String, rows: List<Map<String, Any?>>, columns: List<String>) {
         val table = requireIdentifier(tabellaFisica, "table")
-        val cols = columns.filter { it != "_partition_key" }.map { requireIdentifier(it, "column") }
+        val cols = columns.map { requireIdentifier(it, "column") }
         if (rows.isEmpty()) {
             log.info("Load su {}: nessuna riga da inserire", table)
             return
@@ -52,6 +41,7 @@ class LoaderService(
         jdbcTemplate.execute("TRUNCATE TABLE $table")
         log.info("Truncate su {}", table)
     }
+
     /**
      * Ricarico completo: svuota la tabella e reinserisce tutto.
      *
@@ -64,7 +54,7 @@ class LoaderService(
      */
     fun truncateAndLoad(tabellaFisica: String, rows: List<Map<String, Any?>>, columns: List<String>) {
         val table = requireIdentifier(tabellaFisica, "table")
-        val cols = columns.filter { it != "_partition_key" }.map { requireIdentifier(it, "column") }
+        val cols = columns.map { requireIdentifier(it, "column") }
 
         jdbcTemplate.execute("TRUNCATE TABLE $table")
 
@@ -108,6 +98,4 @@ class LoaderService(
      */
     private fun requireIdentifier(value: String, what: String): String =
         Naming.requirePhysical(value, what)
-
-
 }

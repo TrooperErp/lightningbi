@@ -1,4 +1,7 @@
 import '@vaadin/vertical-layout/src/vaadin-vertical-layout.js';
+import '@vaadin/icons/vaadin-iconset.js';
+import '@vaadin/icon/src/vaadin-icon.js';
+import '@vaadin/tooltip/src/vaadin-tooltip.js';
 import '@vaadin/grid/src/vaadin-grid.js';
 import '@vaadin/grid/src/vaadin-grid-column.js';
 import '@vaadin/grid/src/vaadin-grid-sorter.js';
@@ -11,7 +14,6 @@ import '@vaadin/component-base/src/debounce.js';
 import '@vaadin/component-base/src/async.js';
 import '@vaadin/grid/src/vaadin-grid-active-item-mixin.js';
 import 'Frontend/generated/jar-resources/vaadin-grid-flow-selection-column.js';
-import '@vaadin/tooltip/src/vaadin-tooltip.js';
 import '@vaadin/grid/src/vaadin-grid-column-group.js';
 import 'Frontend/generated/jar-resources/lit-renderer.ts';
 import 'lit/directives/live.js';

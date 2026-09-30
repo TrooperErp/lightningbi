@@ -7,18 +7,13 @@ import org.springframework.stereotype.Service
 import java.util.UUID
 
 /**
- * Costruisce la parte FROM/JOIN delle query su un dataset e risolve il nome
- * (qualificato) delle colonne, per i due modelli di dataset:
+ * Costruisce la parte FROM/JOIN delle query su un dataset a schema a stella
+ * e risolve il nome (qualificato) delle colonne: tabella Fatti (alias "f")
+ * + una tabella per ogni Dimensione realmente usata dalla richiesta
+ * (alias d0, d1, ...). Le Dimensioni non usate NON entrano nella query.
  *
- * - LEGACY: una sola tabella fatti con dimensioni e metriche insieme.
- *   Nessun JOIN, colonne senza qualificatore: la query resta identica a
- *   quella di prima del modello a stella.
- * - SCHEMA A STELLA: tabella Fatti (alias "f") + una tabella per ogni
- *   Dimensione realmente usata dalla richiesta (alias d0, d1, ...). Le
- *   Dimensioni non usate NON entrano nella query.
- *
- * Classe condivisa: AggregateService oggi, gli stati associativi (punto
- * 1.9) domani, così la logica dei JOIN vive in un posto solo.
+ * Classe condivisa da AggregateService e BitmapIndexBuilder, così la
+ * logica dei JOIN vive in un posto solo.
  *
  * REGOLE DEL JOIN
  * - LEFT ANY JOIN: LEFT tiene le righe dei Fatti senza corrispondenza
@@ -39,44 +34,29 @@ class StarQueryBuilder(
     private val identificatoreFisico = Regex("^[a-z][a-z0-9_]*$")
 
     /**
-     * @param fromClause testo da mettere dopo FROM (tabella singola, o Fatti + JOIN)
-     * @param isStar true se la query usa alias e qualificatori
+     * @param fromClause testo da mettere dopo FROM (Fatti + JOIN sulle Dimensioni usate)
      */
     class Plan(
         val fromClause: String,
-        val isStar: Boolean,
         private val colonnePerDimensione: Map<UUID, String>,
-        private val aliasFatti: String?
+        private val aliasFatti: String
     ) {
         /** Colonna della dimensione, qualificata (es. "d0.descrizione") nello schema a stella. */
         fun dimColumn(dimensioneId: UUID): String? = colonnePerDimensione[dimensioneId]
 
         /** Colonna di una metrica: le metriche stanno sempre sui Fatti. */
-        fun metricColumn(colonna: String): String = if (aliasFatti != null) "$aliasFatti.$colonna" else colonna
+        fun metricColumn(colonna: String): String = "$aliasFatti.$colonna"
     }
 
     /**
-     * @param tabellaFatti Area.tabellaFisica (nel legacy è l'unica tabella)
      * @param dimensioniUsate dimensioni presenti in group by, colonne o selezioni
      * @param dimensioni tutte le AreaDimensione dell'area
      */
     fun plan(
         areaId: UUID,
-        tabellaFatti: String,
         dimensioniUsate: Set<UUID>,
         dimensioni: List<AreaDimensione>
     ): Plan {
-        // Nessuna dimensione collegata a una tabella importata = dataset
-        // legacy: nessuna lettura di registry aggiuntiva, query invariata.
-        if (dimensioni.none { it.importedTableId != null }) {
-            return Plan(
-                fromClause = tabellaFatti,
-                isStar = false,
-                colonnePerDimensione = dimensioni.associate { it.dimensioneId to it.colonnaFisica },
-                aliasFatti = null
-            )
-        }
-
         val tabelle = importedTableRepository.findByArea(areaId)
         val fatti = tabelle.singleOrNull { it.ruolo == RuoloTabella.FATTI }
             ?: error("L'area $areaId deve avere esattamente una tabella Fatti importata")
@@ -122,7 +102,7 @@ class StarQueryBuilder(
         }
 
         val from = (listOf("${fisico(fatti.tabellaFisica, "tabella")} AS $aliasFatti") + joins).joinToString(" ")
-        return Plan(from, true, colonne, aliasFatti)
+        return Plan(from, colonne, aliasFatti)
     }
 
     /**

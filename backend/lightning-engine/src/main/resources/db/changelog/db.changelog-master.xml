@@ -20,5 +20,6 @@
 <include file="db/changelog/018-user-codice-ditta-assegnata.xml"/>
 <include file="db/changelog/019-imported-table-column.xml"/>
 <include file="db/changelog/020-area-dimensione-imported-table.xml"/>
+<include file="db/changelog/021-connection.xml"/>
+<include file="db/changelog/022-area-source-connection.xml"/>
 </databaseChangeLog>
- 

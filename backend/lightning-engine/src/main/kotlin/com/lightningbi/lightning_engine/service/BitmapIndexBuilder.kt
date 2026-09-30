@@ -30,15 +30,14 @@ import java.util.UUID
  * esiste solo quando l'indice è già allineato, e la cache degli stati
  * non può associare dati nuovi a un indice vecchio.
  *
- * I valori NULL delle dimensioni diventano 0, coerente con il motore a
- * query esistente che legge i valori con rs.getLong (NULL -> 0).
+ * I valori NULL delle dimensioni diventano 0 (come rs.getLong sugli
+ * altri percorsi di lettura).
  *
  * SCHEMA A STELLA: la scansione parte dai Fatti con il JOIN sulle tabelle
  * Dimensione (StarQueryBuilder), fatto UNA volta sola qui. Il numero di
  * riga è quello delle righe dei Fatti, e gli attributi delle Dimensioni
  * vengono "esplosi" come quelli dei Fatti: dopo la ricostruzione il calcolo
- * degli stati non fa più nessun JOIN. Nel dataset legacy (tabella unica) la
- * query è identica a prima.
+ * degli stati non fa più nessun JOIN.
  *
  * Costo: righe dei Fatti x numero di dimensioni. Le colonne messe su
  * "Ignora" nel wizard non pesano.
@@ -57,13 +56,12 @@ class BitmapIndexBuilder(
     fun rebuild(areaId: UUID) {
         val start = System.currentTimeMillis()
 
-        val area = registryRepository.findAreaById(areaId) ?: error("Area $areaId non trovata")
+        registryRepository.findAreaById(areaId) ?: error("Area $areaId non trovata")
         val dimensioni = registryRepository.findDimensioniByArea(areaId)
-        // Nello schema a stella il FROM è Fatti + JOIN sulle Dimensioni (nomi
-        // già validati dal builder: i nomi <motore>_<db>__<nome> non passano
-        // da Naming.slug). Nel legacy resta la sola tabella fatti.
-        val plan = starQueryBuilder.plan(areaId, area.tabellaFisica, dimensioni.map { it.dimensioneId }.toSet(), dimensioni)
-        val table = if (plan.isStar) plan.fromClause else requireIdentifier(area.tabellaFisica, "table")
+        // Il FROM è Fatti + JOIN sulle Dimensioni (nomi già validati dal
+        // builder: i nomi <motore>_<db>__<nome> non passano da Naming.slug).
+        val plan = starQueryBuilder.plan(areaId, dimensioni.map { it.dimensioneId }.toSet(), dimensioni)
+        val table = plan.fromClause
 
         // L'UUID in forma stringa è sicuro da interpolare (formato fisso,
         // solo esadecimali e trattini): serve come letterale perché i
@@ -126,7 +124,7 @@ class BitmapIndexBuilder(
         )
     }
 
-    /** Stessa difesa anti-injection usata in AggregateService/AssociativeStateService. */
+    /** Stessa difesa anti-injection usata in AggregateService. */
     private fun requireIdentifier(value: String, what: String): String {
         val normalized = Naming.slug(value)
         require(normalized == value) {

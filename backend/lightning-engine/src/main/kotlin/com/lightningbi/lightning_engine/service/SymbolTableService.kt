@@ -42,54 +42,12 @@ class SymbolTableService(
     }
 
     /**
-     * Crea la tabella dei fatti di un'area (modello legacy a view singola).
-     *
-     * Riceve i nomi LOGICI delle colonne e li normalizza internamente:
-     * chi chiama non deve preoccuparsi del case. Attenzione: la view
-     * generata da ViewSqlGenerator deve usare gli STESSI alias, altrimenti
-     * l'ETL non trova le colonne. Usare Naming.column() anche lì.
-     */
-    fun createAreaTable(
-        nomeArea: String,
-        colonneFiltri: List<String>,
-        colonneSomme: List<String>
-    ): String {
-        require(colonneFiltri.isNotEmpty()) { "Serve almeno una colonna filtro per la ORDER BY" }
-
-        val tabellaFisica = Naming.areaTable(nomeArea)
-        val filtri = colonneFiltri.map { Naming.column(it) }
-        val somme = colonneSomme.map { Naming.column(it) }
-
-        val duplicati = (filtri + somme).groupingBy { it }.eachCount().filterValues { it > 1 }.keys
-        require(duplicati.isEmpty()) {
-            "Colonne che collidono dopo la normalizzazione: ${duplicati.joinToString(", ")}"
-        }
-
-        val defs = buildList {
-            filtri.forEach { add("$it UInt32") }
-            somme.forEach { add("$it Decimal(18,4)") }
-            add("_partition_key String")
-        }.joinToString(",\n                ")
-
-        jdbcTemplate.execute(
-            """
-            CREATE TABLE IF NOT EXISTS $tabellaFisica (
-                $defs
-            ) ENGINE = MergeTree()
-            ORDER BY (${filtri.joinToString(", ")})
-            """.trimIndent()
-        )
-        return tabellaFisica
-    }
-
-    /**
      * Crea la tabella ClickHouse di una tabella importata (schema a stella
-     * nativo: Fatti o Dimensione), sostituendo il ruolo di createAreaTable
-     * per i dataset TBS.
+     * nativo: Fatti o Dimensione).
      *
      * Riceve nomi già fisici della tabella (prodotti da
      * Naming.importedTable) e nomi LOGICI delle colonne, normalizzati qui
-     * con Naming.column come in createAreaTable.
+     * con Naming.column.
      *
      * @param colonneId colonne UInt32: chiavi di JOIN e attributi
      *   dimensione, tutti codificati come id di symbol table
@@ -98,9 +56,9 @@ class SymbolTableService(
      *   colonneId. Vuoto = si usa la prima colonna id.
      *
      * IF NOT EXISTS: se la tabella esiste già con colonne diverse NON viene
-     * modificata (serve un ALTER esplicito, come per addColumnToAreaTable).
-     * Nessuna _partition_key: i dataset TBS sono solo FULL_RELOAD, quindi
-     * la tabella si svuota e si ricarica per intero (vedi LoaderService).
+     * modificata (serve un ALTER esplicito).
+     * Nessuna _partition_key: le tabelle importate si svuotano e si
+     * ricaricano per intero (vedi LoaderService).
      */
     fun createImportedTable(
         tabellaFisica: String,
@@ -140,28 +98,6 @@ class SymbolTableService(
             """.trimIndent()
         )
         return tabellaFisica
-    }
-
-    /**
-     * Aggiunge una colonna dimensione alla tabella fatti di un'area già
-     * esistente, per collegare una dimensione dopo la creazione (vedi
-     * EditDimensionsDialog). createAreaTable() gira una sola volta: con
-     * IF NOT EXISTS, chiamarlo di nuovo su una tabella già creata non
-     * aggiunge le colonne mancanti, serve un ALTER TABLE esplicito.
-     *
-     * Tipo fisso a UInt32, coerente con ogni altra colonna dimensione
-     * (vedi TransformService: le dimensioni sono sempre UInt32 NOT NULL,
-     * con 0 riservato al valore "non definito"). Se un domani servirà
-     * aggiungere anche metriche dopo la creazione, va scritto un metodo
-     * gemello con Decimal(18,4), non generalizzato qui: i due casi hanno
-     * vincoli di NOT NULL/default diversi che meritano di restare
-     * espliciti.
-     */
-    fun addColumnToAreaTable(tabellaFisica: String, colonnaFisica: String) {
-        val colonna = Naming.column(colonnaFisica)
-        jdbcTemplate.execute(
-            "ALTER TABLE $tabellaFisica ADD COLUMN IF NOT EXISTS $colonna UInt32 DEFAULT 0"
-        )
     }
 
     /** Elimina una tabella. Usato per ripulire artefatti orfani dopo un rollback. */

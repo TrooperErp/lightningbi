@@ -42,10 +42,11 @@ class AreaSourceRepositoryImpl(
         val configJson = objectMapper.writeValueAsString(source.config)
         jdbcTemplate.update(
             """
-            INSERT INTO lbi_area_source (id, area_id, tipo_sorgente, config, status, error_detail, created_at)
-            VALUES (?, ?, ?, ?::jsonb, ?, ?, ?)
+            INSERT INTO lbi_area_source (id, area_id, tipo_sorgente, connection_id, config, status, error_detail, created_at)
+            VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET
                 tipo_sorgente = EXCLUDED.tipo_sorgente,
+                connection_id = EXCLUDED.connection_id,
                 config = EXCLUDED.config,
                 status = EXCLUDED.status,
                 error_detail = EXCLUDED.error_detail
@@ -53,6 +54,7 @@ class AreaSourceRepositoryImpl(
             source.id,
             source.areaId,
             source.tipoSorgente,
+            source.connectionId,
             configJson,
             source.status.name,
             source.errorDetail,
@@ -71,6 +73,7 @@ class AreaSourceRepositoryImpl(
             id = UUID.fromString(rs.getString("id")),
             areaId = UUID.fromString(rs.getString("area_id")),
             tipoSorgente = rs.getString("tipo_sorgente"),
+            connectionId = UUID.fromString(rs.getString("connection_id")),
             config = config,
             status = SourceStatus.valueOf(rs.getString("status")),
             errorDetail = rs.getString("error_detail"),

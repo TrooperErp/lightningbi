@@ -15,8 +15,11 @@ import com.vaadin.flow.component.button.ButtonVariant
 import com.vaadin.flow.component.checkbox.Checkbox
 import com.vaadin.flow.component.combobox.ComboBox
 import com.vaadin.flow.component.dialog.Dialog
+import com.vaadin.flow.component.dependency.Uses
 import com.vaadin.flow.component.grid.Grid
 import com.vaadin.flow.component.html.Span
+import com.vaadin.flow.component.icon.Icon
+import com.vaadin.flow.component.icon.VaadinIcon
 import com.vaadin.flow.component.notification.Notification
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout
 import com.vaadin.flow.component.orderedlayout.VerticalLayout
@@ -43,6 +46,7 @@ import com.lightningbi.lightning_engine.service.AuthService
  * anche se la voce di menu è nascosta.
  */
 @Route("admin")
+@Uses(Icon::class)
 class AdminView(
     private val userRepository: UserRepository,
     private val roleRepository: RoleRepository,
@@ -72,17 +76,19 @@ class AdminView(
             LbiSidebarMenu.MenuGroup(
                 label = "Analisi",
                 entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Torna alle analisi") {
+                    LbiSidebarMenu.MenuEntry("Torna alle analisi", icon = VaadinIcon.ARROW_LEFT) {
                         getUI().ifPresent { it.navigate(AssociativeExplorerView::class.java) }
                     }
-                )
+                ),
+                icon = VaadinIcon.CHART
             ),
             LbiSidebarMenu.MenuGroup(
                 label = "Amministrazione",
                 entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Gestione utenti") { }
+                    LbiSidebarMenu.MenuEntry("Gestione utenti", icon = VaadinIcon.USERS) { }
                 ),
-                active = true
+                active = true,
+                icon = VaadinIcon.COG
             )
         )
 

@@ -40,7 +40,7 @@ class AggregateService(
         getAggregates(req, versionService.snapshotVersions(req.areaId))
 
     fun getAggregates(req: AggregateRequest, versions: VersionSnapshot): AggregateResult {
-        val area = registryRepository.findAreaById(req.areaId) ?: error("Area not found: ${req.areaId}")
+        registryRepository.findAreaById(req.areaId) ?: error("Area not found: ${req.areaId}")
         val dims = registryRepository.findDimensioniByArea(req.areaId)
         val dimById = dims.associateBy { it.dimensioneId }
         val tutteMetriche = registryRepository.findMetricheByArea(req.areaId)
@@ -67,10 +67,6 @@ class AggregateService(
 
         val cacheKey = buildCacheKey(req, cleanSelections, cleanGroupBy, cleanColumnBy, metriche, effectiveLimit, versions)
 
-        // DEBUG TEMPORANEO: bypassa la cache per essere sicuri di vedere
-        // dati freschi durante l'indagine sul bug anno 2026 mancante.
-        println("DEBUG AGGREGATE: cleanGroupBy=$cleanGroupBy cleanColumnBy=$cleanColumnBy")
-
         safeGet(cacheKey)?.let { cached ->
             try {
                 return deserialize(cached)
@@ -81,7 +77,6 @@ class AggregateService(
 
         var flat = computeFlatAggregates(
             areaId = req.areaId,
-            table = area.tabellaFisica,
             selections = cleanSelections,
             groupBy = cleanGroupBy,
             columnBy = cleanColumnBy,
@@ -91,14 +86,6 @@ class AggregateService(
             orderMetrica = orderMetrica,
             limit = if (cleanColumnBy.isEmpty()) effectiveLimit else rowLimit
         )
-
-        // DEBUG TEMPORANEO
-        println("DEBUG AGGREGATE: flat.rows.size=${flat.rows.size} truncated=${flat.truncated}")
-        if (cleanColumnBy.isNotEmpty()) {
-            val colDim = cleanColumnBy.first()
-            val valoriDistinti = flat.rows.mapNotNull { it.groupKeys[colDim] }.distinct().sorted()
-            println("DEBUG AGGREGATE: valori distinti per columnBy[0] ($colDim) = $valoriDistinti")
-        }
 
         var result = if (cleanColumnBy.isEmpty()) {
             flat
@@ -115,11 +102,6 @@ class AggregateService(
                 result = AggregateResult(result.rows.map { it.copy(labels = emptyMap()) }, result.truncated)
             }
         }
-
-        // DEBUG TEMPORANEO: quante chiavi distinte finiscono nel risultato finale
-        val allKeysFinal = result.rows.flatMap { it.values.keys }.distinct()
-        println("DEBUG AGGREGATE: chiavi finali distinte (prime 30) = ${allKeysFinal.take(30)}")
-        println("DEBUG AGGREGATE: chiavi finali totali = ${allKeysFinal.size}")
 
         safeSet(cacheKey, serialize(result))
         return result
@@ -153,16 +135,6 @@ class AggregateService(
 
         val tree = PivotEngine.buildHierarchy(result.rows, groupBy, metriche, ::labelFor) { dimId -> dimByIdLocal[dimId]?.colonnaFisica }
 
-        // DEBUG TEMPORANEO: quante chiavi distinte esistono nell'intero
-        // albero delle righe, per confronto con quelle viste in UI.
-        val allKeysInTree = LinkedHashSet<String>()
-        fun visit(nodes: List<PivotEngine.PivotNode>) {
-            nodes.forEach { n -> allKeysInTree.addAll(n.values.keys); visit(n.children) }
-        }
-        visit(tree)
-        println("DEBUG ROWHIERARCHY: chiavi distinte nell'albero righe (prime 30) = ${allKeysInTree.take(30)}")
-        println("DEBUG ROWHIERARCHY: chiavi distinte totali nell'albero righe = ${allKeysInTree.size}")
-
         return tree
     }
 
@@ -170,7 +142,6 @@ class AggregateService(
 
     private fun computeFlatAggregates(
         areaId: UUID,
-        table: String,
         selections: Map<UUID, Set<Long>>,
         groupBy: List<UUID>,
         columnBy: List<UUID>,
@@ -181,14 +152,13 @@ class AggregateService(
         limit: Int
     ): AggregateResult {
         // Dimensioni realmente usate dalla richiesta: solo le loro tabelle
-        // entrano nel JOIN (schema a stella). Nel legacy il piano è la sola
-        // tabella fatti, query identica a prima.
+        // entrano nel JOIN (schema a stella).
         val allGroupDims = groupBy + columnBy
         val dimsUsate = allGroupDims.toSet() + selections.filterValues { it.isNotEmpty() }.keys
-        val plan = starQueryBuilder.plan(areaId, table, dimsUsate, dimById.values.toList())
-        // Nello schema a stella il nome tabella è già validato dal builder
-        // (i nomi <motore>_<db>__<nome> non passano da Naming.slug).
-        val t = if (plan.isStar) plan.fromClause else requireIdentifier(table, "table")
+        val plan = starQueryBuilder.plan(areaId, dimsUsate, dimById.values.toList())
+        // Il nome tabella è già validato dal builder (i nomi
+        // <motore>_<db>__<nome> non passano da Naming.slug).
+        val t = plan.fromClause
 
         metriche.forEach { m ->
             require(m.colonnaFisica != null || m.tipoAggregazione == TipoAggregazione.COUNT) {
@@ -200,10 +170,10 @@ class AggregateService(
         allGroupDims.mapNotNull { dimById[it]?.colonnaFisica }.forEach { requireIdentifier(it, "group column") }
         val groupCols = allGroupDims.mapNotNull { plan.dimColumn(it) }
 
-        // Nello schema a stella le colonne sono qualificate (d0.x, f.y): si
-        // danno alias espliciti per leggerle per nome dal risultato.
-        val groupAliases = if (plan.isStar) groupCols.indices.map { "g_$it" } else groupCols
-        val groupSelect = if (plan.isStar) groupCols.mapIndexed { i, c -> "$c AS g_$i" } else groupCols
+        // Le colonne sono qualificate (d0.x, f.y): si danno alias espliciti
+        // per leggerle per nome dal risultato.
+        val groupAliases = groupCols.indices.map { "g_$it" }
+        val groupSelect = groupCols.mapIndexed { i, c -> "$c AS g_$i" }
 
         val (where, args) = buildWhere(selections, dimById, plan)
 
@@ -221,10 +191,6 @@ class AggregateService(
         }
 
         val sql = "SELECT ${selectCols.joinToString(",")} FROM $t $whereClause $groupClause $orderClause LIMIT ${limit + 1}"
-
-        // DEBUG TEMPORANEO: la query esatta generata, per verificare che
-        // includa davvero la colonna anno nel SELECT e nel GROUP BY.
-        println("DEBUG SQL: $sql")
 
         val rawRows = jdbcTemplate.query(sql, { rs, _ ->
             val groupKeys = allGroupDims.zip(groupAliases).associate { (dimId, col) -> dimId to rs.getLong(col) }
@@ -272,9 +238,6 @@ class AggregateService(
             symbolLookupService.resolveLabels(dimensione.nome, ids)
         }
 
-        // DEBUG TEMPORANEO
-        println("DEBUG PIVOT: labelsByColumnDim = $labelsByColumnDim")
-
         fun labelFor(dimId: UUID, valueId: Long): String {
             val colonna = colonnaFisicaByDim[dimId]
             if (colonna != null) {
@@ -285,25 +248,11 @@ class AggregateService(
 
         val grouped = flat.rows.groupBy { row -> groupBy.associateWith { row.groupKeys[it] } }
 
-        // DEBUG TEMPORANEO
-        println("DEBUG PIVOT: numero gruppi (righe pivot attese) = ${grouped.size}")
-
-        var debugPrinted = 0
-
         val pivotRows = grouped.entries.take(limit).map { (groupKeyPartial, flatRowsInGroup) ->
             val groupKeys = groupKeyPartial.mapNotNull { (dimId, v) -> v?.let { dimId to it } }.toMap()
 
             val tree = PivotEngine.buildHierarchy(flatRowsInGroup, columnBy, metriche, ::labelFor) { dimId -> dimById[dimId]?.colonnaFisica }
             val leafPaths = PivotEngine.flattenLeafPaths(tree)
-
-            // DEBUG TEMPORANEO: stampa il dettaglio solo per i primi 3
-            // gruppi, per non inondare i log.
-            if (debugPrinted < 3) {
-                println("DEBUG PIVOT: gruppo=$groupKeys flatRowsInGroup.size=${flatRowsInGroup.size}")
-                println("DEBUG PIVOT:   anni presenti nel gruppo = ${flatRowsInGroup.map { it.groupKeys[columnBy.first()] }}")
-                println("DEBUG PIVOT:   leafPaths = ${leafPaths.map { it.first }}")
-                debugPrinted++
-            }
 
             val values = mutableMapOf<String, BigDecimal>()
             leafPaths.forEach { (path, node) ->

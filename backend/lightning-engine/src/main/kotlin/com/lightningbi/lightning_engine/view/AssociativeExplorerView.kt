@@ -11,16 +11,11 @@ import com.lightningbi.lightning_engine.repository.UserPivotStateRepository
 import com.lightningbi.lightning_engine.service.AggregateService
 import com.lightningbi.lightning_engine.service.AssociativeStateFacade
 import com.lightningbi.lightning_engine.service.ChartService
-import com.lightningbi.lightning_engine.service.CryptoService
-import com.lightningbi.lightning_engine.service.MetadataService
 import com.lightningbi.lightning_engine.service.PermissionCheckService
 import com.lightningbi.lightning_engine.service.PivotViewService
 import com.lightningbi.lightning_engine.service.RegistryService
-import com.lightningbi.lightning_engine.service.SourceVerificationService
 import com.lightningbi.lightning_engine.service.SymbolLookupService
-import com.lightningbi.lightning_engine.service.SymbolTableService
 import com.lightningbi.lightning_engine.service.VersionService
-import com.lightningbi.lightning_engine.service.ViewSqlGenerator
 import com.vaadin.flow.component.AttachEvent
 import com.vaadin.flow.component.DetachEvent
 import com.vaadin.flow.component.button.Button
@@ -29,7 +24,6 @@ import com.vaadin.flow.component.dialog.Dialog
 import com.vaadin.flow.component.html.Span
 import com.vaadin.flow.component.notification.Notification
 import com.vaadin.flow.component.orderedlayout.VerticalLayout
-import com.vaadin.flow.component.textfield.TextArea
 import com.vaadin.flow.router.AfterNavigationEvent
 import com.vaadin.flow.router.AfterNavigationObserver
 import com.vaadin.flow.router.BeforeEvent
@@ -48,6 +42,7 @@ import com.lightningbi.lightning_engine.service.AuthService
 import com.lightningbi.lightning_engine.service.EmailService
 import com.vaadin.flow.component.dependency.Uses
 import com.vaadin.flow.component.icon.Icon
+import com.vaadin.flow.component.icon.VaadinIcon
 
 /**
  * Controller/Presenter: decide COSA succede quando, orchestrando Data
@@ -96,11 +91,7 @@ import com.vaadin.flow.spring.annotation.UIScope
 class AssociativeExplorerView(
     private val registryRepository: RegistryRepository,
     private val registryService: RegistryService,
-    private val symbolTableService: SymbolTableService,
     private val areaSourceRepository: AreaSourceRepository,
-    private val cryptoService: CryptoService,
-    private val metadataService: MetadataService,
-    private val viewSqlGenerator: ViewSqlGenerator,
     private val permissionCheckService: PermissionCheckService,
     private val userPivotStateRepository: UserPivotStateRepository,
     private val pivotViewService: PivotViewService,
@@ -109,14 +100,13 @@ class AssociativeExplorerView(
     chartService: ChartService,
     versionService: VersionService,
     symbolLookupService: SymbolLookupService,
-    sourceVerificationService: SourceVerificationService,
     private val authService: AuthService,
     private val emailService: EmailService,
     etlOrchestrator: EtlOrchestrator
 ) : VerticalLayout(), HasUrlParameter<String>, AfterNavigationObserver, com.vaadin.flow.router.BeforeLeaveObserver {
 
     private val data = AssociativeExplorerData(
-        registryRepository, areaSourceRepository, sourceVerificationService,
+        registryRepository, areaSourceRepository,
         associativeStateService, aggregateService, chartService,
         versionService, symbolLookupService, etlOrchestrator
     )
@@ -202,8 +192,7 @@ class AssociativeExplorerView(
 
     /**
      * Gruppo "Dataset": elenco delle Aree (i Dataset). Le voci di gestione
-     * (Nuovo dataset, Modifica Schema, Sincronizza) compaiono solo per
-     * l'admin.
+     * (Nuovo dataset, Sincronizza) compaiono solo per l'admin.
      *
      * Gruppo "Analisi": elenco delle PivotView del Dataset corrente. Ogni
      * voce chiama switchToAnalysis(view.id) per rendere quella vista
@@ -216,13 +205,14 @@ class AssociativeExplorerView(
 
         val adminDatasetEntries: List<LbiSidebarMenu.MenuEntry> = if (isAdmin) {
             listOf(
-                LbiSidebarMenu.MenuEntry("+ Nuovo dataset") {
+                LbiSidebarMenu.MenuEntry("+ Nuovo dataset", icon = VaadinIcon.PLUS) {
                     getUI().ifPresent { it.navigate(NewDatasetView::class.java) }
                 },
-                LbiSidebarMenu.MenuEntry("Modifica Schema", enabled = currentAreaId != null) {
-                    if (currentAreaId != null) getUI().ifPresent { it.navigate(EditFieldsView::class.java, currentAreaId.toString()) }
-                },
-                LbiSidebarMenu.MenuEntry("Sincronizza", enabled = hasSource && sourceStatus == SourceStatus.VERIFIED) { runEtl() }
+                LbiSidebarMenu.MenuEntry(
+                    "Sincronizza",
+                    enabled = hasSource && sourceStatus == SourceStatus.VERIFIED,
+                    icon = VaadinIcon.REFRESH
+                ) { runEtl() }
             )
         } else emptyList()
 
@@ -230,41 +220,43 @@ class AssociativeExplorerView(
             LbiSidebarMenu.MenuGroup(
                 label = "Dataset",
                 entries = currentAreas.map { area ->
-                    LbiSidebarMenu.MenuEntry(area.nome) { switchArea(area.id) }
+                    LbiSidebarMenu.MenuEntry(area.nome, icon = VaadinIcon.TABLE) { switchArea(area.id) }
                 } + adminDatasetEntries,
-                active = true
+                active = true,
+                icon = VaadinIcon.DATABASE
             ),
             LbiSidebarMenu.MenuGroup(
                 label = "Analisi di ${currentAreas.find { it.id == currentAreaId }?.nome ?: ""}",
                 entries = if (currentAreaId != null) {
                     analyses.map { view ->
-                        LbiSidebarMenu.MenuEntry(view.nome) { switchToAnalysis(view.id) }
+                        LbiSidebarMenu.MenuEntry(view.nome, icon = VaadinIcon.TABLE) { switchToAnalysis(view.id) }
                     } + listOf(
-                        LbiSidebarMenu.MenuEntry("+ Nuova Analisi") { createNewAnalysis(currentAreaId) },
-                        LbiSidebarMenu.MenuEntry("Elimina Analisi corrente", enabled = activeView != null) {
+                        LbiSidebarMenu.MenuEntry("+ Nuova Analisi", icon = VaadinIcon.PLUS) { createNewAnalysis(currentAreaId) },
+                        LbiSidebarMenu.MenuEntry("Elimina Analisi corrente", enabled = activeView != null, icon = VaadinIcon.TRASH) {
                             activeView?.let { deleteAnalysis(it.id) }
                         }
                     )
-                } else emptyList()
+                } else emptyList(),
+                icon = VaadinIcon.CHART
             ),
             LbiSidebarMenu.MenuGroup(
                 label = "Grafici",
                 entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Gestisci grafici", enabled = currentAreaId != null) {
+                    LbiSidebarMenu.MenuEntry("Gestisci grafici", enabled = currentAreaId != null, icon = VaadinIcon.PIE_CHART) {
                         navigateToCharts(currentAreaId)
                     }
-                )
+                ),
+                icon = VaadinIcon.PIE_CHART
             ),
             LbiSidebarMenu.MenuGroup(
                 label = "Report",
-                entries = listOf(LbiSidebarMenu.MenuEntry("Stampe") { Notification.show("Funzione in arrivo") })
+                entries = listOf(LbiSidebarMenu.MenuEntry("Stampe", icon = VaadinIcon.PRINT) { Notification.show("Funzione in arrivo") }),
+                icon = VaadinIcon.PRINT
             )
         )
 
         // "Amministrazione" compare SOLO per l'admin (MANAGE_USERS).
-        // Raggruppa "Verifica sorgente", "Mostra SQL view", "Elimina
-        // dataset" (operazioni sulla connessione al DB origine, non sul
-        // contenuto analitico) e "Gestione utenti". Stesso controllo
+        // Raggruppa "Elimina dataset" e "Gestione utenti". Stesso controllo
         // rifatto dentro AdminView.beforeEnter, perché l'URL /admin resta
         // raggiungibile a mano anche se la voce di menu è nascosta qui.
         if (isAdmin) {
@@ -272,13 +264,12 @@ class AssociativeExplorerView(
                 LbiSidebarMenu.MenuGroup(
                     label = "Amministrazione",
                     entries = listOf(
-                        LbiSidebarMenu.MenuEntry("Verifica sorgente", enabled = hasSource) { verifySource() },
-                        LbiSidebarMenu.MenuEntry("Mostra SQL view", enabled = hasSource) { showViewSql() },
-                        LbiSidebarMenu.MenuEntry("Elimina dataset", enabled = currentAreaId != null) { confirmDeleteArea() },
-                        LbiSidebarMenu.MenuEntry("Gestione utenti") {
+                        LbiSidebarMenu.MenuEntry("Elimina dataset", enabled = currentAreaId != null, icon = VaadinIcon.TRASH) { confirmDeleteArea() },
+                        LbiSidebarMenu.MenuEntry("Gestione utenti", icon = VaadinIcon.USERS) {
                             getUI().ifPresent { it.navigate(AdminView::class.java) }
                         }
-                    )
+                    ),
+                    icon = VaadinIcon.COG
                 )
             )
         }
@@ -325,45 +316,11 @@ class AssociativeExplorerView(
         shell.updateSourceStatus(
             when {
                 source == null -> "Nessuna sorgente collegata"
-                source.status == SourceStatus.VERIFIED -> "Sorgente verificata: ${source.config.viewName}"
                 source.status == SourceStatus.ERROR -> "Sorgente in errore: ${source.errorDetail ?: "causa non registrata"}"
-                else -> "View da creare sul database di origine (${source.config.viewName})"
+                else -> "Sorgente: ${source.config.tabelle.size} tabelle importate"
             }
         )
         refreshSidebar()
-    }
-
-    private fun verifySource() {
-        if (!isCurrentUserAdmin()) return
-        val currentAreaId = areaId ?: return
-        val vaadinUi = getUI().orElse(null) ?: return
-        val scope = viewScope ?: return
-
-        shell.updateSourceStatus("Verifica in corso...")
-
-        scope.launch {
-            val results = try {
-                data.verifySource(currentAreaId)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                vaadinUi.access {
-                    Notification.show("Verifica fallita: ${e.message}", 6000, Notification.Position.MIDDLE)
-                    refreshSourceStatus()
-                }
-                return@launch
-            }
-            vaadinUi.access {
-                if (areaId != currentAreaId) return@access
-                val failed = results.firstOrNull { !it.ok }
-                if (failed != null) {
-                    Notification.show(failed.message, 8000, Notification.Position.MIDDLE)
-                } else {
-                    Notification.show("Sorgente verificata: si può sincronizzare", 4000, Notification.Position.BOTTOM_END)
-                }
-                refreshSourceStatus()
-            }
-        }
     }
 
     private fun runEtl() {
@@ -402,59 +359,7 @@ class AssociativeExplorerView(
         }
     }
 
-    private fun showViewSql() {
-        if (!isCurrentUserAdmin()) return
-        val currentAreaId = areaId ?: return
-        val source = data.findSourceByArea(currentAreaId) ?: return
-
-        val attese = data.expectedColumns(currentAreaId, source.config.syncMode)
-        val dialog = Dialog().apply {
-            className = "lbi-wizard-dialog"
-            headerTitle = "View attesa: ${source.config.viewName}"
-            width = "760px"
-        }
-        val area = TextArea().apply {
-            isReadOnly = true
-            setWidthFull()
-            height = "320px"
-            value = buildString {
-                append("-- Colonne che la view deve esporre, con questi alias esatti:\n")
-                attese.forEach { append("--   ").append(it).append('\n') }
-                append("\n-- Tabella di origine: ")
-                append(source.config.schema?.let { "$it." } ?: "")
-                append(source.config.mainTable)
-            }
-        }
-        dialog.add(area)
-        dialog.footer.add(Button("Chiudi") { dialog.close() })
-        dialog.open()
-    }
-
-    private fun openEditDimensions() {
-        if (!isCurrentUserAdmin()) return
-        val currentAreaId = areaId ?: return
-        EditDimensionsDialog(
-            areaId = currentAreaId,
-            registryService = registryService,
-            areaSourceRepository = areaSourceRepository,
-            cryptoService = cryptoService,
-            metadataService = metadataService
-        ) {
-            refreshPivotFields(currentAreaId)
-            refresh()
-        }.open()
-    }
-
-    // ================= Metriche / Eliminazione (solo admin) =================
-
-    private fun openEditMetrics() {
-        if (!isCurrentUserAdmin()) return
-        val currentAreaId = areaId ?: return
-        EditMetricsDialog(currentAreaId, registryService) {
-            refreshPivotFields(currentAreaId)
-            refresh()
-        }.open()
-    }
+    // ================= Eliminazione (solo admin) =================
 
     private fun confirmDeleteArea() {
         if (!isCurrentUserAdmin()) return
@@ -493,30 +398,11 @@ class AssociativeExplorerView(
         Notification.show("Dataset eliminato", 4000, Notification.Position.BOTTOM_END)
     }
 
-    private fun openNewAnalysisWizard() {
-        if (!isCurrentUserAdmin()) return
-        NewAnalysisWizardDialog(
-            registryService, registryRepository, symbolTableService,
-            areaSourceRepository, cryptoService, metadataService, viewSqlGenerator
-        ) {
-            currentAreas = data.findAllAree()
-            currentAreas.lastOrNull()?.let { switchArea(it.id) } ?: refreshSidebar()
-        }.open()
-    }
-
     // ================= Ciclo di vita =================
 
     override fun onAttach(attachEvent: AttachEvent) {
         super.onAttach(attachEvent)
         attachEvent.ui.page.addJavaScript("js/echarts.min.js")
-
-        // DEBUG TEMPORANEO: cattura qualsiasi eccezione lato server non
-        // gestita durante il ciclo di vita della UI, per capire se il
-        // logout imprevisto è causato da un crash silenzioso in una delle
-        // classi Ui (FilterCardsUi/ResultsGridUi/ChartsPanelUi).
-        attachEvent.ui.session.errorHandler = com.vaadin.flow.server.ErrorHandler { event ->
-            org.slf4j.LoggerFactory.getLogger("LBI-UI-ERROR").error("Errore UI non gestito", event.throwable)
-        }
 
         if (viewScope == null) {
             viewScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -599,10 +485,6 @@ class AssociativeExplorerView(
         val active = pivotViewService.ensureActiveView(currentUser.userId, currentAreaId)
         analyses = pivotViewService.findByArea(currentAreaId)
         activeView = active
-
-        // DEBUG TEMPORANEO: verifica che l'Analisi attiva erediti i campi
-        // del Dataset corretto.
-        println("DEBUG ANALISI: areaId=$currentAreaId activeView.id=${active.id} activeView.nome=${active.nome} activeView.areaId=${active.areaId}")
 
         pivotRows = active.pivotRows
         pivotColumns = active.pivotColumns

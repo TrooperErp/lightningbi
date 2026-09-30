@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="021-connection" author="lightningbi">
+        <!-- Connessione a una sorgente dati, indipendente dai dataset: più
+             tabelle importate (e quindi più dataset) possono usarla.
+             Modello generico per tipo (mssql, psql, influx, ...): i parametri
+             specifici del tipo stanno in JSON, così una sorgente nuova non
+             richiede né una migrazione né un cambio di modello. -->
+        <createTable tableName="lbi_connection">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="nome" type="varchar(255)">
+                <constraints nullable="false" unique="true" uniqueConstraintName="uq_connection_nome"/>
+            </column>
+            <!-- Codice del tipo di sorgente: mssql, psql, influx, ... -->
+            <column name="tipo" type="varchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Parametri non riservati (es. jdbcUrl, username, schema). -->
+            <column name="parametri" type="jsonb" defaultValue="{}">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Parametri riservati (password, token): i VALORI sono sempre
+                 cifrati (CryptoService), mai in chiaro. -->
+            <column name="segreti" type="jsonb" defaultValue="{}">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+</databaseChangeLog>
