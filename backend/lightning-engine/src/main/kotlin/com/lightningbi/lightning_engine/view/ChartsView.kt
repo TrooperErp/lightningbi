@@ -23,6 +23,8 @@ import com.vaadin.flow.router.Route
 import java.util.UUID
 import com.lightningbi.lightning_engine.service.AuthService
 import com.lightningbi.lightning_engine.model.AggregateOrder
+import com.vaadin.flow.component.dependency.Uses
+import com.vaadin.flow.component.icon.Icon
 
 
 /**
@@ -58,6 +60,7 @@ import com.lightningbi.lightning_engine.model.AggregateOrder
  * UninitializedPropertyAccessException con un lateinit var).
  */
 @Route("charts")
+@Uses(Icon::class)
 class ChartsView(
     private val chartService: ChartService,
     private val registryRepository: RegistryRepository,
@@ -163,6 +166,7 @@ class ChartsView(
         val typeGallery = buildTypeGallery(currentAreaId)
 
         grid.apply {
+            removeAllColumns()
             setWidthFull()
             height = "320px"
             addColumn { it.titolo }.setHeader("Titolo").setAutoWidth(true)
@@ -379,6 +383,7 @@ class ChartsView(
         val metriche = registryRepository.findMetricheByArea(currentAreaId).map { it.id to it.nome }
 
         val panel = PivotPanel(onChange)
+        panel.addAttachListener { panel.ensureDropTargetsAttached() }
         panel.setFieldsWithIds(dimensioni, metriche)
         return panel
     }

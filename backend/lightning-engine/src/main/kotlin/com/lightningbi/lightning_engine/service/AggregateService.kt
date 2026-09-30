@@ -120,7 +120,7 @@ class AggregateService(
         else tutteMetriche.filter { it.id in metricIds.toSet() }
 
         val dimensioni = registryRepository.findDimensioniByArea(areaId)
-        val colonnaFisicaByDim = dimensioni.associate { it.dimensioneId to it.colonnaFisica }
+        val colonnaFisicaByDim = dimensioni.filter { it.valoreGrezzo }.associate { it.dimensioneId to it.colonnaFisica }
 
         fun labelFor(dimId: UUID, valueId: Long): String {
             val colonna = colonnaFisicaByDim[dimId]
@@ -130,10 +130,7 @@ class AggregateService(
             return result.rows.firstOrNull { it.groupKeys[dimId] == valueId }?.labels?.get(dimId) ?: "#$valueId"
         }
 
-        val dims = registryRepository.findDimensioniByArea(areaId)
-        val dimByIdLocal = dims.associateBy { it.dimensioneId }
-
-        val tree = PivotEngine.buildHierarchy(result.rows, groupBy, metriche, ::labelFor) { dimId -> dimByIdLocal[dimId]?.colonnaFisica }
+        val tree = PivotEngine.buildHierarchy(result.rows, groupBy, metriche, ::labelFor) { dimId -> colonnaFisicaByDim[dimId] }
 
         return tree
     }
@@ -229,9 +226,9 @@ class AggregateService(
             }
         }
 
-        val colonnaFisicaByDim: Map<UUID, String> = columnBy.associateWith { dimId ->
-            dimById[dimId]?.colonnaFisica ?: ""
-        }
+        val colonnaFisicaByDim: Map<UUID, String> = columnBy.mapNotNull { dimId ->
+            dimById[dimId]?.takeIf { it.valoreGrezzo }?.let { dimId to it.colonnaFisica }
+        }.toMap()
         val labelsByColumnDim: Map<UUID, Map<Long, String>> = columnBy.associateWith { dimId ->
             val dimensione = registryRepository.findDimensione(dimId) ?: return@associateWith emptyMap()
             val ids = flat.rows.mapNotNull { it.groupKeys[dimId] }.toSet()
@@ -251,7 +248,7 @@ class AggregateService(
         val pivotRows = grouped.entries.take(limit).map { (groupKeyPartial, flatRowsInGroup) ->
             val groupKeys = groupKeyPartial.mapNotNull { (dimId, v) -> v?.let { dimId to it } }.toMap()
 
-            val tree = PivotEngine.buildHierarchy(flatRowsInGroup, columnBy, metriche, ::labelFor) { dimId -> dimById[dimId]?.colonnaFisica }
+            val tree = PivotEngine.buildHierarchy(flatRowsInGroup, columnBy, metriche, ::labelFor) { dimId -> colonnaFisicaByDim[dimId] }
             val leafPaths = PivotEngine.flattenLeafPaths(tree)
 
             val values = mutableMapOf<String, BigDecimal>()
@@ -264,7 +261,7 @@ class AggregateService(
             }
 
             if (showVariationPercent && columnBy.isNotEmpty()) {
-                addVariationColumns(values, flatRowsInGroup, columnBy, metriche, ::labelFor)
+                addVariationColumns(values, flatRowsInGroup, columnBy, metriche, ::labelFor, colonnaFisicaByDim)
             }
 
             AggregateRow(groupKeys = groupKeys, values = values)
@@ -278,18 +275,31 @@ class AggregateService(
         flatRowsInGroup: List<AggregateRow>,
         columnBy: List<UUID>,
         metriche: List<AreaMetrica>,
-        labelFor: (UUID, Long) -> String
+        labelFor: (UUID, Long) -> String,
+        colonnaFisicaByDim: Map<UUID, String>
     ) {
         val outerDims = columnBy.dropLast(1)
         val innerDim = columnBy.last()
+        val ordineNaturale = colonnaFisicaByDim[innerDim]?.let { DimensionSortOrders.usesNaturalOrder(it) } == true
 
         val byOuter = flatRowsInGroup.groupBy { row ->
             outerDims.map { dimId -> row.groupKeys[dimId]?.let { labelFor(dimId, it) } ?: "—" }
         }
 
         byOuter.forEach { (outerLabels, rowsInOuter) ->
-            val ordered = rowsInOuter.sortedBy { row ->
-                row.groupKeys[innerDim]?.let { labelFor(innerDim, it) } ?: ""
+            // Precedente/corrente: per le dimensioni con ordine naturale (es.
+            // mese_numero) si ordina sul valore grezzo; altrimenti sull'etichetta
+            // con confronto naturale (i numeri si confrontano come numeri:
+            // "9" prima di "10"), non in ordine alfabetico puro.
+            val ordered = if (ordineNaturale) {
+                rowsInOuter.sortedBy { row -> row.groupKeys[innerDim] ?: Long.MAX_VALUE }
+            } else {
+                rowsInOuter.sortedWith { r1, r2 ->
+                    confrontoNaturale(
+                        r1.groupKeys[innerDim]?.let { labelFor(innerDim, it) } ?: "",
+                        r2.groupKeys[innerDim]?.let { labelFor(innerDim, it) } ?: ""
+                    )
+                }
             }
             // La % di variazione ha senso solo per un confronto A/B netto fra
             // esattamente due valori (es. 2025 vs 2026): con 1 o 3+ valori il
@@ -319,6 +329,37 @@ class AggregateService(
                 }
             }
         }
+    }
+
+    /**
+     * Confronto "naturale" tra etichette: le sequenze di cifre si confrontano
+     * come numeri (9 < 10), il resto carattere per carattere senza distinguere
+     * maiuscole e minuscole.
+     */
+    private fun confrontoNaturale(a: String, b: String): Int {
+        var i = 0
+        var j = 0
+        while (i < a.length && j < b.length) {
+            if (a[i].isDigit() && b[j].isDigit()) {
+                var ie = i
+                while (ie < a.length && a[ie].isDigit()) ie++
+                var je = j
+                while (je < b.length && b[je].isDigit()) je++
+                val na = a.substring(i, ie).trimStart('0')
+                val nb = b.substring(j, je).trimStart('0')
+                if (na.length != nb.length) return na.length - nb.length
+                val c = na.compareTo(nb)
+                if (c != 0) return c
+                i = ie
+                j = je
+            } else {
+                val c = a[i].lowercaseChar().compareTo(b[j].lowercaseChar())
+                if (c != 0) return c
+                i++
+                j++
+            }
+        }
+        return (a.length - i) - (b.length - j)
     }
 
     private fun sqlExpression(m: AreaMetrica, plan: StarQueryBuilder.Plan): String {

@@ -57,10 +57,23 @@ class AdminView(
     private val permissionCheckService: PermissionCheckService,
     private val authService: AuthService,
     private val passwordEncoder: org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
-) : VerticalLayout(){
+) : VerticalLayout(), BeforeEnterObserver {
 
     private val usersGrid = Grid<User>()
     private val rolesGrid = Grid<Role>()
+    private var paginaCostruita = false
+
+    override fun beforeEnter(event: BeforeEnterEvent) {
+        val user = CurrentUserHolder.get()
+        if (user == null || !permissionCheckService.hasPermission(user.roleName, "MANAGE_USERS")) {
+            event.forwardTo(AssociativeExplorerView::class.java)
+            return
+        }
+        if (!paginaCostruita) {
+            buildPage()
+            paginaCostruita = true
+        }
+    }
 
 
 
@@ -310,14 +323,22 @@ class AdminView(
                 return@Button
             }
 
-            val updatedUser = user.copy(email = email, updatedAt = java.time.LocalDateTime.now())
-            userRepository.update(updatedUser)
+            val attuale = userRepository.findById(user.id)
+            if (attuale == null) {
+                Notification.show("Utente non trovato")
+                dialog.close()
+                reloadUsers()
+                return@Button
+            }
 
             val newPassword = passwordField.value ?: ""
-            if (newPassword.isNotBlank()) {
-                val hashedPassword: String = passwordEncoder.encode(newPassword)!!
-                userRepository.update(updatedUser.copy(passwordHash = hashedPassword))
-            }
+            userRepository.update(
+                attuale.copy(
+                    email = email,
+                    updatedAt = java.time.LocalDateTime.now(),
+                    passwordHash = if (newPassword.isNotBlank()) passwordEncoder.encode(newPassword)!! else attuale.passwordHash
+                )
+            )
 
             reloadUsers()
             dialog.close()

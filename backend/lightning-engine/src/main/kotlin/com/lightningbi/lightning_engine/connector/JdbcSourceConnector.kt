@@ -135,6 +135,7 @@ class JdbcSourceConnector(
 
         return sequence {
             apri(connection).use { conn ->
+                if (connection.tipo == "psql") conn.autoCommit = false
                 conn.prepareStatement("SELECT * FROM $qualificata").use { stmt ->
                     stmt.fetchSize = 5000
                     stmt.executeQuery().use { rs ->
@@ -186,8 +187,8 @@ class JdbcSourceConnector(
     /** schema.tabella con entrambi i pezzi verificati: finiscono dentro una query. */
     private fun qualifica(schema: String?, tabella: String): String {
         require(identificatoreSicuro.matches(tabella)) { "Nome tabella non valido: '$tabella'" }
-        if (schema.isNullOrBlank()) return tabella
+        if (schema.isNullOrBlank()) return "\"$tabella\""
         require(identificatoreSicuro.matches(schema)) { "Nome schema non valido: '$schema'" }
-        return "$schema.$tabella"
+        return "\"$schema\".\"$tabella\""
     }
 }

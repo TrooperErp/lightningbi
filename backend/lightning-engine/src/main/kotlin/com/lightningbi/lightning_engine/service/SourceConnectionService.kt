@@ -5,6 +5,7 @@ import com.lightningbi.lightning_engine.repository.SourceConnectionRepository
 import org.springframework.stereotype.Service
 import java.time.Instant
 import java.util.UUID
+import org.springframework.dao.DataIntegrityViolationException
 
 /**
  * Gestione delle connessioni alle sorgenti dati: crea, modifica, elimina.
@@ -80,8 +81,16 @@ class SourceConnectionService(
     }
 
     fun delete(id: UUID) {
-        requireNotNull(repository.findById(id)) { "Connessione $id non trovata" }
-        repository.delete(id)
+        val connessione = requireNotNull(repository.findById(id)) { "Connessione $id non trovata" }
+        try {
+            repository.delete(id)
+        } catch (e: DataIntegrityViolationException) {
+            throw IllegalStateException(
+                "La connessione \"${connessione.nome}\" è in uso e non si può eliminare: " +
+                        "elimina prima i dataset o le tabelle che la usano",
+                e
+            )
+        }
     }
 
     /**

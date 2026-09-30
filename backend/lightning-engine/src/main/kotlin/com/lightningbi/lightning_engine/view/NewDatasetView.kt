@@ -30,7 +30,8 @@ import com.vaadin.flow.router.BeforeEnterObserver
 import com.vaadin.flow.router.Route
 import java.time.Instant
 import java.util.UUID
-
+import com.vaadin.flow.component.dependency.Uses
+import com.vaadin.flow.component.icon.Icon
 /**
  * Pagina di creazione di un nuovo Dataset (schema a stella nativo:
  * Fatti + Dimensioni importati come tabelle separate). Solo admin.
@@ -66,6 +67,7 @@ import java.util.UUID
  * sincronizzazione, leggendo ImportedTable/ImportedColumn.
  */
 @Route("nuovo-dataset")
+@Uses(Icon::class)
 class NewDatasetView(
     private val permissionCheckService: PermissionCheckService,
     private val authService: AuthService,
@@ -150,7 +152,7 @@ class NewDatasetView(
         isSpacing = true
     }
     private val stepBody = Div().apply { setWidthFull() }
-    private val backButton = Button("â† Indietro") { goBack() }
+    private val backButton = Button("← Indietro") { goBack() }
     private val nextButton = Button("Avanti →") { goNext() }.apply {
         addThemeVariants(ButtonVariant.LUMO_PRIMARY)
     }
