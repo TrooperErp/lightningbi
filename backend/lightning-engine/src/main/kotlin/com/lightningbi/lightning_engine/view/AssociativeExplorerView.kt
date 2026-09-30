@@ -123,6 +123,8 @@ class AssociativeExplorerView(
     private val selections = mutableMapOf<UUID, Set<Long>>()
     private val dimensionNames = mutableMapOf<UUID, String>()
     private val dimensionColumns = mutableMapOf<UUID, String>()
+    /** Dimensioni a valore grezzo: solo per queste valgono formatter e ordine naturale. */
+    private val dimensioniGrezze = mutableSetOf<UUID>()
 
     private var pivotRows: List<UUID> = emptyList()
     private var pivotColumns: List<UUID> = emptyList()
@@ -422,6 +424,7 @@ class AssociativeExplorerView(
         selections.clear()
         dimensionNames.clear()
         dimensionColumns.clear()
+        dimensioniGrezze.clear()
         pivotRows = emptyList()
         pivotColumns = emptyList()
         pivotValues = emptyList()
@@ -438,6 +441,7 @@ class AssociativeExplorerView(
             data.findDimensione(ad.dimensioneId)?.let { dim ->
                 dimensionNames[ad.dimensioneId] = dim.nome
                 dimensionColumns[ad.dimensioneId] = ad.colonnaFisica
+                if (ad.valoreGrezzo) dimensioniGrezze.add(ad.dimensioneId)
             }
         }
         refreshPivotFields(newAreaId)
@@ -613,7 +617,9 @@ class AssociativeExplorerView(
 
                     if (myRequestId != requestCounter.get()) return@access
                     if (areaId != currentAreaId) return@access
-                    ui.renderStates(result.states, result.labels, data::labelOrFallback) { dimId -> dimensionColumns[dimId] }
+                    ui.renderStates(result.states, result.labels, data::labelOrFallback) { dimId ->
+                        dimensionColumns[dimId]?.takeIf { dimId in dimensioniGrezze }
+                    }
                     ui.renderResultsGrid(result.aggregates, result.rowHierarchy, rowsSnapshot, dimensionNames)
                     ui.renderCharts(result.chartsData, rowsSnapshot)
                 }

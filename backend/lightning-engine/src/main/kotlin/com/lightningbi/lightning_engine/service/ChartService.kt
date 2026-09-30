@@ -109,7 +109,7 @@ class ChartService(
         }
 
         val dimensioni = registryRepository.findDimensioniByArea(chart.areaId)
-        val colonnaFisicaByDim: Map<UUID, String> = dimensioni.associate { it.dimensioneId to it.colonnaFisica }
+        val colonnaFisicaByDim: Map<UUID, String> = dimensioni.filter { it.valoreGrezzo }.associate { it.dimensioneId to it.colonnaFisica }
 
         val columnsEffettive = if (chart.followsColumns) pivotColumns else emptyList()
 
@@ -213,7 +213,7 @@ class ChartService(
             .filter { it.startsWith(prefix) }
             .map { it.removePrefix(prefix) }
             .distinct()
-            .sorted()
+            .sortedWith { a, b -> DimensionSortOrders.confrontoNaturale(a, b) }
 
         if (nomiColonna.isEmpty()) return emptyList()
 
