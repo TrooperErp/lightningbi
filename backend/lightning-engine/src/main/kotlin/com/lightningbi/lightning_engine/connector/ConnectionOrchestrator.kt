@@ -6,7 +6,8 @@ import com.lightningbi.lightning_engine.service.SourceConnectionService
 import com.lightningbi.lightning_engine.service.TableInfo
 import org.springframework.stereotype.Service
 import java.util.UUID
-
+import com.lightningbi.lightning_engine.service.KeyQueryProbe
+import java.time.LocalDateTime
 /**
  * Punto unico verso le sorgenti dati: le pagine admin e l'ETL parlano solo
  * con lui, mai con un connettore o con il repository.
@@ -96,6 +97,25 @@ class ConnectionOrchestrator(
     ): List<Map<String, Any?>> {
         val connessione = connessione(connectionId)
         return connettoreDi(connessione.tipo).sampleRows(connessione, schema, tabella, limit)
+    }
+    /** Ora corrente della sorgente, nell'ora della sorgente (senza fuso). */
+    fun sourceNow(connectionId: UUID): LocalDateTime {
+        val connessione = connessione(connectionId)
+        return connettoreDi(connessione.tipo).sourceNow(connessione)
+    }
+
+    /**
+     * Prova una query di chiavi senza leggere un insieme di chiavi: vedi
+     * SourceConnector.probeKeyQuery.
+     */
+    fun probeKeyQuery(
+        connectionId: UUID,
+        query: String,
+        ultimaSync: LocalDateTime,
+        timeoutSecondi: Int
+    ): KeyQueryProbe {
+        val connessione = connessione(connectionId)
+        return connettoreDi(connessione.tipo).probeKeyQuery(connessione, query, ultimaSync, timeoutSecondi)
     }
 
     /**
