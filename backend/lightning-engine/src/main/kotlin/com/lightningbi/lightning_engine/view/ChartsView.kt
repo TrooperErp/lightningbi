@@ -25,7 +25,8 @@ import com.lightningbi.lightning_engine.service.AuthService
 import com.lightningbi.lightning_engine.model.AggregateOrder
 import com.vaadin.flow.component.dependency.Uses
 import com.vaadin.flow.component.icon.Icon
-
+import com.lightningbi.lightning_engine.service.AdminGuard
+import com.vaadin.flow.component.icon.VaadinIcon
 
 /**
  * Pagina di gestione grafici per un'Analisi. Resta sempre agganciata a
@@ -67,7 +68,9 @@ class ChartsView(
     private val areaSourceRepository: AreaSourceRepository,
     private val authService: AuthService,
     private val userPivotStateRepository: UserPivotStateRepository,
-    private val pivotViewService: com.lightningbi.lightning_engine.service.PivotViewService
+
+    private val pivotViewService: com.lightningbi.lightning_engine.service.PivotViewService,
+    private val adminGuard: AdminGuard
 ) : VerticalLayout(), HasUrlParameter<String> {
 
     private var areaId: UUID? = null
@@ -110,6 +113,26 @@ class ChartsView(
             buildContent(area.id, area.nome)
         }
 
+        // "Amministrazione" compare SOLO per l'admin (MANAGE_USERS): le pagine
+        // di destinazione rifanno il controllo, perché gli URL restano
+        // raggiungibili a mano.
+        val gruppoAmministrazione = if (adminGuard.isAdmin()) {
+            listOf(
+                LbiSidebarMenu.MenuGroup(
+                    label = "Amministrazione",
+                    entries = listOf(
+                        LbiSidebarMenu.MenuEntry("Tabelle importate", icon = VaadinIcon.DATABASE) {
+                            getUI().ifPresent { it.navigate(TabelleImportateView::class.java) }
+                        },
+                        LbiSidebarMenu.MenuEntry("Gestione utenti", icon = VaadinIcon.USERS) {
+                            getUI().ifPresent { it.navigate(AdminView::class.java) }
+                        }
+                    ),
+                    icon = VaadinIcon.COG
+                )
+            )
+        } else emptyList()
+
         val menuGroups = listOf(
             LbiSidebarMenu.MenuGroup(
                 label = "Gestisci",
@@ -131,14 +154,8 @@ class ChartsView(
                 entries = listOf(
                     LbiSidebarMenu.MenuEntry("Stampe") { Notification.show("Funzione in arrivo") }
                 )
-            ),
-            LbiSidebarMenu.MenuGroup(
-                label = "Amministrazione",
-                entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Gestione utenti") { Notification.show("Funzione in arrivo") }
-                )
             )
-        )
+        ) + gruppoAmministrazione
 
         val shell = LbiAppShell(menuGroups, content, authService)
         add(shell)

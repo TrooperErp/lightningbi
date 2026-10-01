@@ -32,6 +32,7 @@ import com.vaadin.flow.router.BeforeEnterObserver
 import com.vaadin.flow.router.Route
 import java.time.Instant
 import java.util.*
+import com.lightningbi.lightning_engine.service.ColumnProposal
 
 /**
  * Pagina di creazione di un nuovo Dataset (schema a stella nativo:
@@ -415,7 +416,7 @@ class NewDatasetView(
         val salvata = state.connessione?.takeIf { state.creataQui }
 
         val nomeField = TextField("Nome della connessione").apply {
-            placeholder = "es. SEM TeamSystem"
+            placeholder = "es. ERP sede centrale"
             value = salvata?.nome ?: ""
             setWidthFull()
         }
@@ -664,13 +665,15 @@ class NewDatasetView(
     }
 
     /** Nome logico proposto: toglie il prefisso TeamSystem e mette la maiuscola iniziale. */
-    private fun nomeLogicoDefault(viewName: String): String {
-        val senza = viewName
-            .replace(Regex("^QLK_VISTA", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("^QLK_", RegexOption.IGNORE_CASE), "")
-            .ifBlank { viewName }
-        return senza.lowercase().replaceFirstChar { it.uppercase() }
-    }
+    /** Nome logico proposto: toglie i prefissi configurati sulla connessione e mette la maiuscola iniziale. */
+    private fun nomeLogicoDefault(viewName: String): String =
+        ColumnProposal.nomeLogico(viewName, prefissiDaTogliere())
+
+    private fun prefissiDaTogliere(): List<String> =
+        state.connessione?.let { ColumnProposal.lista(it.parametri, ColumnProposal.PREFISSI_DA_TOGLIERE) } ?: emptyList()
+
+    private fun prefissiColonnaChiave(): List<String> =
+        state.connessione?.let { ColumnProposal.lista(it.parametri, ColumnProposal.PREFISSI_COLONNA_CHIAVE) } ?: emptyList()
 
     private fun validateTabelle(): String? {
         val incluse = state.selezioni.filterValues { it.incluso }
@@ -759,25 +762,20 @@ class NewDatasetView(
 
     /**
      * Colonne candidate per il JOIN Fatti <-> Dimensione: stesso nome in
-     * entrambe le tabelle (case-insensitive), come l'engine associativo
-     * Qlik. Prima le chiavi TeamSystem (_KEY*), poi le altre in ordine
-     * alfabetico. Nessun risultato = tabelle non collegabili.
+     * entrambe le tabelle (senza distinguere maiuscole), come l'engine
+     * associativo Qlik. Prima quelle con un prefisso di colonna chiave
+     * configurato sulla connessione, poi le altre in ordine alfabetico.
+     * Nessun risultato = tabelle non collegabili.
      */
     private fun proposeJoinKeys(connectionId: UUID, tabellaFatti: String, tabellaDimensione: String): List<String> {
         val colonneFatti = connectionOrchestrator.listColumns(connectionId, state.schema, tabellaFatti).map { it.name }
-        val colonneDimensione = connectionOrchestrator.listColumns(connectionId, state.schema, tabellaDimensione)
-            .map { it.name.lowercase() }
-            .toSet()
-        return colonneFatti
-            .filter { it.lowercase() in colonneDimensione }
-            .sortedWith(compareByDescending<String> { it.startsWith("_key", ignoreCase = true) }.thenBy { it.lowercase() })
+        val colonneDimensione = connectionOrchestrator.listColumns(connectionId, state.schema, tabellaDimensione).map { it.name }
+        return ColumnProposal.chiaviProposte(colonneFatti, colonneDimensione, prefissiColonnaChiave())
     }
 
     // ================= STEP 5: Colonne =================
 
-    private val tipiNumerici = listOf("DECIMAL", "NUMERIC", "MONEY", "FLOAT", "REAL", "DOUBLE")
 
-    private fun isNumerico(tipo: String): Boolean = tipiNumerici.any { tipo.uppercase().contains(it) }
 
     /**
      * Legge le colonne reali di ogni tabella scelta e propone il ruolo di
@@ -812,22 +810,18 @@ class NewDatasetView(
             val lista = cols.map { col ->
                 val esempi = samples.mapNotNull { row -> row[col.name]?.toString() }.take(3)
                 val esempio = if (esempi.isEmpty()) "—" else esempi.joinToString(", ")
-                val n = col.name.lowercase()
-                val ruolo: Ruolo = if (t.ruolo == RuoloTabella.FATTI) {
-                    when {
-                        n in chiaviScelte -> Ruolo.CHIAVE
-                        n.startsWith("_key") -> Ruolo.IGNORA
-                        isNumerico(col.typeName) -> Ruolo.METRICA
-                        else -> Ruolo.DIMENSIONE
-                    }
-                } else {
-                    when {
-                        n == t.colonnaChiave?.lowercase() -> Ruolo.CHIAVE
-                        n in nomiFatti -> Ruolo.CONDIVISA
-                        n.startsWith("_key") -> Ruolo.IGNORA
-                        else -> Ruolo.DIMENSIONE
-                    }
-                }
+                val ruolo = Ruolo.valueOf(
+                    ColumnProposal.ruoloDefault(
+                        nome = col.name,
+                        typeName = col.typeName,
+                        scale = col.scale,
+                        ruoloTabella = t.ruolo,
+                        colonneChiaveFatti = chiaviScelte,
+                        colonnaChiaveTabella = t.colonnaChiave,
+                        nomiFatti = nomiFatti,
+                        prefissiColonnaChiave = prefissiColonnaChiave()
+                    ).name
+                )
                 ColumnChoice(col.name, col.typeName, esempio, ruolo).also {
                     if (ruolo == Ruolo.METRICA) it.aggregazioni.add(suggestDefaultAggregation(col.name))
                 }
@@ -1003,16 +997,15 @@ class NewDatasetView(
         if (plan.metriche.isEmpty()) return "Serve almeno una metrica (colonna dei Fatti con ruolo Metrica)"
 
         // Colonne fisiche che collidono dopo la normalizzazione, per tabella.
+        // Colonne fisiche che collidono dopo la normalizzazione, per tabella.
         tabelleScelte().forEach { t ->
             val usate = state.colonne[t.viewName].orEmpty().filter { it.ruolo != Ruolo.IGNORA }
-            val fisici = try {
-                usate.map { Naming.column(it.nome) }
+            val collisioni = try {
+                ColumnProposal.collisioni(usate.map { it.nome })
             } catch (e: Exception) {
                 return "Colonna non utilizzabile in ${t.nomeLogico}: ${e.message}"
             }
-            val doppi = fisici.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
-            if (doppi.isNotEmpty())
-                return "In ${t.nomeLogico} ci sono colonne che collidono dopo la normalizzazione: ${doppi.joinToString(", ")}. Impostane una su Ignora."
+            if (collisioni.isNotEmpty()) return ColumnProposal.messaggioCollisioni(t.nomeLogico, collisioni)
         }
 
         try { plan.dimensioni.forEach { Naming.slug(it.nomeDimensione) } }

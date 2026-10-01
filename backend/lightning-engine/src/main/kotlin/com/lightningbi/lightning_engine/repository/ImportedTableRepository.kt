@@ -31,5 +31,11 @@ interface ImportedTableRepository {
 
     /** Nomi fisici di tutte le tabelle importate, a prescindere dal dataset (anche quelle senza dataset). */
     fun findTabelleFisiche(): Set<String>
+
+    /** Tutte le tabelle importate, a prescindere dal dataset. */
+    fun findAll(): List<ImportedTable>
+
+    /** Elimina una tabella importata. Colonne e configurazione di sincronizzazione vanno in cascata. */
+    fun deleteById(id: UUID): Boolean
 }
 

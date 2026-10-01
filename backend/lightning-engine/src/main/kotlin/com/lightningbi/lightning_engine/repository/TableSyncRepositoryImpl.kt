@@ -29,15 +29,16 @@ class TableSyncRepositoryImpl(
             """
             INSERT INTO lbi_table_sync
                 (imported_table_id, modalita, colonne_unita, query_cambiati, query_sempre,
-                 confronta_cancellazioni, margine_secondi, ultima_sync_inizio)
-            VALUES (?, ?, ?::jsonb, ?, ?, ?, ?, ?)
+                 confronta_cancellazioni, margine_secondi, datastamp_verificato, ultima_sync_inizio)
+            VALUES (?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (imported_table_id) DO UPDATE SET
                 modalita = EXCLUDED.modalita,
                 colonne_unita = EXCLUDED.colonne_unita,
                 query_cambiati = EXCLUDED.query_cambiati,
                 query_sempre = EXCLUDED.query_sempre,
                 confronta_cancellazioni = EXCLUDED.confronta_cancellazioni,
-                margine_secondi = EXCLUDED.margine_secondi
+                margine_secondi = EXCLUDED.margine_secondi,
+                datastamp_verificato = EXCLUDED.datastamp_verificato
             """.trimIndent(),
             sync.importedTableId,
             sync.modalita.name,
@@ -46,6 +47,7 @@ class TableSyncRepositoryImpl(
             sync.querySempre,
             sync.confrontaCancellazioni,
             sync.margineSecondi,
+            sync.datastampVerificato,
             sync.ultimaSyncInizio?.let { Timestamp.valueOf(it) }
         )
         return sync
@@ -69,6 +71,7 @@ class TableSyncRepositoryImpl(
         querySempre = rs.getString("query_sempre"),
         confrontaCancellazioni = rs.getBoolean("confronta_cancellazioni"),
         margineSecondi = rs.getInt("margine_secondi"),
+        datastampVerificato = rs.getBoolean("datastamp_verificato"),
         ultimaSyncInizio = rs.getTimestamp("ultima_sync_inizio")?.toLocalDateTime()
     )
 

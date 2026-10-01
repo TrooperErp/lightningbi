@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="028-table-sync-datastamp" author="lightningbi">
+        <!-- L'admin dichiara che il datastamp della tabella è scritto
+             dall'orologio del DATABASE sorgente e che lo ha verificato con una
+             modifica reale (avvertenza 2 della 024). Senza questa dichiarazione
+             la sincronizzazione incrementale non si può attivare. -->
+        <addColumn tableName="lbi_table_sync">
+            <column name="datastamp_verificato" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

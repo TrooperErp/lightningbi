@@ -47,6 +47,9 @@ const loadOnDemand = (key) => {
   if (key === '6200366fed7c7273360acb3003ed785a36114178aa190b855ed43428396b8f51') {
     pending.push(import('./chunks/chunk-110b6c0bd2341f33e1d9ce95f5a9ca3dc52c15b4301823f0c1de6d58fbb12ea6.js'));
   }
+  if (key === '4a36bab0ffedc3e5126c04a7dd58ae9d680681a844921cc19a442843bbe9dfa4') {
+    pending.push(import('./chunks/chunk-21ca35ab23e64093cc06dafdf5f156a414e49a3545fc53a2ee9e1b8a9fb25d92.js'));
+  }
   if (key === '20177c7fbddc3cbb2ad8a9de8f440f79cb12c66b35bf4a53949539ad577e04da') {
     pending.push(import('./chunks/chunk-b366c050513479d8060a09311eff2f3f36bce5a07186666d10a8acef4426e733.js'));
   }

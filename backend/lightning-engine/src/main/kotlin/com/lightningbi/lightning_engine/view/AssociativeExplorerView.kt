@@ -101,7 +101,6 @@ class AssociativeExplorerView(
     versionService: VersionService,
     symbolLookupService: SymbolLookupService,
     private val authService: AuthService,
-    private val emailService: EmailService,
     etlOrchestrator: EtlOrchestrator
 ) : VerticalLayout(), HasUrlParameter<String>, AfterNavigationObserver, com.vaadin.flow.router.BeforeLeaveObserver {
 
@@ -267,6 +266,9 @@ class AssociativeExplorerView(
                     label = "Amministrazione",
                     entries = listOf(
                         LbiSidebarMenu.MenuEntry("Elimina dataset", enabled = currentAreaId != null, icon = VaadinIcon.TRASH) { confirmDeleteArea() },
+                        LbiSidebarMenu.MenuEntry("Tabelle importate", icon = VaadinIcon.DATABASE) {
+                            getUI().ifPresent { it.navigate(TabelleImportateView::class.java) }
+                        },
                         LbiSidebarMenu.MenuEntry("Gestione utenti", icon = VaadinIcon.USERS) {
                             getUI().ifPresent { it.navigate(AdminView::class.java) }
                         }
@@ -601,10 +603,10 @@ class AssociativeExplorerView(
         val rowsSnapshot = pivotRows
         val columnsSnapshot = pivotColumns
         val valuesSnapshot = pivotValues
-
+        val dimensionNamesSnapshot = dimensionNames.toMap()
         scope.launch {
             try {
-                val result = data.refresh(currentAreaId, rowsSnapshot, columnsSnapshot, valuesSnapshot, selectionsSnapshot, dimensionNames)
+                val result = data.refresh(currentAreaId, rowsSnapshot, columnsSnapshot, valuesSnapshot, selectionsSnapshot, dimensionNamesSnapshot)
 
                 vaadinUi.access {
                     // Il dialog va sempre chiuso quando UNA richiesta qualsiasi

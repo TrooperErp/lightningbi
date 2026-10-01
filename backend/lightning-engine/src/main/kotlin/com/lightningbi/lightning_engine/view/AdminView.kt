@@ -98,6 +98,9 @@ class AdminView(
             LbiSidebarMenu.MenuGroup(
                 label = "Amministrazione",
                 entries = listOf(
+                    LbiSidebarMenu.MenuEntry("Tabelle importate", icon = VaadinIcon.DATABASE) {
+                        getUI().ifPresent { it.navigate(TabelleImportateView::class.java) }
+                    },
                     LbiSidebarMenu.MenuEntry("Gestione utenti", icon = VaadinIcon.USERS) { }
                 ),
                 active = true,

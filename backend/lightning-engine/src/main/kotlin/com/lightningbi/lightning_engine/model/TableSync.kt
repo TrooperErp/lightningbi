@@ -48,8 +48,9 @@ enum class ModalitaSync {
  * @param confrontaCancellazioni se true, a ogni giro si confrontano le chiavi
  *   complete e si eliminano le unità sparite dalla sorgente
  * @param margineSecondi margine sottratto a [ultimaSyncInizio], in secondi
- * @param ultimaSyncInizio inizio dell'ultima sincronizzazione riuscita, ora
- *   della sorgente; null se la tabella non è mai stata sincronizzata
+ * @param datastampVerificato l'admin dichiara che il datastamp è scritto
+ *   dall'orologio del database sorgente e che lo ha verificato con una modifica
+ *   reale. Senza, l'incrementale non si può attivare.
  */
 data class TableSync(
     val importedTableId: UUID,
@@ -59,5 +60,6 @@ data class TableSync(
     val querySempre: String? = null,
     val confrontaCancellazioni: Boolean = false,
     val margineSecondi: Int = 3600,
+    val datastampVerificato: Boolean = false,
     val ultimaSyncInizio: LocalDateTime? = null
 )

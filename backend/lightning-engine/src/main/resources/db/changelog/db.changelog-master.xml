@@ -27,4 +27,5 @@
 <include file="db/changelog/025-metric-fatti-campi.xml"/>
 <include file="db/changelog/026-schema-cleanup.xml"/>
 <include file="db/changelog/027-imported-table-standalone.xml"/>
+<include file="db/changelog/028-table-sync-datastamp.xml"/>
 </databaseChangeLog>

@@ -122,6 +122,15 @@ class ImportedTableRepositoryImpl(
             .filterNotNull()
             .toSet()
 
+    override fun findAll(): List<ImportedTable> =
+        jdbcTemplate.query(
+            "SELECT * FROM lbi_imported_table ORDER BY nome_logico",
+            { rs, _ -> mapTable(rs) }
+        )
+
+    override fun deleteById(id: UUID): Boolean =
+        jdbcTemplate.update("DELETE FROM lbi_imported_table WHERE id = ?", id) > 0
+
     private fun mapTable(rs: java.sql.ResultSet): ImportedTable = ImportedTable(
         UUID.fromString(rs.getString("id")),
         rs.getString("area_id")?.let { UUID.fromString(it) },
