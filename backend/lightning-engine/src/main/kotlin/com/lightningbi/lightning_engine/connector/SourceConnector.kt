@@ -3,6 +3,7 @@ package com.lightningbi.lightning_engine.connector
 import com.lightningbi.lightning_engine.model.SourceConnection
 import com.lightningbi.lightning_engine.service.ColumnInfo
 import com.lightningbi.lightning_engine.service.KeyQueryProbe
+import com.lightningbi.lightning_engine.service.KeyQueryResult
 import com.lightningbi.lightning_engine.service.TableInfo
 import java.time.LocalDateTime
 
@@ -83,4 +84,57 @@ interface SourceConnector {
         ultimaSync: LocalDateTime,
         timeoutSecondi: Int
     ): KeyQueryProbe
+
+
+    /**
+     * Esegue una query di chiavi (le unità cambiate, o da rileggere sempre) e
+     * ne restituisce le chiavi, nell'ordine di [colonneUnita]. Stesse regole
+     * di [probeKeyQuery]: solo SELECT o WITH, una istruzione, nessun
+     * commento, `:ultima_sync` legato come parametro e mai sostituito nel
+     * testo.
+     *
+     * Non tronca mai il risultato: se supera [maxRighe] lancia
+     * [TroppeChiaviException]. Un risultato troncato salterebbe delle unità
+     * cambiate in silenzio.
+     *
+     * @param timeoutSecondi 0 = nessun limite di tempo
+     * @throws TroppeChiaviException se le righe superano [maxRighe]
+     * @throws QueryScadutaException se non risponde entro il tempo concesso
+     * @throws QueryNonValidaException se la sorgente la rifiuta o le colonne non coincidono con l'unità
+     */
+    fun runKeyQuery(
+        connection: SourceConnection,
+        query: String,
+        ultimaSync: LocalDateTime,
+        colonneUnita: List<String>,
+        maxRighe: Int,
+        timeoutSecondi: Int
+    ): KeyQueryResult
+
+    /**
+     * Rilegge solo le unità indicate, a streaming, passando le righe a
+     * `consumatore` (la connessione si chiude sempre al suo ritorno, come in
+     * [extract]). Le chiavi sono nell'ordine di [colonneUnita]. Le unità si
+     * leggono a blocchi di chiavi, sotto il limite di parametri della sorgente.
+     */
+    fun extractUnits(
+        connection: SourceConnection,
+        schema: String?,
+        tabella: String,
+        colonneUnita: List<String>,
+        chiavi: List<List<Any?>>,
+        consumatore: (Sequence<Map<String, Any?>>) -> Unit
+    )
+
+    /**
+     * Chiavi distinte di tutte le unità della tabella, a streaming, nell'ordine
+     * di [colonneUnita]. Serve a rilevare le unità sparite dalla sorgente.
+     */
+    fun extractKeys(
+        connection: SourceConnection,
+        schema: String?,
+        tabella: String,
+        colonneUnita: List<String>,
+        consumatore: (Sequence<List<Any?>>) -> Unit
+    )
 }

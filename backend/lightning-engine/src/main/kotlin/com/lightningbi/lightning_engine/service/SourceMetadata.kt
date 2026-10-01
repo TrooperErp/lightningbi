@@ -22,3 +22,16 @@ class QueryScadutaException(message: String, cause: Throwable? = null) : Runtime
 
 /** La sorgente ha rifiutato la query (sintassi, oggetto inesistente, permessi). */
 class QueryNonValidaException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+
+/**
+ * Chiavi di unità restituite da una query: una lista per riga, con i valori
+ * nell'ordine delle colonne dell'unità richieste.
+ */
+data class KeyQueryResult(val chiavi: List<List<Any?>>)
+
+/**
+ * La query di chiavi ha restituito più righe del massimo consentito. Non si
+ * tronca mai: un risultato troncato salterebbe delle unità cambiate e
+ * l'incrementale perderebbe dati senza che nessuno se ne accorga.
+ */
+class TroppeChiaviException(val massimo: Int, message: String) : RuntimeException(message)

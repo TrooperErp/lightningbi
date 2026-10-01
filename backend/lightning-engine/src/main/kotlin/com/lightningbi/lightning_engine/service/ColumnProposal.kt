@@ -57,6 +57,22 @@ object ColumnProposal {
         return false
     }
 
+    private val tipiNumerici = setOf(
+        "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT", "INT2", "INT4", "INT8",
+        "DECIMAL", "NUMERIC", "NUMBER", "FLOAT", "FLOAT4", "FLOAT8", "REAL", "DOUBLE",
+        "MONEY", "SMALLMONEY", "SERIAL", "BIGSERIAL", "SMALLSERIAL"
+    )
+
+    /**
+     * La colonna ha un tipo numerico: oltre all'id ha una copia numerica, così
+     * lo stesso campo si usa come dimensione o come metrica. Si guarda la prima
+     * parola del tipo ("int identity", "decimal(18,0)", "double precision"),
+     * non una sottostringa: "INTERVAL" contiene "INT" e non è un numero.
+     */
+    fun isNumerico(typeName: String): Boolean {
+        val base = typeName.trim().uppercase().split(' ', '(').firstOrNull().orEmpty()
+        return base in tipiNumerici
+    }
     /**
      * Ruolo di default di una colonna.
      *

@@ -9,75 +9,85 @@ class SymbolTableService(
 ) {
 
     /**
-     * Crea la symbol table per una dimensione.
+     * Crea la symbol table di un CAMPO, stile Qlik: una per ogni nome di
+     * colonna fisica, condivisa da tutte le tabelle che hanno una colonna con
+     * quel nome (è ciò che rende possibile l'associazione per nome).
      *
-     * Accetta il nome LOGICO (es. "Ordini", "CODICE_CLIENTE") e ricava da sé
-     * l'identificatore fisico via Naming. In precedenza il nome veniva solo
-     * validato, non normalizzato: qualsiasi nome con maiuscole - cioè la
-     * quasi totalità dei nomi colonna che arrivano da SQL Server - faceva
-     * fallire la creazione.
+     * Ogni valore distinto ha un id e due forme, come i valori doppi di Qlik:
+     * il testo ([value_string]) e, se il valore è un numero, il numero
+     * ([value_number], null per i valori non numerici). Il numero serve
+     * all'ordinamento numerico del campo.
+     *
+     * Accetta il nome della colonna così come arriva dalla sorgente e ricava
+     * da sé l'identificatore fisico via Naming.
+     *
+     * Una symbol table già esistente, creata prima di value_number, viene
+     * aggiornata con la colonna mancante: i suoi valori restano e il numero
+     * resta null finché il valore non viene riletto.
      */
-    fun createSymbolTable(dimensioneNome: String) {
-        val table = Naming.symbolTable(dimensioneNome)
+    fun createSymbolTable(colonna: String) {
+        val table = Naming.symbolTable(colonna)
         jdbcTemplate.execute(
             """
             CREATE TABLE IF NOT EXISTS $table (
                 value_id UInt32,
-                value_string String
+                value_string String,
+                value_number Nullable(Decimal(38, 6))
             ) ENGINE = MergeTree()
             ORDER BY (value_string)
             """.trimIndent()
         )
-    }
-
-    /** Vero se la symbol table della dimensione esiste già. */
-    fun symbolTableExists(dimensioneNome: String): Boolean {
-        val table = Naming.symbolTable(dimensioneNome)
-        val n = jdbcTemplate.queryForObject(
-            "SELECT count() FROM system.tables WHERE name = ?",
-            Long::class.java,
-            table
-        )
-        return (n ?: 0L) > 0L
+        jdbcTemplate.execute("ALTER TABLE $table ADD COLUMN IF NOT EXISTS value_number Nullable(Decimal(38, 6))")
     }
 
     /**
-     * Crea la tabella ClickHouse di una tabella importata (schema a stella
-     * nativo: Fatti o Dimensione).
+     * Crea la tabella ClickHouse di una tabella importata (Fatti o
+     * Dimensione). La forma di ogni colonna non dipende dal dataset: lo
+     * stesso identico schema serve a tutti i dataset che la usano.
      *
-     * Riceve nomi già fisici della tabella (prodotti da
-     * Naming.importedTable) e nomi LOGICI delle colonne, normalizzati qui
+     * Riceve il nome fisico della tabella (prodotto da Naming.importedTable)
+     * e i nomi delle colonne come arrivano dalla sorgente, normalizzati qui
      * con Naming.column.
      *
-     * @param colonneId colonne UInt32: chiavi di JOIN e attributi
-     *   dimensione, tutti codificati come id di symbol table
-     * @param colonneDecimali colonne Decimal(18,4): metriche (solo Fatti)
+     * @param colonneId colonne UInt32: chiavi di JOIN e tutti i campi, ogni
+     *   valore codificato come id di symbol table
+     * @param colonneNumeriche colonne di tipo numerico (non chiave): oltre
+     *   all'id hanno una COPIA NUMERICA Nullable(Decimal(38,6)) chiamata
+     *   `<colonna>__n` (Naming.numericColumn), così lo stesso campo si può
+     *   usare come dimensione o come metrica. Null = valore mancante: le
+     *   aggregazioni lo ignorano (non conta come zero). Devono essere tra
+     *   colonneId.
      * @param colonneOrdinamento colonne della ORDER BY; devono essere tra
      *   colonneId. Vuoto = si usa la prima colonna id.
      *
      * IF NOT EXISTS: se la tabella esiste già con colonne diverse NON viene
      * modificata (serve un ALTER esplicito).
      * Nessuna _partition_key: le tabelle importate si svuotano e si
-     * ricaricano per intero (vedi LoaderService).
+     * ricaricano per intero, oppure si aggiornano per unità (vedi
+     * LoaderService).
      */
     fun createImportedTable(
         tabellaFisica: String,
         colonneId: List<String>,
-        colonneDecimali: List<String> = emptyList(),
+        colonneNumeriche: List<String> = emptyList(),
         colonneOrdinamento: List<String> = emptyList()
     ): String {
         require(Regex("^[a-z][a-z0-9_]*$").matches(tabellaFisica)) {
             "Nome tabella non valido: '$tabellaFisica'"
         }
-        require(colonneId.isNotEmpty()) { "Serve almeno una colonna id (chiave o dimensione) per $tabellaFisica" }
+        require(colonneId.isNotEmpty()) { "Serve almeno una colonna id (chiave o campo) per $tabellaFisica" }
 
         val ids = colonneId.map { Naming.column(it) }
-        val decimali = colonneDecimali.map { Naming.column(it) }
+        val numeriche = colonneNumeriche.map { Naming.column(it) }.distinct()
         val ordinamento = colonneOrdinamento.map { Naming.column(it) }.ifEmpty { listOf(ids.first()) }
 
-        val duplicati = (ids + decimali).groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        val duplicati = ids.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
         require(duplicati.isEmpty()) {
             "Colonne che collidono dopo la normalizzazione in $tabellaFisica: ${duplicati.joinToString(", ")}"
+        }
+        val numericheFuori = numeriche.filter { it !in ids }
+        require(numericheFuori.isEmpty()) {
+            "Colonne numeriche non presenti tra le colonne id di $tabellaFisica: ${numericheFuori.joinToString(", ")}"
         }
         val fuori = ordinamento.filter { it !in ids }
         require(fuori.isEmpty()) {
@@ -86,7 +96,7 @@ class SymbolTableService(
 
         val defs = buildList {
             ids.forEach { add("$it UInt32") }
-            decimali.forEach { add("$it Decimal(18,4)") }
+            numeriche.forEach { add("${Naming.numericColumn(it)} Nullable(Decimal(38, 6))") }
         }.joinToString(",\n                ")
 
         jdbcTemplate.execute(
@@ -98,6 +108,20 @@ class SymbolTableService(
             """.trimIndent()
         )
         return tabellaFisica
+    }
+
+    /**
+     * Nomi delle colonne di una tabella ClickHouse, o insieme vuoto se la
+     * tabella non esiste. Serve a capire se la tabella ha lo schema atteso
+     * prima di una sincronizzazione incrementale.
+     */
+    fun colonneDi(tabellaFisica: String): Set<String> {
+        require(Regex("^[a-z][a-z0-9_]*$").matches(tabellaFisica)) { "Nome tabella non valido: '$tabellaFisica'" }
+        return jdbcTemplate.queryForList(
+            "SELECT name FROM system.columns WHERE database = currentDatabase() AND table = ?",
+            String::class.java,
+            tabellaFisica
+        ).filterNotNull().toSet()
     }
 
     /** Elimina una tabella. Usato per ripulire artefatti orfani dopo un rollback. */

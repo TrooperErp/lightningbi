@@ -230,9 +230,10 @@ class AggregateService(
             dimById[dimId]?.takeIf { it.valoreGrezzo }?.let { dimId to it.colonnaFisica }
         }.toMap()
         val labelsByColumnDim: Map<UUID, Map<Long, String>> = columnBy.associateWith { dimId ->
-            val dimensione = registryRepository.findDimensione(dimId) ?: return@associateWith emptyMap()
+            // La symbol table è quella del CAMPO: si chiama come la colonna fisica.
+            val colonna = dimById[dimId]?.colonnaFisica ?: return@associateWith emptyMap()
             val ids = flat.rows.mapNotNull { it.groupKeys[dimId] }.toSet()
-            symbolLookupService.resolveLabels(dimensione.nome, ids)
+            symbolLookupService.resolveLabels(colonna, ids)
         }
 
         fun labelFor(dimId: UUID, valueId: Long): String {
@@ -332,14 +333,20 @@ class AggregateService(
     }
 
     private fun sqlExpression(m: AreaMetrica, plan: StarQueryBuilder.Plan): String {
-        val col = m.colonnaFisica?.let { plan.metricColumn(it) }
+        val colonna = m.colonnaFisica
+        // Somma, media, minimo e massimo lavorano sulla copia NUMERICA del campo
+        // (i valori mancanti sono null e le aggregazioni li ignorano). I
+        // conteggi lavorano sull'id e valgono per qualunque campo, anche di
+        // testo; l'id 0 è "non definito" e non si conta.
+        val numerica = colonna?.let { plan.metricColumn(Naming.numericColumn(it)) }
+        val id = colonna?.let { plan.metricColumn(it) }
         return when (m.tipoAggregazione) {
-            TipoAggregazione.COUNT -> if (col != null) "COUNT($col)" else "COUNT(*)"
-            TipoAggregazione.COUNT_DISTINCT -> "COUNT(DISTINCT $col)"
-            TipoAggregazione.SUM -> "SUM($col)"
-            TipoAggregazione.AVG -> "toDecimal64(AVG($col), 4)"
-            TipoAggregazione.MIN -> "MIN($col)"
-            TipoAggregazione.MAX -> "MAX($col)"
+            TipoAggregazione.COUNT -> if (id != null) "countIf($id != 0)" else "COUNT(*)"
+            TipoAggregazione.COUNT_DISTINCT -> "uniqExactIf($id, $id != 0)"
+            TipoAggregazione.SUM -> "SUM($numerica)"
+            TipoAggregazione.AVG -> "toDecimal64(AVG($numerica), 4)"
+            TipoAggregazione.MIN -> "MIN($numerica)"
+            TipoAggregazione.MAX -> "MAX($numerica)"
         }
     }
 
@@ -354,9 +361,9 @@ class AggregateService(
         if (groupBy.isEmpty() || result.rows.isEmpty()) return result
 
         val labelsByDim: Map<UUID, Map<Long, String>> = groupBy.mapNotNull { dimId ->
-            val dimensione = registryRepository.findDimensione(dimId) ?: return@mapNotNull null
+            val colonna = dimById[dimId]?.colonnaFisica ?: return@mapNotNull null
             val ids = result.rows.mapNotNull { it.groupKeys[dimId] }.toSet()
-            dimId to symbolLookupService.resolveLabels(dimensione.nome, ids)
+            dimId to symbolLookupService.resolveLabels(colonna, ids)
         }.toMap()
 
         return AggregateResult(

@@ -1,6 +1,8 @@
 package com.lightningbi.lightning_engine.view
 
 import com.lightningbi.lightning_engine.connector.ConnectionOrchestrator
+import com.lightningbi.lightning_engine.etl.EsitoSync
+import com.lightningbi.lightning_engine.etl.EtlOrchestrator
 import com.lightningbi.lightning_engine.connector.JdbcSourceConnector
 import com.lightningbi.lightning_engine.model.ImportedTable
 import com.lightningbi.lightning_engine.model.ModalitaSync
@@ -13,6 +15,7 @@ import com.lightningbi.lightning_engine.service.TabellaImportataInfo
 import com.lightningbi.lightning_engine.service.TableImportService
 import com.lightningbi.lightning_engine.service.TableSyncService
 import com.vaadin.flow.component.Component
+import com.vaadin.flow.component.UI
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant
 import com.vaadin.flow.component.dependency.Uses
@@ -21,9 +24,12 @@ import com.vaadin.flow.component.grid.Grid
 import com.vaadin.flow.component.html.Span
 import com.vaadin.flow.component.icon.Icon
 import com.vaadin.flow.component.icon.VaadinIcon
+import com.vaadin.flow.component.menubar.MenuBar
+import com.vaadin.flow.component.menubar.MenuBarVariant
 import com.vaadin.flow.component.notification.Notification
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout
 import com.vaadin.flow.component.orderedlayout.VerticalLayout
+import com.vaadin.flow.component.progressbar.ProgressBar
 import com.vaadin.flow.component.tabs.Tab
 import com.vaadin.flow.component.tabs.Tabs
 import com.vaadin.flow.router.BeforeEnterEvent
@@ -38,14 +44,16 @@ import java.time.format.DateTimeFormatter
  * [beforeEnter] e ogni azione è controllata di nuovo dai servizi.
  *
  * La creazione e la modifica stanno in tre finestre: [ConnectionDialog],
- * [AddTableDialog] e [TableSyncDialog]. Il pulsante "Sincronizza" non c'è
- * ancora: dipende dall'ETL per tabella (Fase C).
+ * [AddTableDialog] e [TableSyncDialog]. "Sincronizza" gira in un thread a
+ * parte e mostra l'avanzamento in una finestra; "Ricarico completo" forza la
+ * ricreazione e il ricarico di tutta la tabella.
  */
 @Route("tabelle-importate")
 @Uses(Icon::class)
 class TabelleImportateView(
     private val tableImportService: TableImportService,
     private val tableSyncService: TableSyncService,
+    private val etlOrchestrator: EtlOrchestrator,
     private val connectionOrchestrator: ConnectionOrchestrator,
     private val adminGuard: AdminGuard,
     private val authService: AuthService
@@ -54,6 +62,9 @@ class TabelleImportateView(
     private val tabelleGrid = Grid<TabellaImportataInfo>()
     private val connessioniGrid = Grid<SourceConnection>()
     private var paginaCostruita = false
+
+    /** Tabelle in sincronizzazione da questa pagina (solo thread della UI). */
+    private val inCorso = mutableSetOf<java.util.UUID>()
 
     private val formatoData = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
 
@@ -142,14 +153,17 @@ class TabelleImportateView(
                 .setHeader("Dataset").setAutoWidth(true)
             addColumn { statoSincronizzazione(it) }.setHeader("Sincronizzazione").setAutoWidth(true)
             addComponentColumn { info ->
-                HorizontalLayout(
-                    Button("Sincronizzazione") { apriSincronizzazione(info) }.apply {
-                        addThemeVariants(ButtonVariant.LUMO_SMALL)
-                    },
-                    Button("Elimina") { confermaEliminaTabella(info) }.apply {
-                        addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_ERROR)
-                    }
-                ).apply { isPadding = false }
+                val sincronizza = Button("Sincronizza") { sincronizza(info, forzaCompleta = false) }.apply {
+                    addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_PRIMARY)
+                }
+                val altro = MenuBar().apply {
+                    addThemeVariants(MenuBarVariant.LUMO_TERTIARY_INLINE)
+                    val radice = addItem(Icon(VaadinIcon.ELLIPSIS_DOTS_V))
+                    radice.subMenu.addItem("Ricarico completo") { confermaRicaricoCompleto(info) }
+                    radice.subMenu.addItem("Configura sincronizzazione") { apriSincronizzazione(info) }
+                    radice.subMenu.addItem("Elimina") { confermaEliminaTabella(info) }
+                }
+                HorizontalLayout(sincronizza, altro).apply { isPadding = false }
             }.setHeader("")
         }
 
@@ -183,6 +197,96 @@ class TabelleImportateView(
 
     private fun apriSincronizzazione(info: TabellaImportataInfo) {
         TableSyncDialog(tableSyncService, tableImportService, info.tabella) { ricarica() }.open()
+    }
+
+    private fun confermaRicaricoCompleto(info: TabellaImportataInfo) {
+        conferma(
+            titolo = "Ricarico completo di \"${info.tabella.nomeLogico}\"?",
+            messaggio = "La tabella viene ricreata e ricaricata per intero dalla sorgente. " +
+                    "Su tabelle grandi può richiedere molto tempo.",
+            etichetta = "Ricarica tutto",
+            pericolo = false
+        ) { sincronizza(info, forzaCompleta = true) }
+    }
+
+    /**
+     * Lancia la sincronizzazione in un thread a parte, così la pagina resta
+     * viva, e mostra l'avanzamento in una finestra. Il controllo "solo admin"
+     * si fa qui, nel thread della UI: l'utente sta nella sessione Vaadin.
+     */
+    private fun sincronizza(info: TabellaImportataInfo, forzaCompleta: Boolean) {
+        try {
+            adminGuard.requireAdmin()
+        } catch (e: SecurityException) {
+            Notification.show(e.message ?: "Operazione non consentita")
+            return
+        }
+        val id = info.tabella.id
+        if (!inCorso.add(id)) {
+            Notification.show("Sincronizzazione già in corso per questa tabella")
+            return
+        }
+        val ui = UI.getCurrent()
+        if (ui == null) {
+            inCorso.remove(id)
+            return
+        }
+
+        val avanzamento = Span("Avvio...")
+        val dialog = Dialog().apply {
+            headerTitle = "Sincronizzazione di \"${info.tabella.nomeLogico}\""
+            width = "520px"
+            isCloseOnOutsideClick = false
+            isCloseOnEsc = false
+        }
+        dialog.add(
+            VerticalLayout(ProgressBar().apply { isIndeterminate = true }, avanzamento).apply { isPadding = false }
+        )
+        dialog.open()
+
+        val thread = Thread {
+            try {
+                val esito = etlOrchestrator.syncTabella(id, forzaCompleta) { fase ->
+                    aggiornaUi(ui) { avanzamento.text = fase }
+                }
+                aggiornaUi(ui) {
+                    dialog.close()
+                    inCorso.remove(id)
+                    Notification.show(descriviEsito(esito), 7000, Notification.Position.MIDDLE)
+                    ricarica()
+                }
+            } catch (e: Exception) {
+                aggiornaUi(ui) {
+                    dialog.close()
+                    inCorso.remove(id)
+                    Notification.show(
+                        "Sincronizzazione fallita: ${e.message ?: e::class.simpleName}",
+                        10000, Notification.Position.MIDDLE
+                    )
+                    ricarica()
+                }
+            }
+        }
+        thread.isDaemon = true
+        thread.name = "sync-${info.tabella.nomeLogico}"
+        thread.start()
+    }
+
+    /** Aggiorna la UI dal thread di sincronizzazione; se la pagina è stata chiusa non fa niente. */
+    private fun aggiornaUi(ui: UI, azione: () -> Unit) {
+        try {
+            ui.access { azione() }
+        } catch (_: Exception) {
+            // UI staccata: l'utente ha lasciato la pagina, la sincronizzazione prosegue comunque.
+        }
+    }
+
+    private fun descriviEsito(esito: EsitoSync): String = when (esito.modalita) {
+        ModalitaSync.COMPLETA ->
+            "Sincronizzazione completa: ${esito.righeCaricate} righe caricate, ${esito.righeScartate} scartate"
+        ModalitaSync.INCREMENTALE ->
+            "Sincronizzazione incrementale: ${esito.unitaSostituite} unità sostituite, " +
+                    "${esito.unitaEliminate} eliminate, ${esito.righeCaricate} righe riscritte"
     }
 
     private fun confermaEliminaTabella(info: TabellaImportataInfo) {
@@ -268,7 +372,13 @@ class TabelleImportateView(
         }
     }
 
-    private fun conferma(titolo: String, messaggio: String, azione: () -> Unit) {
+    private fun conferma(
+        titolo: String,
+        messaggio: String,
+        etichetta: String = "Elimina",
+        pericolo: Boolean = true,
+        azione: () -> Unit
+    ) {
         val dialog = Dialog().apply {
             headerTitle = titolo
             width = "440px"
@@ -276,10 +386,10 @@ class TabelleImportateView(
         dialog.add(Span(messaggio))
         dialog.footer.add(
             Button("Annulla") { dialog.close() },
-            Button("Elimina") {
+            Button(etichetta) {
                 dialog.close()
                 azione()
-            }.apply { addThemeVariants(ButtonVariant.LUMO_ERROR) }
+            }.apply { addThemeVariants(if (pericolo) ButtonVariant.LUMO_ERROR else ButtonVariant.LUMO_PRIMARY) }
         )
         dialog.open()
     }

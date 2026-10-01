@@ -35,8 +35,21 @@ object Naming {
     /** Nome colonna fisica su ClickHouse. */
     fun column(nome: String): String = slug(nome)
 
-    /** Symbol table di una dimensione. */
-    fun symbolTable(nomeDimensione: String): String = "ch_lbi_symbol_" + slug(nomeDimensione)
+    /**
+     * Symbol table di un CAMPO, stile Qlik: si chiama come la colonna fisica,
+     * quindi due colonne con lo stesso nome (in tabelle diverse) condividono
+     * la stessa symbol table e gli stessi id. È ciò che rende possibile
+     * l'associazione per nome.
+     */
+    fun symbolTable(colonna: String): String = "ch_lbi_symbol_" + slug(colonna)
+
+    /**
+     * Copia numerica di una colonna di tipo numerico: l'id (UInt32) resta
+     * nella colonna con il nome fisico, il valore (Decimal) sta qui. Lo slug
+     * non produce mai un doppio underscore, quindi il suffisso "__n" non può
+     * collidere con una colonna della sorgente.
+     */
+    fun numericColumn(colonna: String): String = column(colonna) + "__n"
 
     /** Verifica che un identificatore fisico sia sicuro da inserire in SQL (accetta il doppio underscore delle tabelle importate). */
     fun requirePhysical(value: String, what: String): String {
@@ -45,30 +58,10 @@ object Naming {
     }
 
     /**
-     * Motori sorgente riconosciuti per il naming delle tabelle importate.
-     * "altro" è il fallback per driver non ancora mappati esplicitamente:
-     * non blocca l'importazione, produce solo un prefisso meno leggibile.
-     */
-    private val motoriPerDriver = mapOf(
-        "com.microsoft.sqlserver.jdbc.SQLServerDriver" to "mssql",
-        "org.postgresql.Driver" to "psql",
-        "org.influxdb.InfluxDB" to "influx"
-    )
-
-    /**
-     * Ricava il prefisso motore (mssql, psql, influx, ...) dal driver JDBC
-     * della sorgente, per comporre il nome fisico di una tabella importata.
-     * Nessuna sorgente deve passare un motore a mano: si desincronizzerebbe
-     * dal driver realmente usato per connettersi.
-     */
-    fun motoreFromDriver(driverClassName: String): String =
-        motoriPerDriver[driverClassName] ?: "altro"
-
-    /**
      * Tabella importata nel modello multi-tabella (TBS): <motore>_<db>__<nome>,
      * es. mssql_sem__documenti, mssql_sem__clienti.
      *
-     * @param motore vedi motoreFromDriver
+     * @param motore tipo della connessione (mssql, psql, ...)
      * @param nomeDb nome logico del database/schema sorgente (es. "sem")
      * @param nomeTabella nome logico della tabella importata (es. "Documenti")
      */

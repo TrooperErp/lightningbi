@@ -21,4 +21,7 @@ interface TableSyncRepository {
 
     /** Toglie la configurazione. Restituisce true se esisteva. */
     fun delete(importedTableId: UUID): Boolean
+
+    /** Azzera l'ultima sincronizzazione: il giro dopo parte completo. */
+    fun resetUltimaSync(importedTableId: UUID)
 }

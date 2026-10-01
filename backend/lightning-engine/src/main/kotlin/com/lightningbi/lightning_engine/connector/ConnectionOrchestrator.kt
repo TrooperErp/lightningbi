@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service
 import java.util.UUID
 import com.lightningbi.lightning_engine.service.KeyQueryProbe
 import java.time.LocalDateTime
+import com.lightningbi.lightning_engine.service.KeyQueryResult
 /**
  * Punto unico verso le sorgenti dati: le pagine admin e l'ETL parlano solo
  * con lui, mai con un connettore o con il repository.
@@ -118,6 +119,52 @@ class ConnectionOrchestrator(
         return connettoreDi(connessione.tipo).probeKeyQuery(connessione, query, ultimaSync, timeoutSecondi)
     }
 
+    /**
+     * Esegue una query di chiavi, senza troncare mai: se supera [maxRighe]
+     * lancia TroppeChiaviException. Vedi SourceConnector.runKeyQuery.
+     */
+    fun runKeyQuery(
+        connectionId: UUID,
+        query: String,
+        ultimaSync: LocalDateTime,
+        colonneUnita: List<String>,
+        maxRighe: Int,
+        timeoutSecondi: Int
+    ): KeyQueryResult {
+        val connessione = connessione(connectionId)
+        return connettoreDi(connessione.tipo)
+            .runKeyQuery(connessione, query, ultimaSync, colonneUnita, maxRighe, timeoutSecondi)
+    }
+
+    /**
+     * Rilegge solo le unità indicate, a streaming; la connessione si chiude
+     * sempre al ritorno del consumatore. Vedi SourceConnector.extractUnits.
+     */
+    fun extractUnits(
+        connectionId: UUID,
+        schema: String?,
+        tabella: String,
+        colonneUnita: List<String>,
+        chiavi: List<List<Any?>>,
+        consumatore: (Sequence<Map<String, Any?>>) -> Unit
+    ) {
+        val connessione = connessione(connectionId)
+        connettoreDi(connessione.tipo).extractUnits(connessione, schema, tabella, colonneUnita, chiavi, consumatore)
+    }
+
+    /**
+     * Chiavi distinte di tutte le unità, a streaming. Vedi SourceConnector.extractKeys.
+     */
+    fun extractKeys(
+        connectionId: UUID,
+        schema: String?,
+        tabella: String,
+        colonneUnita: List<String>,
+        consumatore: (Sequence<List<Any?>>) -> Unit
+    ) {
+        val connessione = connessione(connectionId)
+        connettoreDi(connessione.tipo).extractKeys(connessione, schema, tabella, colonneUnita, consumatore)
+    }
     /**
      * Lettura a streaming di una tabella intera: le righe vanno a `consumatore`
      * e la connessione si chiude sempre al suo ritorno, anche in caso di

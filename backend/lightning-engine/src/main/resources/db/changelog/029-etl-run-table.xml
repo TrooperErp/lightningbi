@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="029-etl-run-table" author="lightningbi">
+        <!-- La sincronizzazione è per TABELLA importata: una esecuzione registrata
+             per ogni tabella. area_id e source_id restano (e diventano nullable)
+             finché il vecchio percorso per dataset non sparisce con il blocco
+             distruttivo dopo la D minima. -->
+        <addColumn tableName="lbi_etl_run">
+            <column name="imported_table_id" type="uuid">
+                <constraints nullable="true"
+                             foreignKeyName="fk_etl_run_imported_table"
+                             references="lbi_imported_table(id)"
+                             deleteCascade="true"/>
+            </column>
+            <!-- COMPLETA | INCREMENTALE: come è stata eseguita davvero (una
+                 incrementale senza ultima sincronizzazione parte completa). -->
+            <column name="modalita" type="varchar(20)"/>
+            <!-- Solo incrementale: unità sostituite e unità eliminate perché
+                 sparite dalla sorgente. -->
+            <column name="unita_sostituite" type="bigint" defaultValueNumeric="0"/>
+            <column name="unita_eliminate" type="bigint" defaultValueNumeric="0"/>
+        </addColumn>
+
+        <dropNotNullConstraint tableName="lbi_etl_run" columnName="area_id" columnDataType="uuid"/>
+        <dropNotNullConstraint tableName="lbi_etl_run" columnName="source_id" columnDataType="uuid"/>
+
+        <createIndex indexName="idx_etl_run_imported_table" tableName="lbi_etl_run">
+            <column name="imported_table_id"/>
+            <column name="started_at"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

@@ -127,7 +127,15 @@ class TableSyncService(
                 provaQuery(tabella.id, sync.querySempre, sync.colonneUnita, sync.margineSecondi, "query delle unità da rileggere sempre")
             }
         }
-        return tableSyncRepository.save(sync)
+        val precedente = tableSyncRepository.findByTable(sync.importedTableId)
+        val salvata = tableSyncRepository.save(sync)
+        // Se cambiano le colonne che identificano l'unità, le righe già caricate
+        // seguono la vecchia regola e le cancellazioni agirebbero sulle chiavi
+        // sbagliate: il giro dopo deve essere completo.
+        val unitaCambiata = precedente != null && precedente.ultimaSyncInizio != null &&
+                precedente.colonneUnita.map { it.lowercase() }.toSet() != sync.colonneUnita.map { it.lowercase() }.toSet()
+        if (unitaCambiata) tableSyncRepository.resetUltimaSync(sync.importedTableId)
+        return salvata
     }
 
     companion object {

@@ -5,6 +5,8 @@ import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.script.DefaultRedisScript
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Duration
 import java.util.UUID
 
@@ -56,12 +58,19 @@ class SymbolLookupService(
     /**
      * Restituisce gli id dei valori dati, creandoli se mancanti.
      *
-     * Accetta il nome LOGICO della dimensione: il nome fisico della tabella
-     * lo ricava da Naming, come tutti gli altri.
+     * La symbol table è quella del CAMPO: si chiama come la colonna fisica ed
+     * è condivisa da tutte le tabelle con una colonna omonima. Accetta il nome
+     * della colonna come arriva dalla sorgente: il nome fisico lo ricava da
+     * Naming, come tutti gli altri.
+     *
+     * Ogni valore nuovo si inserisce con le sue due forme: il testo e, se è un
+     * numero rappresentabile, il numero (value_number). I valori già presenti
+     * non si riscrivono: se erano stati creati prima di value_number restano
+     * senza numero.
      */
-    fun getOrCreateIds(dimensioneNome: String, values: Set<String>): Map<String, Long> {
+    fun getOrCreateIds(colonna: String, values: Set<String>): Map<String, Long> {
         if (values.isEmpty()) return emptyMap()
-        val table = Naming.symbolTable(dimensioneNome)
+        val table = Naming.symbolTable(colonna)
 
         // Lettura ottimistica fuori dal lock: a regime quasi tutti i valori
         // esistono già, e prendere il lock globale per una pura lettura
@@ -69,10 +78,10 @@ class SymbolLookupService(
         val preexisting = fetchExisting(table, values)
         if (preexisting.size == values.size) return preexisting
 
-        val lockKey = "symbol-lock:${Naming.slug(dimensioneNome)}"
+        val lockKey = "symbol-lock:${Naming.slug(colonna)}"
         val lockValue = UUID.randomUUID().toString()
 
-        acquireLock(lockKey, lockValue, dimensioneNome)
+        acquireLock(lockKey, lockValue, colonna)
         try {
             // Rilettura dentro il lock: fra la lettura ottimistica e
             // l'acquisizione un altro worker può aver inserito i mancanti.
@@ -81,8 +90,8 @@ class SymbolLookupService(
             if (missing.isEmpty()) return existing
 
             // max(value_id) va letto DENTRO il lock: garantisce che nessun
-            // altro processo stia assegnando id concorrenti sulla stessa
-            // dimensione nel frattempo. Il COALESCE porta il primo id a 1,
+            // altro processo stia assegnando id concorrenti sullo stesso
+            // campo nel frattempo. Il COALESCE porta il primo id a 1,
             // lasciando lo zero libero per il valore non definito.
             val maxId = jdbcTemplate.queryForObject(
                 "SELECT max(value_id) FROM $table", Long::class.java
@@ -90,7 +99,19 @@ class SymbolLookupService(
             var nextId = maxId + 1
 
             val newRows = missing.map { it to nextId++ }
-            newRows.chunked(chunkSize).forEach { chunk ->
+
+            // Due inserimenti distinti, senza legare mai un null: i valori
+            // numerici portano anche value_number, gli altri solo il testo.
+            val (numerici, testuali) = newRows
+                .map { (valore, id) -> Triple(valore, id, toNumero(valore)) }
+                .partition { it.third != null }
+            numerici.chunked(chunkSize).forEach { chunk ->
+                jdbcTemplate.batchUpdate(
+                    "INSERT INTO $table (value_id, value_string, value_number) VALUES (?, ?, ?)",
+                    chunk.map { arrayOf<Any>(it.second, it.first, it.third!!) }
+                )
+            }
+            testuali.chunked(chunkSize).forEach { chunk ->
                 jdbcTemplate.batchUpdate(
                     "INSERT INTO $table (value_id, value_string) VALUES (?, ?)",
                     chunk.map { arrayOf<Any>(it.second, it.first) }
@@ -104,6 +125,17 @@ class SymbolLookupService(
         }
     }
 
+    /**
+     * Gli id dei valori che ESISTONO già nella symbol table del campo, senza
+     * crearne di nuovi. Un valore assente non compare nella mappa: per la
+     * chiave di un'unità vuol dire unità nuova, senza righe da cancellare.
+     * La symbol table deve esistere (si crea prima con SymbolTableService).
+     */
+    fun findIds(colonna: String, values: Set<String>): Map<String, Long> {
+        if (values.isEmpty()) return emptyMap()
+        return fetchExisting(Naming.symbolTable(colonna), values)
+    }
+
     // ===================== id -> stringa (lettura, UI) =====================
 
     /**
@@ -115,10 +147,10 @@ class SymbolLookupService(
      * Gli id non risolti non compaiono nella mappa: sta al chiamante decidere
      * il fallback.
      */
-    fun resolveLabels(dimensioneNome: String, ids: Set<Long>): Map<Long, String> {
+    fun resolveLabels(colonna: String, ids: Set<Long>): Map<Long, String> {
         if (ids.isEmpty()) return emptyMap()
-        val slug = Naming.slug(dimensioneNome)
-        val table = Naming.symbolTable(dimensioneNome)
+        val slug = Naming.slug(colonna)
+        val table = Naming.symbolTable(colonna)
 
         val result = mutableMapOf<Long, String>()
 
@@ -130,11 +162,15 @@ class SymbolLookupService(
 
         val missing = mutableSetOf<Long>()
 
+        // La chiave porta la versione "v2": fino a ieri la symbol table si
+        // chiamava come la dimensione del dataset, oggi come la colonna. Una
+        // chiave senza versione potrebbe restituire, per 7 giorni, l'etichetta
+        // di un'altra tabella con lo stesso nome.
         // Le etichette si cachano singolarmente perché ogni grafico o griglia
         // chiede un sottoinsieme diverso: una cache per-insieme avrebbe hit
         // rate quasi nullo, una per-id viene riusata da tutti.
         realIds.forEach { id ->
-            val cached = safeGet("symlabel:$slug:$id")
+            val cached = safeGet("symlabel:v2:$slug:$id")
             if (cached != null) result[id] = cached else missing += id
         }
         if (missing.isEmpty()) return result
@@ -147,7 +183,7 @@ class SymbolLookupService(
                 *chunk.map { it as Any }.toTypedArray()
             ).forEach { (id, label) ->
                 result[id] = label
-                safeSet("symlabel:$slug:$id", label, labelCacheTtl)
+                safeSet("symlabel:v2:$slug:$id", label, labelCacheTtl)
             }
         }
 
@@ -162,11 +198,11 @@ class SymbolLookupService(
     }
 
     /**
-     * Intera mappa id -> stringa di una dimensione, con in testa la voce del
-     * valore non definito. Per dimensioni di cardinalità contenuta.
+     * Intera mappa id -> stringa di un campo, con in testa la voce del
+     * valore non definito. Per campi di cardinalità contenuta.
      */
-    fun allLabels(dimensioneNome: String): Map<Long, String> {
-        val table = Naming.symbolTable(dimensioneNome)
+    fun allLabels(colonna: String): Map<Long, String> {
+        val table = Naming.symbolTable(colonna)
         val labels = jdbcTemplate.query(
             "SELECT value_id, value_string FROM $table",
             { rs, _ -> rs.getLong("value_id") to rs.getString("value_string") }
@@ -188,7 +224,7 @@ class SymbolLookupService(
 
     // ===================== interni =====================
 
-    private fun acquireLock(lockKey: String, lockValue: String, dimensioneNome: String) {
+    private fun acquireLock(lockKey: String, lockValue: String, colonna: String) {
         var attempts = 0
         while (attempts < maxRetries) {
             val acquired = try {
@@ -198,7 +234,7 @@ class SymbolLookupService(
                 // vincoli di unicità, quindi proseguire significherebbe
                 // generare value_id duplicati in silenzio.
                 throw IllegalStateException(
-                    "Redis non disponibile: impossibile garantire l'unicità dei symbol id per '$dimensioneNome'", e
+                    "Redis non disponibile: impossibile garantire l'unicità dei symbol id per '$colonna'", e
                 )
             }
             if (acquired) return
@@ -206,7 +242,7 @@ class SymbolLookupService(
             Thread.sleep(retryDelayMs)
         }
         throw IllegalStateException(
-            "Lock sui simboli di '$dimensioneNome' non acquisito dopo ${lockTtl.toMinutes()} minuti. " +
+            "Lock sui simboli di '$colonna' non acquisito dopo ${lockTtl.toMinutes()} minuti. " +
                     "Probabile ETL bloccato o lock orfano: verificare $lockKey su Redis."
         )
     }
@@ -237,6 +273,18 @@ class SymbolLookupService(
             }
         }
         return result
+    }
+
+    /**
+     * Il valore come numero, se lo è e se sta in Decimal(38,6); altrimenti
+     * null (resta solo il testo). Un numero fuori scala sarebbe rifiutato da
+     * ClickHouse e fermerebbe l'ETL per un campo che nessuno ordina in modo
+     * numerico.
+     */
+    private fun toNumero(valore: String): BigDecimal? {
+        val numero = valore.trim().toBigDecimalOrNull() ?: return null
+        val scalato = numero.setScale(6, RoundingMode.HALF_UP)
+        return if (scalato.precision() <= 38) scalato else null
     }
 
     private fun safeGet(key: String): String? =

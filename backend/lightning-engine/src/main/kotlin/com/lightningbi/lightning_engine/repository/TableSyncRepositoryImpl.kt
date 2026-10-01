@@ -79,4 +79,10 @@ class TableSyncRepositoryImpl(
         if (json.isNullOrBlank()) return emptyList()
         return objectMapper.readValue(json, List::class.java).mapNotNull { it?.toString() }
     }
+    override fun resetUltimaSync(importedTableId: UUID) {
+        jdbcTemplate.update(
+            "UPDATE lbi_table_sync SET ultima_sync_inizio = NULL WHERE imported_table_id = ?",
+            importedTableId
+        )
+    }
 }

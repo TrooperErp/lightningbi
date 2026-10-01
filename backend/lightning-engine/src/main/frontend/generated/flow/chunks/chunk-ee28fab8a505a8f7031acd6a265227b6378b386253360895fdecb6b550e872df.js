@@ -43,3 +43,5 @@ import '@vaadin/radio-group/src/vaadin-radio-group.js';
 import '@vaadin/radio-group/src/vaadin-radio-button.js';
 import '@vaadin/text-area/src/vaadin-text-area.js';
 import '@vaadin/integer-field/src/vaadin-integer-field.js';
+import 'Frontend/generated/jar-resources/menubarConnector.js';
+import '@vaadin/menu-bar/src/vaadin-menu-bar.js';

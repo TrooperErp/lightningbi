@@ -80,7 +80,7 @@ class AssociativeExplorerData(
         pivotColumns: List<UUID>,
         pivotValues: List<UUID>,
         selections: Map<UUID, Set<Long>>,
-        dimensionNames: Map<UUID, String>
+        dimensionColumns: Map<UUID, String>
     ): RefreshResult {
         val versions = versionService.snapshotVersions(areaId)
 
@@ -112,7 +112,7 @@ class AssociativeExplorerData(
 
         val chartsData = chartService.getChartsData(areaId, pivotRows, pivotColumns, pivotValues, selections)
 
-        val labels = resolveLabels(states, dimensionNames)
+        val labels = resolveLabels(states, dimensionColumns)
 
         return RefreshResult(
             states = states,
@@ -125,12 +125,13 @@ class AssociativeExplorerData(
 
     private fun resolveLabels(
         states: Map<UUID, DimensionState>,
-        dimensionNames: Map<UUID, String>
+        dimensionColumns: Map<UUID, String>
     ): Map<UUID, Map<Long, String>> =
         states.mapNotNull { (dimId, state) ->
-            val dimName = dimensionNames[dimId] ?: return@mapNotNull null
+            // La symbol table è quella del CAMPO: si chiama come la colonna fisica.
+            val colonna = dimensionColumns[dimId] ?: return@mapNotNull null
             val ids = state.verdi + state.grigi + state.selezionati
-            dimId to symbolLookupService.resolveLabels(dimName, ids)
+            dimId to symbolLookupService.resolveLabels(colonna, ids)
         }.toMap()
 
     fun labelOrFallback(labels: Map<Long, String>, id: Long?): String =

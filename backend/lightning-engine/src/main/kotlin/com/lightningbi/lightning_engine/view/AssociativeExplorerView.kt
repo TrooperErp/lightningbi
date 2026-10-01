@@ -603,11 +603,10 @@ class AssociativeExplorerView(
         val rowsSnapshot = pivotRows
         val columnsSnapshot = pivotColumns
         val valuesSnapshot = pivotValues
-        val dimensionNamesSnapshot = dimensionNames.toMap()
+        val dimensionColumnsSnapshot = dimensionColumns.toMap()
         scope.launch {
             try {
-                val result = data.refresh(currentAreaId, rowsSnapshot, columnsSnapshot, valuesSnapshot, selectionsSnapshot, dimensionNamesSnapshot)
-
+                val result = data.refresh(currentAreaId, rowsSnapshot, columnsSnapshot, valuesSnapshot, selectionsSnapshot, dimensionColumnsSnapshot)
                 vaadinUi.access {
                     // Il dialog va sempre chiuso quando UNA richiesta qualsiasi
                     // torna, anche se superata da una più recente: altrimenti,

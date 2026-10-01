@@ -14,6 +14,9 @@ import com.lightningbi.lightning_engine.service.QueryScadutaException
 import java.sql.SQLException
 import java.sql.SQLTimeoutException
 import java.time.LocalDateTime
+import com.lightningbi.lightning_engine.service.KeyQueryResult
+import com.lightningbi.lightning_engine.service.TroppeChiaviException
+import java.sql.ResultSet
 /**
  * Connettore per le sorgenti JDBC: SQL Server (mssql) e PostgreSQL (psql).
  *
@@ -192,6 +195,176 @@ class JdbcSourceConnector(
             }
             throw QueryNonValidaException("La sorgente ha rifiutato la query: ${e.message}", e)
         }
+    }
+    /** Massimo di parametri legati per istruzione: SQL Server ne ammette 2100. */
+    private val maxParametri = 2000
+
+    override fun runKeyQuery(
+        connection: SourceConnection,
+        query: String,
+        ultimaSync: LocalDateTime,
+        colonneUnita: List<String>,
+        maxRighe: Int,
+        timeoutSecondi: Int
+    ): KeyQueryResult {
+        require(maxRighe > 0) { "Il massimo di righe deve essere positivo" }
+        val (sql, parametri) = preparaQueryDiChiavi(query)
+        try {
+            return apri(connection).use { conn ->
+                conn.isReadOnly = true
+                conn.prepareStatement(sql).use { stmt ->
+                    stmt.queryTimeout = timeoutSecondi
+                    stmt.fetchSize = 5000
+                    // Una riga oltre il massimo basta per accorgersi che lo supera.
+                    stmt.maxRows = maxRighe + 1
+                    // :ultima_sync è un parametro legato, mai sostituito nel testo.
+                    for (k in 1..parametri) stmt.setObject(k, ultimaSync)
+                    stmt.executeQuery().use { rs ->
+                        val etichette = (1..rs.metaData.columnCount).map { rs.metaData.getColumnLabel(it) }
+                        if (etichette.size != colonneUnita.size) {
+                            throw QueryNonValidaException(
+                                "La query restituisce le colonne [${etichette.joinToString(", ")}] ma l'unità è " +
+                                        "[${colonneUnita.joinToString(", ")}]: devono coincidere (stessi nomi)"
+                            )
+                        }
+                        val posizioni = colonneUnita.map { col ->
+                            val i = etichette.indexOfFirst { it.equals(col, ignoreCase = true) }
+                            if (i < 0) {
+                                throw QueryNonValidaException(
+                                    "La query non restituisce la colonna '$col' dell'unità. Colonne restituite: " +
+                                            etichette.joinToString(", ")
+                                )
+                            }
+                            i + 1
+                        }
+
+                        val chiavi = ArrayList<List<Any?>>()
+                        while (rs.next()) {
+                            // Mai troncare: un risultato troncato salterebbe unità cambiate in silenzio.
+                            if (chiavi.size >= maxRighe) {
+                                throw TroppeChiaviException(
+                                    maxRighe,
+                                    "La query ha restituito più di $maxRighe unità. La sincronizzazione si ferma: " +
+                                            "alza il massimo oppure lancia il ricarico completo a mano"
+                                )
+                            }
+                            chiavi.add(posizioni.map { rs.getObject(it) })
+                        }
+                        KeyQueryResult(chiavi)
+                    }
+                }
+            }
+        } catch (e: SQLTimeoutException) {
+            throw QueryScadutaException("La query non ha risposto entro $timeoutSecondi secondi", e)
+        } catch (e: SQLException) {
+            if (e.sqlState == "57014") {
+                throw QueryScadutaException("La query non ha risposto entro $timeoutSecondi secondi", e)
+            }
+            throw QueryNonValidaException("La sorgente ha rifiutato la query: ${e.message}", e)
+        }
+    }
+
+    override fun extractUnits(
+        connection: SourceConnection,
+        schema: String?,
+        tabella: String,
+        colonneUnita: List<String>,
+        chiavi: List<List<Any?>>,
+        consumatore: (Sequence<Map<String, Any?>>) -> Unit
+    ) {
+        require(colonneUnita.isNotEmpty()) { "Servono le colonne dell'unità" }
+        require(chiavi.all { it.size == colonneUnita.size && it.none { v -> v == null } }) {
+            "Le chiavi delle unità devono avere tutte le colonne dell'unità e nessun valore nullo"
+        }
+        if (chiavi.isEmpty()) {
+            consumatore(emptySequence())
+            return
+        }
+
+        val qualificata = qualifica(schema, tabella)
+        val colonne = colonneUnita.map { quota(it) }
+        val perBlocco = maxOf(1, maxParametri / colonneUnita.size)
+
+        // Le sorgenti non hanno il confronto di righe in comune (SQL Server no):
+        // una colonna sola usa IN, più colonne usano (a = ? AND b = ?) OR (...).
+        // Se il consumatore si ferma a metà, la chiusura della connessione
+        // rilascia statement e result set rimasti aperti.
+        apri(connection).use { conn ->
+            if (connection.tipo == "psql") conn.autoCommit = false
+            val righe = sequence {
+                for (blocco in chiavi.chunked(perBlocco)) {
+                    val condizione = if (colonne.size == 1) {
+                        "${colonne[0]} IN (${blocco.joinToString(",") { "?" }})"
+                    } else {
+                        blocco.joinToString(" OR ") { "(" + colonne.joinToString(" AND ") { c -> "$c = ?" } + ")" }
+                    }
+                    conn.prepareStatement("SELECT * FROM $qualificata WHERE $condizione").use { stmt ->
+                        stmt.fetchSize = 5000
+                        var k = 1
+                        for (chiave in blocco) for (valore in chiave) stmt.setObject(k++, valore)
+                        stmt.executeQuery().use { rs ->
+                            val etichette = etichetteColonne(rs, qualificata)
+                            while (rs.next()) yield(rigaCorrente(rs, etichette))
+                        }
+                    }
+                }
+            }
+            consumatore(righe)
+        }
+    }
+
+    override fun extractKeys(
+        connection: SourceConnection,
+        schema: String?,
+        tabella: String,
+        colonneUnita: List<String>,
+        consumatore: (Sequence<List<Any?>>) -> Unit
+    ) {
+        require(colonneUnita.isNotEmpty()) { "Servono le colonne dell'unità" }
+        val qualificata = qualifica(schema, tabella)
+        val colonne = colonneUnita.map { quota(it) }
+
+        apri(connection).use { conn ->
+            if (connection.tipo == "psql") conn.autoCommit = false
+            conn.prepareStatement("SELECT DISTINCT ${colonne.joinToString(", ")} FROM $qualificata").use { stmt ->
+                stmt.fetchSize = 5000
+                stmt.executeQuery().use { rs ->
+                    val n = colonneUnita.size
+                    consumatore(generateSequence { if (rs.next()) (1..n).map { rs.getObject(it) } else null })
+                }
+            }
+        }
+    }
+
+    /**
+     * Nome di colonna tra virgolette. Le colonne dell'unità arrivano dal
+     * registry e possono avere spazi o maiuscole: si quotano, e si rifiuta
+     * ciò che potrebbe uscire dalle virgolette.
+     */
+    private fun quota(nome: String): String {
+        require(nome.isNotBlank() && '"' !in nome && nome.none { it.isISOControl() }) {
+            "Nome colonna non valido: '$nome'"
+        }
+        return "\"$nome\""
+    }
+
+    private fun etichetteColonne(rs: ResultSet, qualificata: String): List<String> {
+        val meta = rs.metaData
+        val etichette = (1..meta.columnCount).map { meta.getColumnLabel(it).lowercase() }
+        val duplicati = etichette.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        if (duplicati.isNotEmpty()) {
+            throw IllegalStateException(
+                "La tabella $qualificata espone colonne con etichetta duplicata: " +
+                        "${duplicati.joinToString(", ")}. Ogni colonna deve avere un alias univoco."
+            )
+        }
+        return etichette
+    }
+
+    private fun rigaCorrente(rs: ResultSet, etichette: List<String>): Map<String, Any?> {
+        val riga = HashMap<String, Any?>(etichette.size)
+        etichette.forEachIndexed { i, etichetta -> riga[etichetta] = rs.getObject(i + 1) }
+        return riga
     }
 
     /**

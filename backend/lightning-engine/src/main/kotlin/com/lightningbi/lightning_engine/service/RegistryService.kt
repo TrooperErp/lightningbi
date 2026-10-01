@@ -42,10 +42,7 @@ class RegistryService(
         tabellaDim: String? = null,
         colonnaChiave: String? = null
     ): Dimensione {
-        findDimensioneByNomeFisico(nome)?.let { existing ->
-            symbolTableService.createSymbolTable(existing.nome)
-            return existing
-        }
+        findDimensioneByNomeFisico(nome)?.let { return it }
         return createDimensione(nome, tipo, conformata, tabellaDim, colonnaChiave)
     }
 
@@ -61,7 +58,7 @@ class RegistryService(
         val dim = Dimensione(UUID.randomUUID(), nome, tipo, conformata, tabellaDim, colonnaChiave)
         registryRepository.saveDimensione(dim)
         registryRepository.bumpVersion()
-        symbolTableService.createSymbolTable(nome)
+
         return dim
     }
 

@@ -18,4 +18,13 @@ class EtlCompletionService(
         etlSyncStateRepository.upsert(EtlSyncState(areaId, sourceId, syncTime))
         dataVersionRepository.bumpVersion(areaId)
     }
+
+    /**
+     * Dopo la ricostruzione dell'indice di un dataset: alza la sua dataVersion,
+     * così le cache calcolate sui dati vecchi si invalidano.
+     */
+    @Transactional("postgresTransactionManager")
+    fun completeAreaRefresh(areaId: UUID) {
+        dataVersionRepository.bumpVersion(areaId)
+    }
 }
