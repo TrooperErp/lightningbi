@@ -72,7 +72,8 @@ class RegistryService(
         colonnaFisica: String?,
         tipoAggregazione: TipoAggregazione,
         tipoMetrica: TipoMetrica = TipoMetrica.AGGREGAZIONE_COLONNA,
-        espressione: String? = null
+        espressione: String? = null,
+        importedTableId: UUID? = null
     ): AreaMetrica {
         require(colonnaFisica != null || tipoAggregazione == TipoAggregazione.COUNT) {
             "colonnaFisica è obbligatoria per l'aggregazione $tipoAggregazione"
@@ -86,7 +87,8 @@ class RegistryService(
             colonnaFisica = colonnaFisica?.let { Naming.column(it) },
             tipoAggregazione = tipoAggregazione,
             tipoMetrica = tipoMetrica,
-            espressione = espressione
+            espressione = espressione,
+            importedTableId = importedTableId
         )
         registryRepository.saveAreaMetrica(metrica)
         registryRepository.bumpVersion()
@@ -159,6 +161,7 @@ class RegistryService(
 
         registryRepository.deleteAreaMetricheByArea(areaId)
         registryRepository.deleteAreaDimensioniByArea(areaId)
+        importedTableRepository.unlinkArea(areaId)
         importedTableRepository.deleteByArea(areaId)
         areaSourceRepository.findByArea(areaId).forEach { areaSourceRepository.delete(it.id) }
         registryRepository.deleteArea(areaId)

@@ -13,9 +13,11 @@ import com.vaadin.flow.component.button.ButtonVariant
 import com.vaadin.flow.component.checkbox.Checkbox
 import com.vaadin.flow.component.checkbox.CheckboxGroup
 import com.vaadin.flow.component.combobox.ComboBox
+import com.vaadin.flow.component.dependency.Uses
 import com.vaadin.flow.component.grid.Grid
 import com.vaadin.flow.component.html.Div
 import com.vaadin.flow.component.html.Span
+import com.vaadin.flow.component.icon.Icon
 import com.vaadin.flow.component.notification.Notification
 import com.vaadin.flow.component.orderedlayout.FlexComponent
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout
@@ -29,9 +31,8 @@ import com.vaadin.flow.router.BeforeEnterEvent
 import com.vaadin.flow.router.BeforeEnterObserver
 import com.vaadin.flow.router.Route
 import java.time.Instant
-import java.util.UUID
-import com.vaadin.flow.component.dependency.Uses
-import com.vaadin.flow.component.icon.Icon
+import java.util.*
+
 /**
  * Pagina di creazione di un nuovo Dataset (schema a stella nativo:
  * Fatti + Dimensioni importati come tabelle separate). Solo admin.
@@ -1074,27 +1075,18 @@ class NewDatasetView(
 
         val fisici = try { nomiFisici() } catch (e: Exception) { return "Nome tabella non utilizzabile: ${e.message}" }
 
-        // Una tabella ClickHouse importata appartiene a un solo dataset.
-        val giaUsati = registryRepository.findAllAree()
-            .flatMap { importedTableRepository.findByArea(it.id) }
-            .map { it.tabellaFisica }
-            .toSet()
+
+        // Nel passo ponte il wizard crea ancora le tabelle insieme al dataset:
+        // una tabella già importata (da un altro dataset o dalla pagina
+        // "Tabelle importate") non si ricrea. Il riuso arriva con la Fase D.
+        val giaUsati = importedTableRepository.findTabelleFisiche()
         val conflitti = fisici.values.filter { it in giaUsati }
         if (conflitti.isNotEmpty())
-            return "Tabelle già importate da un altro dataset: ${conflitti.joinToString(", ")}. " +
+            return "Tabelle già importate: ${conflitti.joinToString(", ")}. " +
                     "Cambia il nome logico o usa tabelle diverse."
         return validateColonne()
     }
 
-    // ================= Creazione =================
-
-    /**
-     * Scrive il registry: Area, AreaSource (con l'elenco tabelle),
-     * ImportedTable/ImportedColumn, dimensioni collegate alla tabella di
-     * provenienza, metriche. Nessuna tabella ClickHouse: le crea l'ETL.
-     * Non essendoci una transazione unica su tutti i passi, un errore a
-     * metà annulla a mano quanto già scritto (rollback()).
-     */
     private fun createDataset() {
         val nome = state.nomeDataset.trim()
         val plan = buildPlan()
@@ -1117,7 +1109,10 @@ class NewDatasetView(
                     connectionId = connessione.id,
                     config = SourceConfig(
                         schema = state.schema,
-                        tabelle = tabelle,
+                        // L'elenco tabelle non sta più nella sorgente: vive in
+                        // ImportedTable (connessione, schema e nome origine) e
+                        // nel ponte lbi_area_imported_table.
+                        tabelle = emptyList(),
                         syncMode = SyncMode.FULL_RELOAD
                     ),
                     // Le view QLK_* esistono già sulla sorgente e le abbiamo
@@ -1140,9 +1135,13 @@ class NewDatasetView(
                         tabellaFisica = fisici.getValue(t.viewName),
                         ruolo = t.ruolo,
                         sourceId = sourceId,
-                        colonnaChiave = t.colonnaChiave
+                        colonnaChiave = t.colonnaChiave,
+                        connectionId = connessione.id,
+                        schemaOrigine = state.schema,
+                        nomeOrigine = t.viewName
                     )
                 )
+                importedTableRepository.linkToArea(area.id, id)
                 importedTableRepository.saveColumns(
                     state.colonne[t.viewName].orEmpty()
                         .filter { it.ruolo != Ruolo.IGNORA }
@@ -1178,7 +1177,8 @@ class NewDatasetView(
                     areaId = area.id,
                     nome = m.nome,
                     colonnaFisica = m.colonna,
-                    tipoAggregazione = m.tipo
+                    tipoAggregazione = m.tipo,
+                    importedTableId = idTabelle.getValue(fatti.viewName)
                 )
             }
             registryRepository.bumpVersion()
@@ -1203,6 +1203,7 @@ class NewDatasetView(
         fun tenta(passo: () -> Unit) { try { passo() } catch (_: Exception) { } }
         tenta { registryRepository.deleteAreaMetricheByArea(areaId) }
         tenta { registryRepository.deleteAreaDimensioniByArea(areaId) }
+        tenta { importedTableRepository.unlinkArea(areaId) }
         tenta { importedTableRepository.deleteByArea(areaId) }
         tenta { areaSourceRepository.findByArea(areaId).forEach { areaSourceRepository.delete(it.id) } }
         tenta { registryRepository.deleteArea(areaId) }

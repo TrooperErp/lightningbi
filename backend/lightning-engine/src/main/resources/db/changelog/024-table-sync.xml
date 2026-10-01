@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="024-table-sync" author="lightningbi">
+        <!-- Sincronizzazione per tabella importata: una riga per tabella.
+             Generica per qualunque sorgente: nessun nome di colonna o di
+             tabella di un gestionale specifico sta nel codice, tutto è
+             configurazione.
+
+             Niente fuso orario: l'ora di riferimento si prende dalla sorgente
+             stessa. All'inizio di ogni sincronizzazione il connettore chiede
+             alla sorgente la sua ora corrente e la si salva in
+             ultima_sync_inizio SENZA conversioni. :ultima_sync è quel valore
+             meno il margine, confrontato con campi nella stessa ora.
+
+             AVVERTENZE (da rispettare nel codice e nell'interfaccia):
+             1) Cambio dell'ora legale. ultima_sync_inizio è un'ora locale senza
+                fuso. Quando a ottobre l'orologio torna indietro di un'ora, una
+                modifica fatta nell'ora ripetuta può avere un datastamp
+                precedente a ultima_sync_inizio e andrebbe persa. Per questo il
+                margine di default è di 60 minuti (3600 secondi): ridurlo è una
+                scelta dell'admin e un limite accettato.
+             2) Origine del datastamp. Il metodo presuppone che il campo
+                datastamp sia scritto con l'orologio del DATABASE sorgente. Se lo
+                scrive l'applicazione con l'ora del proprio server, si torna allo
+                scarto tra orologi (il margine lo copre solo in parte). Va
+                dichiarato nella configurazione della tabella e verificato con
+                una modifica reale prima di attivare l'incrementale. -->
+        <createTable tableName="lbi_table_sync">
+            <column name="imported_table_id" type="uuid">
+                <constraints primaryKey="true" nullable="false"
+                             primaryKeyName="pk_table_sync"
+                             foreignKeyName="fk_table_sync_imported_table"
+                             references="lbi_imported_table(id)"
+                             deleteCascade="true"/>
+            </column>
+            <!-- COMPLETA | INCREMENTALE -->
+            <column name="modalita" type="varchar(20)" defaultValue="COMPLETA">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Nomi delle colonne che identificano l'unità da sostituire
+                 (es. un documento), come array JSON. -->
+            <column name="colonne_unita" type="jsonb" defaultValue="[]">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Query, nel linguaggio della sorgente, che restituisce le chiavi
+                 delle unità cambiate dopo :ultima_sync (parametro legato, mai
+                 sostituito nel testo). -->
+            <column name="query_cambiati" type="text"/>
+            <!-- Query opzionale delle unità da rileggere sempre a ogni giro. -->
+            <column name="query_sempre" type="text"/>
+            <!-- Se true, a ogni giro si confrontano le chiavi complete e si
+                 eliminano le unità sparite dalla sorgente. -->
+            <column name="confronta_cancellazioni" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Margine sottratto a ultima_sync_inizio, in secondi. Default 60
+                 minuti (vedi avvertenza 1). -->
+            <column name="margine_secondi" type="int" defaultValueNumeric="3600">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Ora di INIZIO dell'ultima sincronizzazione riuscita, nell'ora
+                 della sorgente (timestamp senza fuso, nessuna conversione). -->
+            <column name="ultima_sync_inizio" type="timestamp"/>
+        </createTable>
+    </changeSet>
+
+</databaseChangeLog>

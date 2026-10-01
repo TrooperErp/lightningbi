@@ -8,7 +8,12 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.sql.Connection
 import java.sql.DriverManager
-
+import com.lightningbi.lightning_engine.service.KeyQueryProbe
+import com.lightningbi.lightning_engine.service.QueryNonValidaException
+import com.lightningbi.lightning_engine.service.QueryScadutaException
+import java.sql.SQLException
+import java.sql.SQLTimeoutException
+import java.time.LocalDateTime
 /**
  * Connettore per le sorgenti JDBC: SQL Server (mssql) e PostgreSQL (psql).
  *
@@ -92,10 +97,12 @@ class JdbcSourceConnector(
             val risultato = mutableListOf<ColumnInfo>()
             conn.metaData.getColumns(null, schema, pattern, "%").use { rs ->
                 while (rs.next()) {
+                    val scala = rs.getInt("DECIMAL_DIGITS").takeUnless { rs.wasNull() }
                     risultato.add(
                         ColumnInfo(
                             name = rs.getString("COLUMN_NAME"),
-                            typeName = rs.getString("TYPE_NAME")
+                            typeName = rs.getString("TYPE_NAME"),
+                            scale = scala
                         )
                     )
                 }
@@ -129,6 +136,115 @@ class JdbcSourceConnector(
             }
             righe
         }
+    override fun sourceNow(connection: SourceConnection): LocalDateTime =
+        apri(connection).use { conn ->
+            // Sintassi dal prodotto DB reale, come in sampleRows. Si chiede un
+            // timestamp SENZA fuso (SYSDATETIME / localtimestamp): è l'ora
+            // locale della sorgente, la stessa dei suoi datastamp.
+            val prodotto = conn.metaData.databaseProductName ?: ""
+            val sql = if (prodotto.contains("Microsoft SQL Server", ignoreCase = true)) {
+                "SELECT SYSDATETIME()"
+            } else {
+                "SELECT localtimestamp"
+            }
+            conn.createStatement().use { stmt ->
+                stmt.executeQuery(sql).use { rs ->
+                    check(rs.next()) { "La sorgente non ha restituito l'ora corrente" }
+                    // getObject con LocalDateTime: nessuna conversione di fuso.
+                    rs.getObject(1, LocalDateTime::class.java)
+                        ?: error("La sorgente ha restituito un'ora nulla")
+                }
+            }
+        }
+
+    override fun probeKeyQuery(
+        connection: SourceConnection,
+        query: String,
+        ultimaSync: LocalDateTime,
+        timeoutSecondi: Int
+    ): KeyQueryProbe {
+        val (sql, parametri) = preparaQueryDiChiavi(query)
+        try {
+            return apri(connection).use { conn ->
+                conn.isReadOnly = true
+                conn.prepareStatement(sql).use { stmt ->
+                    stmt.queryTimeout = timeoutSecondi
+                    // La prova non restituisce mai un insieme di chiavi: una riga basta.
+                    stmt.maxRows = 1
+                    // :ultima_sync è un parametro legato, mai sostituito nel testo.
+                    for (k in 1..parametri) stmt.setObject(k, ultimaSync)
+                    stmt.executeQuery().use { rs ->
+                        val meta = rs.metaData
+                        val colonne = (1..meta.columnCount).map { meta.getColumnLabel(it) }
+                        val esempio = if (rs.next()) {
+                            colonne.mapIndexed { i, nome -> nome to rs.getObject(i + 1) }.toMap()
+                        } else null
+                        KeyQueryProbe(colonne, esempio)
+                    }
+                }
+            }
+        } catch (e: SQLTimeoutException) {
+            throw QueryScadutaException("La query non ha risposto entro $timeoutSecondi secondi", e)
+        } catch (e: SQLException) {
+            // PostgreSQL segnala il timeout con lo stato 57014 (query annullata).
+            if (e.sqlState == "57014") {
+                throw QueryScadutaException("La query non ha risposto entro $timeoutSecondi secondi", e)
+            }
+            throw QueryNonValidaException("La sorgente ha rifiutato la query: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Prepara il testo di una query di chiavi: accetta una sola istruzione di
+     * sola lettura (SELECT o WITH), senza commenti, e trasforma ogni
+     * `:ultima_sync` fuori dai letterali in un segnaposto `?`. Restituisce il
+     * testo e quanti segnaposto ci sono, da legare tutti allo stesso valore.
+     */
+    private fun preparaQueryDiChiavi(query: String): Pair<String, Int> {
+        val testo = query.trim().removeSuffix(";").trim()
+        if (testo.isEmpty()) throw QueryNonValidaException("La query è vuota")
+
+        val prima = testo.split(Regex("\\s+"), limit = 2).first().lowercase()
+        if (prima != "select" && prima != "with") {
+            throw QueryNonValidaException("La query deve iniziare con SELECT o WITH: solo lettura")
+        }
+
+        val sql = StringBuilder()
+        var parametri = 0
+        var inLetterale = false
+        var i = 0
+        while (i < testo.length) {
+            val c = testo[i]
+            if (inLetterale) {
+                sql.append(c)
+                if (c == '\'') {
+                    if (i + 1 < testo.length && testo[i + 1] == '\'') {
+                        sql.append('\'')
+                        i++
+                    } else {
+                        inLetterale = false
+                    }
+                }
+                i++
+                continue
+            }
+            when {
+                c == '\'' -> { inLetterale = true; sql.append(c); i++ }
+                c == ';' -> throw QueryNonValidaException("Una sola istruzione per query: trovato ';' nel testo")
+                (c == '-' && testo.getOrNull(i + 1) == '-') || (c == '/' && testo.getOrNull(i + 1) == '*') ->
+                    throw QueryNonValidaException("I commenti non sono ammessi nella query")
+                testo.startsWith(":ultima_sync", i, ignoreCase = true) &&
+                        testo.getOrNull(i + 12)?.let { it.isLetterOrDigit() || it == '_' } != true &&
+                        testo.getOrNull(i - 1) != ':' -> {
+                    sql.append('?')
+                    parametri++
+                    i += 12
+                }
+                else -> { sql.append(c); i++ }
+            }
+        }
+        return sql.toString() to parametri
+    }
 
     override fun extract(
         connection: SourceConnection,

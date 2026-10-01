@@ -3,8 +3,10 @@ package com.lightningbi.lightning_engine.model
 import java.util.UUID
 
 /**
- * Ruolo di una tabella importata nello schema a stella dell'Area.
- * FATTI: tabella dei fatti (una sola per Area, coincide con Area.tabellaFisica).
+ * Ruolo di una tabella importata nello schema a stella di un dataset.
+ * FATTI: tabella dei fatti. Il modello prevede N Fatti per dataset
+ * (multi-fatto, come Qlik); StarQueryBuilder oggi ne gestisce uno solo
+ * (si allarga in Fase E).
  * DIMENSIONE: tabella dimensione, collegata ai Fatti da una chiave condivisa.
  */
 enum class RuoloTabella {
@@ -14,33 +16,49 @@ enum class RuoloTabella {
 
 /**
  * Una tabella importata da una sorgente esterna, mappata 1:1 su una tabella
- * fisica ClickHouse. Sostituisce l'idea di "una classe Kotlin per tabella":
- * qui la tabella è descritta interamente da dati (nome, colonne, chiave),
- * non da un type Kotlin dedicato. Lo schema si scopre a runtime via
- * MetadataService, non si hardcoda in compilazione.
+ * fisica ClickHouse. È descritta interamente da dati (nome, colonne, chiave),
+ * non da un type Kotlin dedicato: lo schema si scopre a runtime tramite il
+ * connettore (ConnectionOrchestrator.listColumns), non si hardcoda in
+ * compilazione.
+ *
+ * Una tabella importata appartiene alla CONNESSIONE da cui si legge, non a un
+ * dataset: si importa una volta e si riusa in N dataset tramite il ponte
+ * lbi_area_imported_table.
+ *
+ * Passo ponte (A.2 e Fase B): [areaId] e [sourceId] sono nullable. Il wizard
+ * di oggi li scrive; la pagina "Tabelle importate" crea tabelle senza dataset,
+ * quindi senza nessuno dei due. Spariscono nel blocco unico della Fase C.
+ * [connectionId], [schemaOrigine] e [nomeOrigine] sono nullable solo in questo
+ * passo: diventano obbligatorie nella stessa Fase C.
  *
  * @param nomeLogico nome leggibile scelto in fase di wizard (es. "Clienti")
  * @param tabellaFisica nome ClickHouse, prodotto da Naming (es. mssql_sem__clienti)
  * @param colonnaChiave nome della colonna usata per il JOIN con i Fatti,
  *   null se non ancora determinata (solo per ruolo DIMENSIONE)
+ * @param connectionId connessione da cui si legge la tabella
+ * @param schemaOrigine schema della view/tabella sulla sorgente (es. a_reporting)
+ * @param nomeOrigine nome della view/tabella sulla sorgente (es. QLK_VISTACLIENTI)
  */
 data class ImportedTable(
     val id: UUID,
-    val areaId: UUID,
+    val areaId: UUID?,
     val nomeLogico: String,
     val tabellaFisica: String,
     val ruolo: RuoloTabella,
-    val sourceId: UUID,
-    val colonnaChiave: String? = null
+    val sourceId: UUID?,
+    val colonnaChiave: String? = null,
+    val connectionId: UUID? = null,
+    val schemaOrigine: String? = null,
+    val nomeOrigine: String? = null
 )
 
 /**
- * Una colonna di una ImportedTable, come scoperta da
- * MetadataService.listColumns sulla view sorgente. Puramente descrittiva:
- * non genera proprietà tipizzate, resta un dato consultabile a runtime.
+ * Una colonna di una ImportedTable, come scoperta dal connettore sulla view
+ * sorgente. Puramente descrittiva: non genera proprietà tipizzate, resta un
+ * dato consultabile a runtime.
  *
  * @param isChiave true se questa colonna è (parte del)la chiave di JOIN
- *   verso un'altra ImportedTable della stessa Area
+ *   verso un'altra ImportedTable dello stesso dataset
  */
 data class ImportedColumn(
     val id: UUID,

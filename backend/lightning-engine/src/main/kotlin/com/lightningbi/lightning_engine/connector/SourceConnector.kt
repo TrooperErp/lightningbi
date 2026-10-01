@@ -2,7 +2,9 @@ package com.lightningbi.lightning_engine.connector
 
 import com.lightningbi.lightning_engine.model.SourceConnection
 import com.lightningbi.lightning_engine.service.ColumnInfo
+import com.lightningbi.lightning_engine.service.KeyQueryProbe
 import com.lightningbi.lightning_engine.service.TableInfo
+import java.time.LocalDateTime
 
 /**
  * Contratto di un connettore verso un tipo di sorgente dati.
@@ -58,4 +60,27 @@ interface SourceConnector {
         tabella: String,
         consumatore: (Sequence<Map<String, Any?>>) -> Unit
     )
+
+
+    /**
+     * Ora corrente della sorgente, nell'ora della sorgente (senza fuso): è il
+     * riferimento per `ultima_sync_inizio` e per `:ultima_sync`.
+     */
+    fun sourceNow(connection: SourceConnection): LocalDateTime
+
+    /**
+     * Prova una query di chiavi per controllarne la forma, senza leggere un
+     * insieme di chiavi: la esegue con `:ultima_sync` legato come parametro
+     * (mai sostituito nel testo), entro `timeoutSecondi`, e restituisce i nomi
+     * delle colonne e al massimo una riga di esempio.
+     *
+     * @throws QueryScadutaException se non risponde entro il tempo concesso
+     * @throws QueryNonValidaException se la sorgente la rifiuta
+     */
+    fun probeKeyQuery(
+        connection: SourceConnection,
+        query: String,
+        ultimaSync: LocalDateTime,
+        timeoutSecondi: Int
+    ): KeyQueryProbe
 }

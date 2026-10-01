@@ -57,7 +57,7 @@ class StarQueryBuilder(
         dimensioniUsate: Set<UUID>,
         dimensioni: List<AreaDimensione>
     ): Plan {
-        val tabelle = importedTableRepository.findByArea(areaId)
+        val tabelle = importedTableRepository.findLinkedToArea(areaId)
         val fatti = tabelle.singleOrNull { it.ruolo == RuoloTabella.FATTI }
             ?: error("L'area $areaId deve avere esattamente una tabella Fatti importata")
         val tabellePerId = tabelle.associateBy { it.id }

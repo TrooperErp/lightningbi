@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="027-imported-table-standalone" author="lightningbi">
+        <!-- Passo ponte (Fase B): la pagina "Tabelle importate" crea una tabella
+             SENZA dataset, quindi senza area_id e senza source_id. Il wizard di
+             oggi continua a scriverli. Le due colonne spariscono del tutto nel
+             blocco unico della Fase C, insieme a connection_id/schema_origine/
+             nome_origine NOT NULL. -->
+        <dropNotNullConstraint tableName="lbi_imported_table" columnName="area_id" columnDataType="uuid"/>
+        <dropNotNullConstraint tableName="lbi_imported_table" columnName="source_id" columnDataType="uuid"/>
+    </changeSet>
+
+</databaseChangeLog>

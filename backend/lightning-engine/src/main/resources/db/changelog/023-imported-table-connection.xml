@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="023-imported-table-connection" author="lightningbi">
+        <!-- Una tabella importata appartiene alla connessione (non al dataset):
+             si importa una volta e si riusa in N dataset.
+             Le tre colonne sono NULLABLE solo in questo passo ponte (A.2 passo 1):
+             wizard ed ETL non le scrivono ancora. Diventano NOT NULL nel passo 3,
+             insieme alla rimozione di area_id e source_id. -->
+        <addColumn tableName="lbi_imported_table">
+            <!-- Connessione da cui si legge la tabella. -->
+            <column name="connection_id" type="uuid">
+                <constraints nullable="true"
+                             foreignKeyName="fk_imported_table_connection"
+                             references="lbi_connection(id)"/>
+            </column>
+            <!-- Schema e nome della view/tabella sulla sorgente (es. a_reporting /
+                 QLK_VISTACLIENTI). Il nome fisico ClickHouse resta in tabella_fisica. -->
+            <column name="schema_origine" type="varchar(255)"/>
+            <column name="nome_origine" type="varchar(255)"/>
+        </addColumn>
+
+        <createIndex indexName="idx_imported_table_connection" tableName="lbi_imported_table">
+            <column name="connection_id"/>
+        </createIndex>
+
+        <!-- Ponte dataset <-> tabelle importate. Il dataset è una composizione di
+             N Fatti e Dimensioni scelte tra le tabelle importate. -->
+        <createTable tableName="lbi_area_imported_table">
+            <column name="area_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="imported_table_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <addPrimaryKey tableName="lbi_area_imported_table"
+                       columnNames="area_id, imported_table_id"
+                       constraintName="pk_area_imported_table"/>
+
+        <!-- Eliminare un dataset toglie solo i suoi collegamenti. -->
+        <addForeignKeyConstraint baseTableName="lbi_area_imported_table"
+                                 baseColumnNames="area_id"
+                                 constraintName="fk_area_imported_table_area"
+                                 referencedTableName="lbi_area"
+                                 referencedColumnNames="id"
+                                 onDelete="CASCADE"/>
+
+        <!-- Una tabella usata da un dataset non si può eliminare (nessun CASCADE). -->
+        <addForeignKeyConstraint baseTableName="lbi_area_imported_table"
+                                 baseColumnNames="imported_table_id"
+                                 constraintName="fk_area_imported_table_table"
+                                 referencedTableName="lbi_imported_table"
+                                 referencedColumnNames="id"/>
+
+        <createIndex indexName="idx_area_imported_table_table" tableName="lbi_area_imported_table">
+            <column name="imported_table_id"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

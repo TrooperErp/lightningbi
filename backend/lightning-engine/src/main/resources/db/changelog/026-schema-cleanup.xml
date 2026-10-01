@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="026-schema-cleanup" author="lightningbi">
+        <!-- Nessun codice legge più lbi_area.partition_expression: era del
+             percorso a view singola, eliminato nella Fase 0. -->
+        <dropColumn tableName="lbi_area" columnName="partition_expression"/>
+
+        <!-- Il default 'PENDING_VIEW' non è un valore di SourceStatus (VERIFIED
+             o ERROR): una riga creata senza stato farebbe lanciare valueOf alla
+             lettura. Senza default, uno stato mancante è un errore esplicito
+             all'inserimento invece di uno stato impossibile. Il codice scrive
+             sempre lo stato. -->
+        <sql>ALTER TABLE lbi_area_source ALTER COLUMN status DROP DEFAULT</sql>
+    </changeSet>
+
+</databaseChangeLog>

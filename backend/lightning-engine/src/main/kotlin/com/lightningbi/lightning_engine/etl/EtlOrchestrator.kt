@@ -72,9 +72,7 @@ class EtlOrchestrator(
      * Lock, registrazione dell'esecuzione e gestione errori sono qui.
      */
     fun runForArea(areaId: UUID, source: AreaSource) {
-        require(source.config.tabelle.isNotEmpty()) {
-            "La sorgente ${source.id} non ha tabelle da importare"
-        }
+
         require(source.areaId == areaId) {
             "La sorgente ${source.id} appartiene all'area ${source.areaId}, non a $areaId"
         }
@@ -165,7 +163,7 @@ class EtlOrchestrator(
         require(dimensioni.isNotEmpty()) { "L'area '${area.nome}' non ha dimensioni configurate" }
         require(metriche.isNotEmpty()) { "L'area '${area.nome}' non ha metriche configurate" }
 
-        val importate = importedTableRepository.findByArea(areaId)
+        val importate = importedTableRepository.findLinkedToArea(areaId)
         require(importate.count { it.ruolo == RuoloTabella.FATTI } == 1) {
             "L'area '${area.nome}' deve avere esattamente una tabella Fatti importata"
         }
@@ -176,14 +174,14 @@ class EtlOrchestrator(
         val colonnePerTabella: Map<UUID, List<ImportedColumn>> =
             importate.associate { it.id to importedTableRepository.findColumnsByTable(it.id) }
 
-        // ImportedTable non porta il nome della view sulla sorgente: sta in
-        // SourceConfig.tabelle. Il nome logico è univoco nel dataset (lo
-        // garantisce il wizard) e fa da legame fra i due.
-        val viewPerNomeLogico = source.config.tabelle.associate { it.nomeLogico to it.viewName }
+        // Connessione, schema e nome della view sulla sorgente stanno nella
+        // tabella importata.
         fun viewDi(t: ImportedTable): String =
-            viewPerNomeLogico[t.nomeLogico] ?: error("Tabella '${t.nomeLogico}' non presente nella configurazione della sorgente")
+            t.nomeOrigine ?: error("La tabella '${t.nomeLogico}' non ha il nome di origine sulla sorgente")
+        fun connectionDi(t: ImportedTable): UUID =
+            t.connectionId ?: error("La tabella '${t.nomeLogico}' non ha una connessione")
 
-        checkColumnDriftStella(area, source, importate, colonnePerTabella, ::viewDi)
+        checkColumnDriftStella(area, importate, colonnePerTabella)
 
         val syncStart = LocalDateTime.now()
 
@@ -242,7 +240,7 @@ class EtlOrchestrator(
             var validTabella = 0L
             var scartateTabella = 0L
 
-            connectionOrchestrator.extract(source.connectionId, source.config.schema, viewDi(t)) { righe ->
+            connectionOrchestrator.extract(connectionDi(t), t.schemaOrigine, viewDi(t)) { righe ->
                 righe.chunked(etlChunkSize).forEach { blocco ->
                     val rows = normalizzaNomiColonna(blocco, necessarie, grezzeNecessarie, t.nomeLogico)
 
@@ -339,14 +337,14 @@ class EtlOrchestrator(
      */
     private fun checkColumnDriftStella(
         area: Area,
-        source: AreaSource,
         importate: List<ImportedTable>,
-        colonnePerTabella: Map<UUID, List<ImportedColumn>>,
-        viewDi: (ImportedTable) -> String
+        colonnePerTabella: Map<UUID, List<ImportedColumn>>
     ) {
         val mancantiPerTabella: Map<String, List<String>> = try {
             importate.associate { t ->
-                val reali = connectionOrchestrator.listColumns(source.connectionId, source.config.schema, viewDi(t))
+                val connectionId = t.connectionId ?: error("La tabella '${t.nomeLogico}' non ha una connessione")
+                val nomeOrigine = t.nomeOrigine ?: error("La tabella '${t.nomeLogico}' non ha il nome di origine")
+                val reali = connectionOrchestrator.listColumns(connectionId, t.schemaOrigine, nomeOrigine)
                     .map { it.name.lowercase() }.toSet()
                 val attese = colonnePerTabella[t.id].orEmpty().map { it.nome }
                 t.nomeLogico to attese.filter { it.lowercase() !in reali }
@@ -363,7 +361,6 @@ class EtlOrchestrator(
             val messaggio = "Il dataset '${area.nome}' (id=${area.id}) ha colonne importate non più presenti " +
                     "nella sorgente. $dettaglio. L'ETL è stato bloccato per evitare un fallimento a metà. " +
                     "Vai in \"Modifica Schema\" per sistemare, poi rilancia la sincronizzazione manualmente."
-
             error(messaggio)
         }
     }

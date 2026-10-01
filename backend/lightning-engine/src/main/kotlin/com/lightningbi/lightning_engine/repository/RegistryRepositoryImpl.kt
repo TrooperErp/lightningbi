@@ -72,7 +72,8 @@ class RegistryRepositoryImpl(
         rs.getString("colonna_fisica"),
         TipoAggregazione.valueOf(rs.getString("tipo_aggregazione") ?: "SUM"),
         TipoMetrica.valueOf(rs.getString("tipo_metrica") ?: "AGGREGAZIONE_COLONNA"),
-        rs.getString("espressione")
+        rs.getString("espressione"),
+        rs.getString("imported_table_id")?.let { UUID.fromString(it) }
     )
 
     /**
@@ -137,10 +138,10 @@ class RegistryRepositoryImpl(
     override fun saveAreaMetrica(am: AreaMetrica) {
         jdbcTemplate.update(
             """INSERT INTO lbi_area_metrica
-               (id, area_id, nome, colonna_fisica, tipo_aggregazione, tipo_metrica, espressione)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (id, area_id, nome, colonna_fisica, tipo_aggregazione, tipo_metrica, espressione, imported_table_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             am.id, am.areaId, am.nome, am.colonnaFisica,
-            am.tipoAggregazione.name, am.tipoMetrica.name, am.espressione
+            am.tipoAggregazione.name, am.tipoMetrica.name, am.espressione, am.importedTableId
         )
     }
 

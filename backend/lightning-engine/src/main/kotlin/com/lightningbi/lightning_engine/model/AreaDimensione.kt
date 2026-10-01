@@ -88,5 +88,11 @@ data class AreaMetrica(
     val tipoAggregazione: TipoAggregazione,
     val tipoMetrica: TipoMetrica = TipoMetrica.AGGREGAZIONE_COLONNA,
     /** Usata solo da ESPRESSIONE_CALCOLATA. Nessun service la legge oggi. */
-    val espressione: String? = null
+    val espressione: String? = null,
+    /**
+     * Tabella importata (Fatti) su cui la metrica si calcola. Anche COUNT(*)
+     * appartiene a un Fatti preciso. Nullable solo nel passo ponte A.4: diventa
+     * obbligatoria nel blocco unico della Fase C.
+     */
+    val importedTableId: UUID? = null
 )

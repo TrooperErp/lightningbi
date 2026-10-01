@@ -22,4 +22,9 @@
 <include file="db/changelog/020-area-dimensione-imported-table.xml"/>
 <include file="db/changelog/021-connection.xml"/>
 <include file="db/changelog/022-area-source-connection.xml"/>
+<include file="db/changelog/023-imported-table-connection.xml"/>
+<include file="db/changelog/024-table-sync.xml"/>
+<include file="db/changelog/025-metric-fatti-campi.xml"/>
+<include file="db/changelog/026-schema-cleanup.xml"/>
+<include file="db/changelog/027-imported-table-standalone.xml"/>
 </databaseChangeLog>

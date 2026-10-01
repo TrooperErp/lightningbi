@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="025-metric-fatti-campi" author="lightningbi">
+        <!-- Parte 1: la metrica appartiene a un Fatti. Anche COUNT(*), che non
+             ha colonna, si calcola su un Fatti preciso. NULLABLE solo in questo
+             passo ponte (A.4): diventa NOT NULL con il blocco unico della
+             Fase C, quando il wizard e l'ETL la scrivono sempre. Nessun CASCADE:
+             una tabella con metriche non si elimina (le metriche del dataset
+             si cancellano prima, vedi RegistryService.deleteAreaCompleta). -->
+        <addColumn tableName="lbi_area_metrica">
+            <column name="imported_table_id" type="uuid">
+                <constraints nullable="true"
+                             foreignKeyName="fk_area_metrica_imported_table"
+                             references="lbi_imported_table(id)"/>
+            </column>
+        </addColumn>
+
+        <createIndex indexName="idx_area_metrica_imported_table" tableName="lbi_area_metrica">
+            <column name="imported_table_id"/>
+        </createIndex>
+
+        <!-- Parte 2: nomi dei campi per dataset. Come in Qlik, il nome di
+             default di un campo è quello della colonna; rinominarlo o
+             escluderlo è un'ECCEZIONE valida solo in questo dataset (serve a
+             rompere i loop senza toccare la tabella importata né gli altri
+             dataset). Si salvano SOLO le colonne modificate: una colonna senza
+             riga usa il nome di default ed è inclusa.
+
+             colonna: nome FISICO (Naming.column), come
+             AreaDimensione.colonnaFisica. nome_campo: salvato normalizzato dal
+             servizio, perché l'associazione per nome confronta la stessa forma.
+
+             Nessun UNIQUE su nome_campo: rinominare un campo con un nome già
+             usato da un'altra tabella è il modo voluto per creare
+             un'associazione. L'unicità la decide il validatore del grafo.
+
+             Nessuna FK verso lbi_imported_column: una colonna sparita dalla
+             sorgente lascia una riga orfana, che va SEGNALATA dal validatore
+             (Fase D), non bloccata dal database. -->
+        <createTable tableName="lbi_area_campo">
+            <column name="area_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="imported_table_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="colonna" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- null = nome di default (quello della colonna). -->
+            <column name="nome_campo" type="varchar(255)"/>
+            <column name="escluso" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <addPrimaryKey tableName="lbi_area_campo"
+                       columnNames="area_id, imported_table_id, colonna"
+                       constraintName="pk_area_campo"/>
+
+        <!-- Toglie il legame dataset-tabella (o il dataset) e toglie con lui i
+             suoi campi. -->
+        <addForeignKeyConstraint baseTableName="lbi_area_campo"
+                                 baseColumnNames="area_id, imported_table_id"
+                                 constraintName="fk_area_campo_area_imported_table"
+                                 referencedTableName="lbi_area_imported_table"
+                                 referencedColumnNames="area_id, imported_table_id"
+                                 onDelete="CASCADE"/>
+
+        <!-- Combinazioni senza senso: escluso con un nome (un campo escluso non
+             si rinomina), nome vuoto, e riga senza effetto (non esclusa e senza
+             nome: coinciderebbe col default, che non si salva). -->
+        <sql>
+            ALTER TABLE lbi_area_campo ADD CONSTRAINT ck_area_campo_escluso_nome
+                CHECK (NOT (escluso AND nome_campo IS NOT NULL));
+            ALTER TABLE lbi_area_campo ADD CONSTRAINT ck_area_campo_nome_non_vuoto
+                CHECK (nome_campo IS NULL OR length(btrim(nome_campo)) > 0);
+            ALTER TABLE lbi_area_campo ADD CONSTRAINT ck_area_campo_con_effetto
+                CHECK (escluso OR nome_campo IS NOT NULL);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

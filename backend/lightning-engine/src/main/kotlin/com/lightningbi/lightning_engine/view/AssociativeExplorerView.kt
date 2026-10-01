@@ -319,7 +319,7 @@ class AssociativeExplorerView(
             when {
                 source == null -> "Nessuna sorgente collegata"
                 source.status == SourceStatus.ERROR -> "Sorgente in errore: ${source.errorDetail ?: "causa non registrata"}"
-                else -> "Sorgente: ${source.config.tabelle.size} tabelle importate"
+                else -> "Sorgente collegata"
             }
         )
         refreshSidebar()
