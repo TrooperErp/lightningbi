@@ -14,6 +14,7 @@ interface RegistryRepository {
     fun getVersion(): Long
     fun bumpVersion()
     fun saveArea(area: Area)
+    fun updateArea(area: Area)
     fun saveDimensione(dimensione: Dimensione)
     fun saveAreaDimensione(ad: AreaDimensione)
     fun saveAreaMetrica(am: AreaMetrica)

@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="030-area-tabella" author="lightningbi">
+        <!-- Una tabella importata può comparire più volte nello stesso dataset
+             (come in Qlik: "Agenti" e "Agenti da documenti"). Ogni comparsa è
+             una OCCORRENZA (AreaTabella) con id proprio e alias unico nel
+             dataset. Campi, dimensioni e metriche puntano all'occorrenza.
+             La tabella lbi_area_imported_table resta com'è per nome: è il ponte
+             che diventa l'occorrenza. -->
+
+        <!-- 1. Il ponte: id e alias -->
+        <dropForeignKeyConstraint baseTableName="lbi_area_campo"
+                                  constraintName="fk_area_campo_area_imported_table"/>
+
+        <addColumn tableName="lbi_area_imported_table">
+            <column name="id" type="uuid"/>
+            <column name="alias" type="varchar(100)"/>
+            <column name="ordine" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+
+        <sql>
+            UPDATE lbi_area_imported_table SET id = gen_random_uuid();
+        </sql>
+        <!-- Alias iniziale = nome logico; se in uno stesso dataset due tabelle
+             avessero lo stesso nome logico si aggiunge _2, _3... -->
+        <sql>
+            UPDATE lbi_area_imported_table b
+            SET alias = x.alias
+                FROM (
+                    SELECT b2.area_id,
+                           b2.imported_table_id,
+                           t.nome_logico
+                             || CASE WHEN row_number() OVER (PARTITION BY b2.area_id, t.nome_logico
+                                                             ORDER BY b2.imported_table_id) > 1
+                                     THEN '_' || row_number() OVER (PARTITION BY b2.area_id, t.nome_logico
+                                                                    ORDER BY b2.imported_table_id)
+                                     ELSE '' END AS alias
+                      FROM lbi_area_imported_table b2
+                      JOIN lbi_imported_table t ON t.id = b2.imported_table_id
+                   ) x
+            WHERE b.area_id = x.area_id
+              AND b.imported_table_id = x.imported_table_id;
+        </sql>
+        <sql>
+            UPDATE lbi_area_imported_table b
+            SET ordine = x.rn
+                FROM (SELECT id, row_number() OVER (PARTITION BY area_id ORDER BY alias) AS rn
+                  FROM lbi_area_imported_table) x
+            WHERE b.id = x.id;
+        </sql>
+        <addNotNullConstraint tableName="lbi_area_imported_table" columnName="id" columnDataType="uuid"/>
+        <addNotNullConstraint tableName="lbi_area_imported_table" columnName="alias" columnDataType="varchar(100)"/>
+
+        <dropPrimaryKey tableName="lbi_area_imported_table" constraintName="pk_area_imported_table"/>
+        <addPrimaryKey tableName="lbi_area_imported_table" columnNames="id" constraintName="pk_area_tabella"/>
+        <addUniqueConstraint tableName="lbi_area_imported_table" columnNames="area_id, alias"
+                             constraintName="uq_area_tabella_alias"/>
+
+        <!-- 2. Campi: dalla coppia (dataset, tabella) all'occorrenza -->
+        <addColumn tableName="lbi_area_campo">
+            <column name="area_tabella_id" type="uuid"/>
+        </addColumn>
+        <sql>
+            UPDATE lbi_area_campo c
+            SET area_tabella_id = b.id
+                FROM lbi_area_imported_table b
+            WHERE b.area_id = c.area_id
+              AND b.imported_table_id = c.imported_table_id;
+        </sql>
+        <addNotNullConstraint tableName="lbi_area_campo" columnName="area_tabella_id" columnDataType="uuid"/>
+        <dropPrimaryKey tableName="lbi_area_campo" constraintName="pk_area_campo"/>
+        <dropColumn tableName="lbi_area_campo" columnName="area_id"/>
+        <dropColumn tableName="lbi_area_campo" columnName="imported_table_id"/>
+        <addPrimaryKey tableName="lbi_area_campo" columnNames="area_tabella_id, colonna"
+                       constraintName="pk_area_campo"/>
+        <addForeignKeyConstraint baseTableName="lbi_area_campo" baseColumnNames="area_tabella_id"
+                                 constraintName="fk_area_campo_area_tabella"
+                                 referencedTableName="lbi_area_imported_table"
+                                 referencedColumnNames="id"
+                                 onDelete="CASCADE"/>
+
+        <!-- 3. Dimensioni del dataset: occorrenza della tabella che ospita la colonna.
+             imported_table_id resta fino al blocco distruttivo. -->
+        <addColumn tableName="lbi_area_dimensione">
+            <column name="area_tabella_id" type="uuid"/>
+        </addColumn>
+        <sql>
+            UPDATE lbi_area_dimensione d
+            SET area_tabella_id = b.id
+                FROM lbi_area_imported_table b
+            WHERE b.area_id = d.area_id
+              AND b.imported_table_id = d.imported_table_id;
+        </sql>
+        <addForeignKeyConstraint baseTableName="lbi_area_dimensione" baseColumnNames="area_tabella_id"
+                                 constraintName="fk_area_dimensione_area_tabella"
+                                 referencedTableName="lbi_area_imported_table"
+                                 referencedColumnNames="id"/>
+
+        <!-- 4. Metriche: occorrenza dei Fatti su cui si calcolano -->
+        <addColumn tableName="lbi_area_metrica">
+            <column name="area_tabella_id" type="uuid"/>
+        </addColumn>
+        <sql>
+            UPDATE lbi_area_metrica m
+            SET area_tabella_id = b.id
+                FROM lbi_area_imported_table b
+            WHERE b.area_id = m.area_id
+              AND b.imported_table_id = m.imported_table_id;
+        </sql>
+        <addForeignKeyConstraint baseTableName="lbi_area_metrica" baseColumnNames="area_tabella_id"
+                                 constraintName="fk_area_metrica_area_tabella"
+                                 referencedTableName="lbi_area_imported_table"
+                                 referencedColumnNames="id"/>
+        <createIndex indexName="idx_area_metrica_area_tabella" tableName="lbi_area_metrica">
+            <column name="area_tabella_id"/>
+        </createIndex>
+        <createIndex indexName="idx_area_dimensione_area_tabella" tableName="lbi_area_dimensione">
+            <column name="area_tabella_id"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

@@ -73,8 +73,10 @@ class RegistryRepositoryImpl(
         TipoAggregazione.valueOf(rs.getString("tipo_aggregazione") ?: "SUM"),
         TipoMetrica.valueOf(rs.getString("tipo_metrica") ?: "AGGREGAZIONE_COLONNA"),
         rs.getString("espressione"),
-        rs.getString("imported_table_id")?.let { UUID.fromString(it) }
+        rs.getString("imported_table_id")?.let { UUID.fromString(it) },
+        rs.getObject("area_tabella_id") as UUID?
     )
+
 
     /**
      * imported_table_id è nullable: getObject(...) as UUID? restituisce
@@ -88,8 +90,10 @@ class RegistryRepositoryImpl(
         rs.getBoolean("obbligatoria"),
         rs.getObject("cardinalita_stimata") as Long?,
         rs.getBoolean("valore_grezzo"),
-        rs.getObject("imported_table_id") as UUID?
+        rs.getObject("imported_table_id") as UUID?,
+        rs.getObject("area_tabella_id") as UUID?
     )
+
 
     override fun findDimensione(id: UUID): Dimensione? =
         jdbcTemplate.query(
@@ -119,6 +123,12 @@ class RegistryRepositoryImpl(
             area.id, area.nome, area.tabellaFisica
         )
     }
+    override fun updateArea(area: Area) {
+        jdbcTemplate.update(
+            "UPDATE lbi_area SET nome = ?, tabella_fisica = ? WHERE id = ?",
+            area.nome, area.tabellaFisica, area.id
+        )
+    }
 
     override fun saveDimensione(dimensione: Dimensione) {
         jdbcTemplate.update(
@@ -130,18 +140,18 @@ class RegistryRepositoryImpl(
 
     override fun saveAreaDimensione(ad: AreaDimensione) {
         jdbcTemplate.update(
-            "INSERT INTO lbi_area_dimensione (area_id, dimensione_id, colonna_fisica, obbligatoria, cardinalita_stimata, valore_grezzo, imported_table_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ad.areaId, ad.dimensioneId, ad.colonnaFisica, ad.obbligatoria, ad.cardinalitaStimata, ad.valoreGrezzo, ad.importedTableId
+            "INSERT INTO lbi_area_dimensione (area_id, dimensione_id, colonna_fisica, obbligatoria, cardinalita_stimata, valore_grezzo, imported_table_id, area_tabella_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ad.areaId, ad.dimensioneId, ad.colonnaFisica, ad.obbligatoria, ad.cardinalitaStimata, ad.valoreGrezzo, ad.importedTableId, ad.areaTabellaId
         )
     }
 
     override fun saveAreaMetrica(am: AreaMetrica) {
         jdbcTemplate.update(
             """INSERT INTO lbi_area_metrica
-               (id, area_id, nome, colonna_fisica, tipo_aggregazione, tipo_metrica, espressione, imported_table_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, area_id, nome, colonna_fisica, tipo_aggregazione, tipo_metrica, espressione, imported_table_id, area_tabella_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             am.id, am.areaId, am.nome, am.colonnaFisica,
-            am.tipoAggregazione.name, am.tipoMetrica.name, am.espressione, am.importedTableId
+            am.tipoAggregazione.name, am.tipoMetrica.name, am.espressione, am.importedTableId, am.areaTabellaId
         )
     }
 

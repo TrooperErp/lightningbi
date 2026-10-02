@@ -10,9 +10,15 @@ import java.util.UUID
  * un'associazione. Per rompere un loop si RINOMINA o si ESCLUDE un campo nel
  * dataset, senza toccare la tabella importata né gli altri dataset.
  *
+ * Il campo appartiene a una OCCORRENZA di tabella nel dataset
+ * ([AreaTabella]), non alla tabella importata: se la stessa tabella è
+ * caricata due volte, ogni copia ha i propri campi, rinominabili e
+ * escludibili in modo indipendente.
+ *
  * Si salvano solo le colonne modificate: una colonna senza AreaCampo usa il
  * nome di default ed è inclusa.
  *
+ * @param areaTabellaId occorrenza della tabella nel dataset (AreaTabella.id)
  * @param colonna nome FISICO della colonna (Naming.column), come
  *   AreaDimensione.colonnaFisica
  * @param nomeCampo nuovo nome del campo nel dataset, già normalizzato da chi
@@ -23,8 +29,7 @@ import java.util.UUID
  * 025: escluso con un nome, nome vuoto, riga senza effetto.
  */
 data class AreaCampo(
-    val areaId: UUID,
-    val importedTableId: UUID,
+    val areaTabellaId: UUID,
     val colonna: String,
     val nomeCampo: String? = null,
     val escluso: Boolean = false

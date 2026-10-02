@@ -88,11 +88,17 @@ class ImportedTableRepositoryImpl(
     // ---- Ponte dataset <-> tabelle importate (lbi_area_imported_table) ----
 
     override fun linkToArea(areaId: UUID, importedTableId: UUID) {
+        // Passo ponte: crea l'occorrenza con alias = nome logico, solo se la
+        // tabella non è già nel dataset. Il nuovo DatasetService userà
+        // AreaTabellaRepository.
         jdbcTemplate.update(
-            """INSERT INTO lbi_area_imported_table (area_id, imported_table_id)
-               VALUES (?, ?)
-               ON CONFLICT (area_id, imported_table_id) DO NOTHING""",
-            areaId, importedTableId
+            """INSERT INTO lbi_area_imported_table (id, area_id, imported_table_id, alias)
+               SELECT gen_random_uuid(), CAST(? AS uuid), t.id, t.nome_logico
+               FROM lbi_imported_table t
+               WHERE t.id = CAST(? AS uuid)
+                 AND NOT EXISTS (SELECT 1 FROM lbi_area_imported_table l
+                                 WHERE l.area_id = CAST(? AS uuid) AND l.imported_table_id = t.id)""",
+            areaId, importedTableId, areaId
         )
     }
 

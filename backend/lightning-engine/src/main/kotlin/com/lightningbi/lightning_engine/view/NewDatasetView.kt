@@ -1,1205 +1,690 @@
 package com.lightningbi.lightning_engine.view
 
-import com.lightningbi.lightning_engine.connector.ConnectionOrchestrator
-import com.lightningbi.lightning_engine.connector.JdbcSourceConnector
-import com.lightningbi.lightning_engine.model.*
-import com.lightningbi.lightning_engine.repository.AreaSourceRepository
-import com.lightningbi.lightning_engine.repository.ImportedTableRepository
-import com.lightningbi.lightning_engine.repository.RegistryRepository
-import com.lightningbi.lightning_engine.service.*
+import com.lightningbi.lightning_engine.model.ImportedTable
+import com.lightningbi.lightning_engine.model.RuoloTabella
+import com.lightningbi.lightning_engine.model.TipoAggregazione
+import com.lightningbi.lightning_engine.service.AdminGuard
+import com.lightningbi.lightning_engine.service.Associazione
+import com.lightningbi.lightning_engine.service.AuthService
+import com.lightningbi.lightning_engine.service.CampoEffettivo
+import com.lightningbi.lightning_engine.service.Confidenza
+import com.lightningbi.lightning_engine.service.DatasetBozza
+import com.lightningbi.lightning_engine.service.DatasetNonValidoException
+import com.lightningbi.lightning_engine.service.DatasetService
+import com.lightningbi.lightning_engine.service.MetricaBozza
+import com.lightningbi.lightning_engine.service.OccorrenzaBozza
+import com.lightningbi.lightning_engine.service.RiferimentoCampo
 import com.vaadin.flow.component.Component
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant
 import com.vaadin.flow.component.checkbox.Checkbox
-import com.vaadin.flow.component.checkbox.CheckboxGroup
 import com.vaadin.flow.component.combobox.ComboBox
 import com.vaadin.flow.component.dependency.Uses
+import com.vaadin.flow.component.dialog.Dialog
 import com.vaadin.flow.component.grid.Grid
 import com.vaadin.flow.component.html.Div
 import com.vaadin.flow.component.html.Span
 import com.vaadin.flow.component.icon.Icon
+import com.vaadin.flow.component.icon.VaadinIcon
+import com.vaadin.flow.component.menubar.MenuBar
+import com.vaadin.flow.component.menubar.MenuBarVariant
 import com.vaadin.flow.component.notification.Notification
 import com.vaadin.flow.component.orderedlayout.FlexComponent
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout
 import com.vaadin.flow.component.orderedlayout.VerticalLayout
-import com.vaadin.flow.component.radiobutton.RadioButtonGroup
 import com.vaadin.flow.component.tabs.Tab
 import com.vaadin.flow.component.tabs.Tabs
-import com.vaadin.flow.component.textfield.PasswordField
 import com.vaadin.flow.component.textfield.TextField
 import com.vaadin.flow.router.BeforeEnterEvent
 import com.vaadin.flow.router.BeforeEnterObserver
+import com.vaadin.flow.router.BeforeEvent
+import com.vaadin.flow.router.BeforeLeaveEvent
+import com.vaadin.flow.router.BeforeLeaveObserver
+import com.vaadin.flow.router.HasUrlParameter
+import com.vaadin.flow.router.OptionalParameter
 import com.vaadin.flow.router.Route
-import java.time.Instant
-import java.util.*
-import com.lightningbi.lightning_engine.service.ColumnProposal
+import java.util.UUID
 
 /**
- * Pagina di creazione di un nuovo Dataset (schema a stella nativo:
- * Fatti + Dimensioni importati come tabelle separate). Solo admin.
+ * Pagina "Dataset" (solo admin): costruzione e modifica di un dataset nello
+ * stile della vista Associations del Data manager di Qlik, in forma di
+ * elenco (le bolle arrivano in fase F).
  *
- * Sostituisce NewAnalysisWizardDialog (dialog a view singola). Crea un
- * DATASET (Area + sorgente + tabelle importate + dimensioni + metriche),
- * non un'Analisi (PivotView), che si crea dal menu Analisi.
+ * - A sinistra le tabelle importate; si aggiungono al dataset anche più volte
+ *   (la seconda occorrenza ha i campi qualificati con l'alias).
+ * - Al centro le tabelle del dataset con i loro campi (rinomina, escludi,
+ *   "associa a...", uso come dimensione) e le metriche.
+ * - A destra le associazioni (campi con lo stesso nome) e i problemi del
+ *   modello: loop (bloccano il salvataggio) e chiavi sintetiche (avvisi).
  *
- * Flusso a 6 step, tutti su questa pagina:
- *   1 ORIGINE   nuova connessione oppure una già salvata
- *   2 CONNETTI  nuova connessione (salvata e provata) o prova di quella scelta; schema
- *   3 TABELLE   scelta di esattamente 1 Fatti + N Dimensioni, con nome logico
- *   4 CHIAVI    chiave di JOIN per ogni Dimensione (proposta da nome colonna condiviso)
- *   5 COLONNE   una scheda per tabella, TUTTE le colonne importate di default
- *   6 CONFERMA  riepilogo, nome dataset, creazione
- *
- * REGOLE DI MODELLO (schema a stella, come l'engine associativo Qlik):
- * - Nessuna classe per tabella: tutto è dato (ImportedSourceTable /
- *   ImportedTable / ImportedColumn), lo schema si scopre a runtime.
- * - Una colonna con lo stesso nome nei Fatti e in una Dimensione È lo
- *   stesso campo: viene registrata una sola volta, sui Fatti. Nella
- *   Dimensione appare bloccata come "Condivisa con Fatti".
- * - La colonna scelta come chiave di JOIN è tecnica (ruolo Chiave,
- *   bloccato): non diventa dimensione né metrica.
- * - Un attributo con lo stesso nome in due Dimensioni diverse (es.
- *   DESCRIZIONE) diventa "Descrizione (Clienti)" / "Descrizione (Articoli)",
- *   altrimenti finirebbe per fondersi in un'unica dimensione.
- * - Le metriche esistono solo sulle colonne dei Fatti.
- *
- * Lo stato vive in memoria (WizardState) fino a "Crea Dataset": prima di
- * allora nulla viene scritto. La creazione scrive SOLO il registry
- * (Postgres): le tabelle ClickHouse le crea l'ETL alla prima
- * sincronizzazione, leggendo ImportedTable/ImportedColumn.
+ * Route "nuovo-dataset" per un dataset nuovo, "nuovo-dataset/{id}" per
+ * modificarne uno esistente. Lo stato vive in una bozza in memoria
+ * ([DatasetBozza]): solo "Salva" scrive sul database. Se si lascia la pagina
+ * con modifiche non salvate si chiede conferma.
  */
 @Route("nuovo-dataset")
 @Uses(Icon::class)
 class NewDatasetView(
-    private val permissionCheckService: PermissionCheckService,
-    private val authService: AuthService,
-    private val areaSourceRepository: AreaSourceRepository,
-    private val registryService: RegistryService,
-    private val registryRepository: RegistryRepository,
-    private val importedTableRepository: ImportedTableRepository,
-    private val connectionOrchestrator: ConnectionOrchestrator
-) : VerticalLayout(), BeforeEnterObserver {
+    private val datasetService: DatasetService,
+    private val adminGuard: AdminGuard,
+    private val authService: AuthService
+) : VerticalLayout(), HasUrlParameter<String>, BeforeEnterObserver, BeforeLeaveObserver {
 
-    // ================= Tipi interni =================
+    private var parametroArea: String? = null
+    private var bozza: DatasetBozza = DatasetBozza()
+    private var modificato = false
+    private var occorrenzaSelezionata: UUID? = null
+    private var aggiornando = false
 
-    private enum class Step(val titolo: String) {
-        ORIGINE("Origine"),
-        CONNETTI("Connessione"),
-        TABELLE("Tabelle"),
-        CHIAVI("Chiavi"),
-        COLONNE("Colonne"),
-        CONFERMA("Conferma")
-    }
-
-    private enum class Ruolo(val label: String) {
-        DIMENSIONE("Dimensione"),
-        METRICA("Metrica"),
-        IGNORA("Ignora"),
-        CHIAVE("Chiave di JOIN"),
-        CONDIVISA("Condivisa con Fatti")
-    }
-
-    /** Selezione di una tabella dell'elenco allo step TABELLE. */
-    private class TableSel(var incluso: Boolean, var ruolo: RuoloTabella, var nomeLogico: String)
-
-    /** Scelta dell'utente per una colonna di una tabella importata. */
-    private class ColumnChoice(
-        val nome: String,
-        val tipo: String,
-        val esempio: String,
-        var ruolo: Ruolo,
-        val aggregazioni: MutableSet<TipoAggregazione> = mutableSetOf()
-    ) {
-        val bloccata: Boolean get() = ruolo == Ruolo.CHIAVE || ruolo == Ruolo.CONDIVISA
-    }
-
-    private class DimPlan(val nomeDimensione: String, val colonna: String, val viewName: String)
-    private class MetricPlan(val nome: String, val colonna: String, val tipo: TipoAggregazione)
-    private class Plan(val dimensioni: List<DimPlan>, val metriche: List<MetricPlan>)
-
-    private class WizardState {
-        // ORIGINE
-        var riusaConnessione: Boolean = false
-
-        // CONNETTI: la connessione è già salvata (nuova o scelta); nel wizard
-        // non c'è nessuna connessione aperta, ogni lettura ne apre una sua.
-        var connessione: SourceConnection? = null
-        /** true se la connessione è stata creata in questa sessione del wizard (si può aggiornare). */
-        var creataQui: Boolean = false
-        /** true dopo una prova riuscita e il caricamento degli schemi. */
-        var schemiCaricati: Boolean = false
-        var schemiDisponibili: List<String> = emptyList()
-        var schema: String? = null
-
-        // TABELLE (chiave = nome view/tabella sulla sorgente)
-        var tabelleDisponibili: List<TableInfo> = emptyList()
-        val selezioni: MutableMap<String, TableSel> = mutableMapOf()
-
-        // CHIAVI (chiave = viewName della Dimensione, valore = colonna di JOIN)
-        val chiavi: MutableMap<String, String> = mutableMapOf()
-
-        // COLONNE
-        val colonne: MutableMap<String, MutableList<ColumnChoice>> = mutableMapOf()
-        var firmaColonne: String? = null
-
-        // CONFERMA
-        var nomeDataset: String = ""
-    }
-
-    private var state = WizardState()
-    private var currentStep = Step.ORIGINE
-
-    private val stepIndicator = HorizontalLayout().apply {
-        isPadding = false
-        isSpacing = true
-    }
-    private val stepBody = Div().apply { setWidthFull() }
-    private val backButton = Button("← Indietro") { goBack() }
-    private val nextButton = Button("Avanti →") { goNext() }.apply {
-        addThemeVariants(ButtonVariant.LUMO_PRIMARY)
-    }
+    private val nomeField = TextField("Nome del dataset")
+    private val tabelleGrid = Grid<ImportedTable>()
+    private val occorrenzeGrid = Grid<OccorrenzaBozza>()
+    private val campiGrid = Grid<CampoEffettivo>()
+    private val metricheGrid = Grid<MetricaBozza>()
+    private val associazioniGrid = Grid<Associazione>()
+    private val problemiBox = VerticalLayout().apply { isPadding = false; isSpacing = false }
 
     // ================= Accesso e ciclo di vita =================
 
-    /**
-     * Guardia d'accesso: l'URL /nuovo-dataset resta raggiungibile a mano
-     * anche se la voce di menu è nascosta agli utenti normali, quindi il
-     * controllo va rifatto qui (stesso criterio di AdminView).
-     */
+    override fun setParameter(event: BeforeEvent, @OptionalParameter parameter: String?) {
+        parametroArea = parameter
+    }
+
     override fun beforeEnter(event: BeforeEnterEvent) {
-        val user = CurrentUserHolder.get()
-        val isAdmin = user != null && permissionCheckService.hasPermission(user.roleName, "MANAGE_USERS")
-        if (!isAdmin) {
+        if (!adminGuard.isAdmin()) {
             event.forwardTo(AssociativeExplorerView::class.java)
             return
         }
-        state = WizardState()
-        currentStep = Step.ORIGINE
+        bozza = DatasetBozza()
+        modificato = false
+        occorrenzaSelezionata = null
+
+        val param = parametroArea
+        if (!param.isNullOrBlank()) {
+            val caricata = try {
+                datasetService.carica(UUID.fromString(param))
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+            if (caricata == null) {
+                Notification.show("Dataset non trovato", 5000, Notification.Position.MIDDLE)
+            } else {
+                bozza = caricata
+                occorrenzaSelezionata = caricata.occorrenze.firstOrNull()?.id
+            }
+        }
         buildPage()
     }
 
-    // ================= Pagina e navigazione =================
+    override fun beforeLeave(event: BeforeLeaveEvent) {
+        if (!modificato) return
+        val azione = event.postpone()
+        val dialog = Dialog().apply {
+            headerTitle = "Modifiche non salvate"
+            width = "420px"
+        }
+        dialog.add(Span("Hai modifiche non salvate al dataset. Se esci vengono perse."))
+        dialog.footer.add(
+            Button("Resta qui") { dialog.close() },
+            Button("Esci senza salvare") {
+                modificato = false
+                dialog.close()
+                azione.proceed()
+            }.apply { addThemeVariants(ButtonVariant.LUMO_ERROR) }
+        )
+        dialog.open()
+    }
+
+    // ================= Pagina =================
 
     private fun buildPage() {
         removeAll()
         setSizeFull()
         isPadding = false
 
+        // La stessa istanza può essere riusata se cambia solo il parametro dell'URL:
+        // le colonne si rifanno da capo.
+        tabelleGrid.removeAllColumns()
+        occorrenzeGrid.removeAllColumns()
+        campiGrid.removeAllColumns()
+        metricheGrid.removeAllColumns()
+        associazioniGrid.removeAllColumns()
+
         val menuGroups = listOf(
             LbiSidebarMenu.MenuGroup(
-                label = "Dataset",
+                label = "Analisi",
                 entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Torna ai dataset") { tornaAiDataset() },
-                    LbiSidebarMenu.MenuEntry("+ Nuovo dataset") { }
+                    LbiSidebarMenu.MenuEntry("Torna alle analisi", icon = VaadinIcon.ARROW_LEFT) { tornaAiDataset() }
                 ),
-                active = true
+                icon = VaadinIcon.CHART
+            ),
+            LbiSidebarMenu.MenuGroup(
+                label = "Amministrazione",
+                entries = listOf(
+                    LbiSidebarMenu.MenuEntry("Tabelle importate", icon = VaadinIcon.DATABASE) {
+                        getUI().ifPresent { it.navigate(TabelleImportateView::class.java) }
+                    },
+                    LbiSidebarMenu.MenuEntry("Dataset", icon = VaadinIcon.TABLE) { },
+                    LbiSidebarMenu.MenuEntry("Gestione utenti", icon = VaadinIcon.USERS) {
+                        getUI().ifPresent { it.navigate(AdminView::class.java) }
+                    }
+                ),
+                active = true,
+                icon = VaadinIcon.COG
             )
         )
 
-        val footer = HorizontalLayout(
-            Button("Annulla") { tornaAiDataset() },
-            backButton,
-            nextButton
-        ).apply {
-            setWidthFull()
-            justifyContentMode = FlexComponent.JustifyContentMode.END
-        }
-
-        val content = VerticalLayout(
-            Span("Nuovo dataset").apply { className = "lbi-section-title" },
-            stepIndicator,
-            stepBody,
-            footer
-        ).apply {
-            setSizeFull()
-            setFlexGrow(1.0, stepBody)
-        }
-
-        val shell = LbiAppShell(menuGroups, content, authService)
+        val shell = LbiAppShell(menuGroups, buildContent(), authService)
         add(shell)
         setFlexGrow(1.0, shell)
-
-        renderStep()
+        aggiorna()
     }
 
     private fun tornaAiDataset() {
         getUI().ifPresent { it.navigate(AssociativeExplorerView::class.java) }
     }
 
-    private fun renderStep() {
-        stepIndicator.removeAll()
-        Step.values().forEach { step ->
-            stepIndicator.add(Span("${step.ordinal + 1}. ${step.titolo}").apply {
-                style.set("font-weight", if (step == currentStep) "700" else "400")
-                style.set("opacity", if (step.ordinal <= currentStep.ordinal) "1" else "0.5")
-            })
-        }
-
-        stepBody.removeAll()
-        stepBody.add(
-            when (currentStep) {
-                Step.ORIGINE -> buildStepOrigine()
-                Step.CONNETTI -> buildStepConnetti()
-                Step.TABELLE -> buildStepTabelle()
-                Step.CHIAVI -> buildStepChiavi()
-                Step.COLONNE -> buildStepColonne()
-                Step.CONFERMA -> buildStepConferma()
-            }
-        )
-
-        backButton.isEnabled = currentStep != Step.ORIGINE
-        nextButton.text = if (currentStep == Step.CONFERMA) "Crea Dataset" else "Avanti →"
-    }
-
-    private fun goBack() {
-        val prev = Step.values().getOrNull(currentStep.ordinal - 1) ?: return
-        currentStep = prev
-        renderStep()
-    }
-
-    private fun goNext() {
-        val error = validateCurrentStep()
-        if (error != null) {
-            Notification.show(error, 6000, Notification.Position.MIDDLE)
-            return
-        }
-        if (currentStep == Step.CONFERMA) {
-            createDataset()
-            return
-        }
-        currentStep = Step.values()[currentStep.ordinal + 1]
-        renderStep()
-    }
-
-    /** Messaggio d'errore se lo step corrente non è completo, null se si può avanzare. */
-    private fun validateCurrentStep(): String? = when (currentStep) {
-        Step.ORIGINE ->
-            if (state.riusaConnessione && state.connessione == null) "Seleziona una connessione salvata" else null
-
-        Step.CONNETTI -> when {
-            state.connessione == null -> "Salva e prova la connessione prima di proseguire"
-            !state.schemiCaricati -> "Prova la connessione prima di proseguire"
-            state.schemiDisponibili.isNotEmpty() && state.schema == null -> "Scegli lo schema"
-            else -> null
-        }
-
-        Step.TABELLE -> validateTabelle()
-
-        Step.CHIAVI -> {
-            val senzaChiave = dimensioniScelte().filter { state.chiavi[it.viewName].isNullOrBlank() }
-            if (senzaChiave.isNotEmpty())
-                "Nessuna chiave di JOIN per: ${senzaChiave.joinToString(", ") { it.nomeLogico }}. " +
-                        "Torna indietro e rimuovi la tabella, oppure scegline una con colonne in comune coi Fatti."
-            else null
-        }
-
-        Step.COLONNE -> validateColonne()
-
-        Step.CONFERMA -> validateConferma()
-    }
-
-    // ================= STEP 1: Origine =================
-
-    /**
-     * Nuova connessione oppure una già salvata. Le connessioni sono
-     * indipendenti dai dataset: una connessione salvata si riusa senza
-     * riscrivere indirizzo, utente e password (che restano cifrati).
-     */
-    private fun buildStepOrigine(): Component {
-        val layout = VerticalLayout().apply { isPadding = false }
-        layout.add(Span("Da dove arrivano i dati del nuovo dataset?").apply { className = "lbi-wizard-label" })
-
-        val salvate = try {
-            connectionOrchestrator.findAll()
-        } catch (e: Exception) {
-            Notification.show("Impossibile leggere le connessioni salvate: ${e.message}", 5000, Notification.Position.MIDDLE)
-            emptyList()
-        }
-
-        val nuova = "Nuova connessione"
-        val esistente = "Usa una connessione già salvata"
-
-        val modeGroup = RadioButtonGroup<String>().apply {
-            setItems(nuova, esistente)
-            isEnabled = salvate.isNotEmpty()
-            value = if (state.riusaConnessione && salvate.isNotEmpty()) esistente else nuova
-        }
-
-        val existingCombo = ComboBox<SourceConnection>("Connessione salvata").apply {
-            setItems(salvate)
-            setItemLabelGenerator { "${it.nome} · ${etichettaTipo(it.tipo)}" }
-            setWidthFull()
-            value = if (state.riusaConnessione) salvate.find { it.id == state.connessione?.id } else null
-            isVisible = modeGroup.value == esistente
-            addValueChangeListener { ev ->
-                if (ev.value?.id != state.connessione?.id) selezionaConnessione(ev.value)
-            }
-        }
-
-        modeGroup.addValueChangeListener { ev ->
-            state.riusaConnessione = ev.value == esistente
-            existingCombo.isVisible = state.riusaConnessione
-            selezionaConnessione(if (state.riusaConnessione) existingCombo.value else null)
-        }
-
-        if (salvate.isEmpty()) {
-            layout.add(Span("Nessuna connessione ancora salvata: si parte da una nuova.").apply {
-                className = "lbi-wizard-label"
-            })
-        }
-        layout.add(modeGroup, existingCombo)
-        return layout
-    }
-
-    /** Cambia la connessione in uso: schemi e tabelle già letti non valgono più. */
-    private fun selezionaConnessione(connessione: SourceConnection?) {
-        state.connessione = connessione
-        state.creataQui = false
-        state.schemiCaricati = false
-        state.schemiDisponibili = emptyList()
-        state.schema = null
-        resetTabelleState()
-    }
-
-    // ================= STEP 2: Connessione + schema =================
-
-    private val etichetteTipo = mapOf("mssql" to "SQL Server", "psql" to "PostgreSQL")
-
-    private fun etichettaTipo(tipo: String): String = etichetteTipo[tipo] ?: tipo
-
-    private fun buildStepConnetti(): Component =
-        if (state.riusaConnessione) buildConnettiSalvata() else buildConnettiNuova()
-
-    /** Connessione già salvata: si mostra un riepilogo e si prova, senza riscrivere nulla. */
-    private fun buildConnettiSalvata(): Component {
-        val layout = VerticalLayout().apply { isPadding = false }
-        val connessione = state.connessione ?: return Span("Torna indietro e scegli una connessione salvata")
-
-        layout.add(Span("Connessione: ${connessione.nome} · ${etichettaTipo(connessione.tipo)}").apply {
-            className = "lbi-wizard-label"
-        })
-        layout.add(Span("Indirizzo: ${connessione.parametri[JdbcSourceConnector.PARAM_JDBC_URL] ?: "—"}"))
-        layout.add(Span("Utente: ${connessione.parametri[JdbcSourceConnector.PARAM_USERNAME] ?: "—"}"))
-        layout.add(Span("Database: ${connessione.parametri[JdbcSourceConnector.PARAM_DATABASE] ?: "—"}"))
-
-        val statusSpan = Span().apply { className = "lbi-wizard-label" }
-        val schemaCombo = costruisciSchemaCombo()
-
-        val provaButton = Button("Prova e carica schemi") {
-            try {
-                provaECaricaSchemi(connessione, statusSpan, schemaCombo)
-            } catch (e: Exception) {
-                statusSpan.text = ""
-                Notification.show("Errore di connessione: ${e.message}", 6000, Notification.Position.MIDDLE)
-            }
-        }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
-
-        if (state.schemiCaricati) {
-            statusSpan.text = "Connessione attiva: ${state.schemiDisponibili.size} schemi disponibili"
-        }
-
-        layout.add(provaButton, statusSpan, schemaCombo)
-        return layout
-    }
-
-    /**
-     * Nuova connessione: si salva e si prova in un colpo. Se la prova fallisce
-     * su una connessione appena creata, la si elimina: non restano
-     * connessioni rotte in elenco. Dopo il primo salvataggio i campi
-     * restano modificabili (si aggiorna la stessa connessione); la password
-     * lasciata vuota non cambia.
-     */
-    private fun buildConnettiNuova(): Component {
-        val layout = VerticalLayout().apply { isPadding = false }
-        layout.add(Span("Nuova connessione al database di origine").apply { className = "lbi-wizard-label" })
-
-        val salvata = state.connessione?.takeIf { state.creataQui }
-
-        val nomeField = TextField("Nome della connessione").apply {
-            placeholder = "es. ERP sede centrale"
-            value = salvata?.nome ?: ""
-            setWidthFull()
-        }
-        val tipoCombo = ComboBox<String>("Tipo database").apply {
-            setItems(connectionOrchestrator.tipiDisponibili())
-            setItemLabelGenerator { etichettaTipo(it) }
-            value = salvata?.tipo
-            isEnabled = salvata == null
-            setWidthFull()
-        }
-        val jdbcUrlField = TextField("Indirizzo database (JDBC URL)").apply {
-            placeholder = "jdbc:sqlserver://;serverName=host\\ISTANZA;databaseName=SEM;trustServerCertificate=true"
-            value = salvata?.parametri?.get(JdbcSourceConnector.PARAM_JDBC_URL) ?: ""
-            setWidthFull()
-        }
-        val databaseField = TextField("Nome database").apply {
-            helperText = "Usato nel nome delle tabelle importate (es. mssql_sem__clienti)"
-            value = salvata?.parametri?.get(JdbcSourceConnector.PARAM_DATABASE) ?: ""
-            setWidthFull()
-        }
-        val usernameField = TextField("Utente").apply {
-            value = salvata?.parametri?.get(JdbcSourceConnector.PARAM_USERNAME) ?: ""
-            setWidthFull()
-        }
-        val passwordField = PasswordField("Password").apply {
-            if (salvata != null) helperText = "Lascia vuoto per non cambiarla"
-            setWidthFull()
-        }
-
-        // Il nome database si propone dall'indirizzo, finché l'admin non lo scrive a mano.
-        var ultimoDerivato = deriveDatabaseName(jdbcUrlField.value ?: "")
-        jdbcUrlField.addValueChangeListener { ev ->
-            if (!ev.isFromClient) return@addValueChangeListener
-            val derivato = deriveDatabaseName(ev.value ?: "")
-            if (databaseField.value.isNullOrBlank() || databaseField.value == ultimoDerivato) {
-                databaseField.value = derivato
-            }
-            ultimoDerivato = derivato
-        }
-
-        val statusSpan = Span().apply { className = "lbi-wizard-label" }
-        val schemaCombo = costruisciSchemaCombo()
-
-        val salvaButton = Button(if (salvata != null) "Aggiorna e prova" else "Salva e prova") { click ->
-            val nome = nomeField.value?.trim().orEmpty()
-            val tipo = tipoCombo.value
-            val url = jdbcUrlField.value?.trim().orEmpty()
-            val database = databaseField.value?.trim().orEmpty()
-            val utente = usernameField.value?.trim().orEmpty()
-            val password = passwordField.value.orEmpty()
-            val esistente = state.connessione?.takeIf { state.creataQui }
-
-            if (nome.isBlank() || tipo == null || url.isBlank() || database.isBlank() || utente.isBlank() ||
-                (esistente == null && password.isEmpty())
-            ) {
-                Notification.show("Compila nome, tipo, indirizzo, database, utente e password")
-                return@Button
-            }
-
-            val parametri = mapOf(
-                JdbcSourceConnector.PARAM_JDBC_URL to url,
-                JdbcSourceConnector.PARAM_USERNAME to utente,
-                JdbcSourceConnector.PARAM_DATABASE to database
-            )
-            val segreti = mapOf(JdbcSourceConnector.SECRET_PASSWORD to password)
-
-            try {
-                val connessione = if (esistente != null) {
-                    connectionOrchestrator.update(esistente.id, nome, parametri, segreti)
-                } else {
-                    connectionOrchestrator.create(nome, tipo, parametri, segreti)
-                }
-                state.connessione = connessione
-                state.creataQui = true
-                state.schemiCaricati = false
-                tipoCombo.isEnabled = false
-                try {
-                    provaECaricaSchemi(connessione, statusSpan, schemaCombo)
-                } catch (e: Exception) {
-                    if (esistente == null) {
-                        // Appena creata e non funziona: non la si lascia salvata.
-                        try { connectionOrchestrator.delete(connessione.id) } catch (_: Exception) { }
-                        state.connessione = null
-                        state.creataQui = false
-                        tipoCombo.isEnabled = true
-                    }
-                    throw e
-                }
-                click.source.text = "Aggiorna e prova"
-            } catch (e: Exception) {
-                statusSpan.text = ""
-                Notification.show("Errore: ${e.message}", 6000, Notification.Position.MIDDLE)
-            }
-        }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
-
-        if (state.schemiCaricati) {
-            statusSpan.text = "Connessione attiva: ${state.schemiDisponibili.size} schemi disponibili"
-        }
-
-        layout.add(
-            nomeField, tipoCombo, jdbcUrlField, databaseField, usernameField, passwordField,
-            salvaButton, statusSpan, schemaCombo
-        )
-        return layout
-    }
-
-    private fun costruisciSchemaCombo(): ComboBox<String> = ComboBox<String>("Schema").apply {
-        setWidthFull()
-        setItems(state.schemiDisponibili)
-        value = state.schema
-        isEnabled = state.schemiCaricati && state.schemiDisponibili.isNotEmpty()
-        addValueChangeListener { ev ->
-            if (ev.isFromClient && ev.value != state.schema) resetTabelleState()
-            state.schema = ev.value
-        }
-    }
-
-    /**
-     * Prova la connessione e carica gli schemi. Lancia un'eccezione se non
-     * riesce: chi chiama decide cosa mostrare.
-     */
-    private fun provaECaricaSchemi(connessione: SourceConnection, statusSpan: Span, schemaCombo: ComboBox<String>) {
-        connectionOrchestrator.testConnection(connessione.id)
-        val schemi = connectionOrchestrator.listSchemas(connessione.id)
-
-        state.schemiDisponibili = schemi
-        // Se lo schema scelto prima non esiste più, si riparte da vuoto.
-        if (state.schema != null && state.schema !in schemi) state.schema = null
-        // Con un solo schema disponibile la scelta è ovvia.
-        if (state.schema == null && schemi.size == 1) state.schema = schemi.first()
-        state.schemiCaricati = true
-
-        resetTabelleState()
-        schemaCombo.setItems(schemi)
-        schemaCombo.value = state.schema
-        schemaCombo.isEnabled = schemi.isNotEmpty()
-        statusSpan.text = "Connessione riuscita: ${schemi.size} schemi disponibili"
-    }
-
-    /** Nome del database dall'indirizzo JDBC (SQL Server: databaseName=..., PostgreSQL: /nome). */
-    private fun deriveDatabaseName(url: String): String {
-        Regex("databaseName=([^;]+)", RegexOption.IGNORE_CASE).find(url)?.let { return it.groupValues[1].trim() }
-        Regex("^jdbc:postgresql://[^/]+/([^?;]+)").find(url)?.let { return it.groupValues[1].trim() }
-        return ""
-    }
-
-    /** Azzera tabelle, chiavi e colonne (cambiano con lo schema). */
-    private fun resetTabelleState() {
-        state.tabelleDisponibili = emptyList()
-        state.selezioni.clear()
-        state.chiavi.clear()
-        state.colonne.clear()
-        state.firmaColonne = null
-    }
-
-    // ================= STEP 3: Tabelle =================
-
-    private fun buildStepTabelle(): Component {
-        val layout = VerticalLayout().apply { isPadding = false; setSizeFull() }
-        val connessione = state.connessione ?: return Span("Connessione non disponibile: torna indietro")
-
-        if (state.tabelleDisponibili.isEmpty()) {
-            state.tabelleDisponibili = try {
-                connectionOrchestrator.listTables(connessione.id, state.schema).sortedBy { it.name.lowercase() }
-            } catch (e: Exception) {
-                return Span("Errore lettura tabelle: ${e.message}")
-            }
-        }
-        val tutte = state.tabelleDisponibili
-        if (tutte.isEmpty()) return Span("Nessuna tabella o view nello schema scelto")
-
-        layout.add(Span(
-            "Scegli UNA tabella Fatti e le tabelle Dimensione collegate. " +
-                    "Il nome logico è quello che vedranno gli utenti."
-        ).apply { className = "lbi-wizard-label" })
-
-        val grid = Grid<TableInfo>().apply {
-            setWidthFull()
-            height = "440px"
-        }
-
-        val search = TextField("Cerca").apply {
-            placeholder = "Digita per filtrare..."
-            setWidthFull()
-            addValueChangeListener { ev ->
-                val q = ev.value
-                grid.setItems(if (q.isNullOrBlank()) tutte else tutte.filter { it.name.contains(q, true) })
-            }
-        }
-
-        fun selOf(t: TableInfo): TableSel =
-            state.selezioni.getOrPut(t.name) { TableSel(false, RuoloTabella.DIMENSIONE, nomeLogicoDefault(t.name)) }
-
-        grid.addComponentColumn { t ->
-            val sel = selOf(t)
-            Checkbox(sel.incluso).apply {
-                addValueChangeListener { ev ->
-                    sel.incluso = ev.value
-                    // La prima tabella inclusa diventa Fatti se non ce n'è già una.
-                    if (ev.value && state.selezioni.values.none { it.incluso && it.ruolo == RuoloTabella.FATTI }) {
-                        sel.ruolo = RuoloTabella.FATTI
-                    }
-                    grid.dataProvider.refreshItem(t)
+    private fun buildContent(): Component {
+        nomeField.apply {
+            setWidth("320px")
+            value = bozza.nome
+            addValueChangeListener {
+                if (it.isFromClient) {
+                    bozza = bozza.copy(nome = it.value.orEmpty())
+                    modificato = true
+                    aggiornaProblemi()
                 }
             }
-        }.setHeader("").setAutoWidth(true).setFlexGrow(0)
-
-        grid.addColumn { it.name }.setHeader("Tabella / view").setAutoWidth(true).setFlexGrow(1)
-
-        grid.addComponentColumn { t ->
-            val sel = selOf(t)
-            ComboBox<RuoloTabella>().apply {
-                setItems(RuoloTabella.FATTI, RuoloTabella.DIMENSIONE)
-                setItemLabelGenerator { if (it == RuoloTabella.FATTI) "Fatti" else "Dimensione" }
-                isAllowCustomValue = false
-                value = sel.ruolo
-                isEnabled = sel.incluso
-                width = "160px"
-                addValueChangeListener { ev ->
-                    val nuovo = ev.value ?: return@addValueChangeListener
-                    sel.ruolo = nuovo
-                    // Una sola tabella Fatti: le altre passano a Dimensione.
-                    if (nuovo == RuoloTabella.FATTI) {
-                        state.selezioni.forEach { (nome, other) ->
-                            if (nome != t.name && other.ruolo == RuoloTabella.FATTI) other.ruolo = RuoloTabella.DIMENSIONE
-                        }
-                        grid.dataProvider.refreshAll()
-                    }
-                }
-            }
-        }.setHeader("Ruolo").setAutoWidth(true).setFlexGrow(0)
-
-        grid.addComponentColumn { t ->
-            val sel = selOf(t)
-            TextField().apply {
-                value = sel.nomeLogico
-                isEnabled = sel.incluso
-                width = "200px"
-                addValueChangeListener { sel.nomeLogico = it.value }
-            }
-        }.setHeader("Nome logico").setAutoWidth(true).setFlexGrow(0)
-
-        grid.setItems(tutte)
-        layout.add(search, grid)
-        return layout
-    }
-
-    /** Nome logico proposto: toglie il prefisso TeamSystem e mette la maiuscola iniziale. */
-    /** Nome logico proposto: toglie i prefissi configurati sulla connessione e mette la maiuscola iniziale. */
-    private fun nomeLogicoDefault(viewName: String): String =
-        ColumnProposal.nomeLogico(viewName, prefissiDaTogliere())
-
-    private fun prefissiDaTogliere(): List<String> =
-        state.connessione?.let { ColumnProposal.lista(it.parametri, ColumnProposal.PREFISSI_DA_TOGLIERE) } ?: emptyList()
-
-    private fun prefissiColonnaChiave(): List<String> =
-        state.connessione?.let { ColumnProposal.lista(it.parametri, ColumnProposal.PREFISSI_COLONNA_CHIAVE) } ?: emptyList()
-
-    private fun validateTabelle(): String? {
-        val incluse = state.selezioni.filterValues { it.incluso }
-        val fatti = incluse.filterValues { it.ruolo == RuoloTabella.FATTI }
-        if (fatti.size != 1) return "Serve esattamente una tabella Fatti (ora: ${fatti.size})"
-        if (incluse.values.any { it.nomeLogico.isBlank() }) return "Ogni tabella scelta deve avere un nome logico"
-        val slugs = try {
-            incluse.values.map { Naming.slug(it.nomeLogico) }
-        } catch (e: Exception) {
-            return "Nome logico non utilizzabile: ${e.message}"
-        }
-        val doppi = slugs.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
-        if (doppi.isNotEmpty()) return "Nomi logici duplicati: ${doppi.joinToString(", ")}"
-        return null
-    }
-
-    /** Tabelle scelte, Fatti per prima, con la chiave di JOIN se già confermata. */
-    private fun tabelleScelte(): List<ImportedSourceTable> =
-        state.selezioni.entries
-            .filter { it.value.incluso }
-            .sortedWith(compareBy({ it.value.ruolo != RuoloTabella.FATTI }, { it.key.lowercase() }))
-            .map { (view, sel) ->
-                ImportedSourceTable(
-                    nomeLogico = sel.nomeLogico.trim(),
-                    viewName = view,
-                    ruolo = sel.ruolo,
-                    colonnaChiave = if (sel.ruolo == RuoloTabella.DIMENSIONE) state.chiavi[view] else null
-                )
-            }
-
-    private fun fattiScelta(): ImportedSourceTable? = tabelleScelte().firstOrNull { it.ruolo == RuoloTabella.FATTI }
-    private fun dimensioniScelte(): List<ImportedSourceTable> = tabelleScelte().filter { it.ruolo == RuoloTabella.DIMENSIONE }
-
-    // ================= STEP 4: Chiavi =================
-
-    private fun buildStepChiavi(): Component {
-        val layout = VerticalLayout().apply { isPadding = false }
-        val connessione = state.connessione ?: return Span("Connessione non disponibile: torna indietro")
-        val fatti = fattiScelta() ?: return Span("Nessuna tabella Fatti: torna indietro")
-        val dimensioni = dimensioniScelte()
-
-        // Le scelte fatte per tabelle non più incluse non servono più.
-        state.chiavi.keys.retainAll(dimensioni.map { it.viewName }.toSet())
-
-        if (dimensioni.isEmpty()) {
-            layout.add(Span("Nessuna tabella Dimensione: il dataset usa solo i Fatti, non ci sono chiavi da collegare."))
-            return layout
         }
 
-        layout.add(Span(
-            "Come si collega ogni Dimensione ai Fatti (${fatti.nomeLogico}). " +
-                    "Le chiavi proposte sono le colonne con lo stesso nome in entrambe le tabelle."
-        ).apply { className = "lbi-wizard-label" })
-
-        dimensioni.forEach { dim ->
-            val candidate = try {
-                proposeJoinKeys(connessione.id, fatti.viewName, dim.viewName)
-            } catch (e: Exception) {
-                layout.add(Span("${dim.nomeLogico}: errore lettura colonne (${e.message})"))
-                return@forEach
-            }
-
-            if (candidate.isEmpty()) {
-                state.chiavi.remove(dim.viewName)
-                layout.add(Span("⚠ ${dim.nomeLogico}: nessuna colonna in comune coi Fatti, non collegabile.").apply {
-                    style.set("color", "var(--lumo-error-text-color)")
-                })
-                return@forEach
-            }
-
-            val preselezionata = state.chiavi[dim.viewName]?.takeIf { it in candidate } ?: candidate.first()
-            state.chiavi[dim.viewName] = preselezionata
-
-            layout.add(ComboBox<String>("${dim.nomeLogico}  (${dim.viewName})").apply {
-                setItems(candidate)
-                value = preselezionata
-                isAllowCustomValue = false
-                setWidthFull()
-                addValueChangeListener { ev ->
-                    if (ev.value != null) state.chiavi[dim.viewName] = ev.value
-                }
-            })
-        }
-        return layout
-    }
-
-    /**
-     * Colonne candidate per il JOIN Fatti <-> Dimensione: stesso nome in
-     * entrambe le tabelle (senza distinguere maiuscole), come l'engine
-     * associativo Qlik. Prima quelle con un prefisso di colonna chiave
-     * configurato sulla connessione, poi le altre in ordine alfabetico.
-     * Nessun risultato = tabelle non collegabili.
-     */
-    private fun proposeJoinKeys(connectionId: UUID, tabellaFatti: String, tabellaDimensione: String): List<String> {
-        val colonneFatti = connectionOrchestrator.listColumns(connectionId, state.schema, tabellaFatti).map { it.name }
-        val colonneDimensione = connectionOrchestrator.listColumns(connectionId, state.schema, tabellaDimensione).map { it.name }
-        return ColumnProposal.chiaviProposte(colonneFatti, colonneDimensione, prefissiColonnaChiave())
-    }
-
-    // ================= STEP 5: Colonne =================
-
-
-
-    /**
-     * Legge le colonne reali di ogni tabella scelta e propone il ruolo di
-     * default. Rifatto solo se cambiano tabelle/ruoli/chiavi (firma): tornare
-     * indietro e avanti senza cambiare nulla non perde le scelte dell'utente.
-     * Ritorna un messaggio d'errore, o null se ok.
-     */
-    private fun prepareColonne(): String? {
-        val connessione = state.connessione ?: return "Connessione non disponibile: torna indietro"
-        val tabelle = tabelleScelte()
-        val firma = tabelle.joinToString("|") { "${it.viewName}:${it.ruolo}:${it.colonnaChiave}" }
-        if (state.firmaColonne == firma && state.colonne.isNotEmpty()) return null
-
-        state.colonne.clear()
-        val fatti = tabelle.first { it.ruolo == RuoloTabella.FATTI }
-        val chiaviScelte = tabelle.mapNotNull { it.colonnaChiave?.lowercase() }.toSet()
-
-        val infoPerTabella = try {
-            tabelle.associate { t ->
-                val cols = connectionOrchestrator.listColumns(connessione.id, state.schema, t.viewName)
-                val samples = try { connectionOrchestrator.sampleRows(connessione.id, state.schema, t.viewName, 3) } catch (_: Exception) { emptyList() }
-                t.viewName to (cols to samples)
-            }
-        } catch (e: Exception) {
-            return "Errore lettura colonne: ${e.message}"
-        }
-
-        val nomiFatti = infoPerTabella[fatti.viewName]!!.first.map { it.name.lowercase() }.toSet()
-
-        tabelle.forEach { t ->
-            val (cols, samples) = infoPerTabella[t.viewName]!!
-            val lista = cols.map { col ->
-                val esempi = samples.mapNotNull { row -> row[col.name]?.toString() }.take(3)
-                val esempio = if (esempi.isEmpty()) "—" else esempi.joinToString(", ")
-                val ruolo = Ruolo.valueOf(
-                    ColumnProposal.ruoloDefault(
-                        nome = col.name,
-                        typeName = col.typeName,
-                        scale = col.scale,
-                        ruoloTabella = t.ruolo,
-                        colonneChiaveFatti = chiaviScelte,
-                        colonnaChiaveTabella = t.colonnaChiave,
-                        nomiFatti = nomiFatti,
-                        prefissiColonnaChiave = prefissiColonnaChiave()
-                    ).name
-                )
-                ColumnChoice(col.name, col.typeName, esempio, ruolo).also {
-                    if (ruolo == Ruolo.METRICA) it.aggregazioni.add(suggestDefaultAggregation(col.name))
-                }
-            }
-            state.colonne[t.viewName] = lista.toMutableList()
-        }
-        state.firmaColonne = firma
-        return null
-    }
-
-    private fun buildStepColonne(): Component {
-        prepareColonne()?.let { return Span(it) }
-
-        val layout = VerticalLayout().apply { isPadding = false; setSizeFull() }
-        layout.add(Span(
-            "Tutte le colonne sono importate di default. Imposta \"Ignora\" per escluderne una. " +
-                    "Le metriche si definiscono solo sulle colonne dei Fatti."
-        ).apply { className = "lbi-wizard-label" })
-
-        val tabelle = tabelleScelte()
-        val tabs = Tabs()
-        val holder = Div().apply { setWidthFull() }
-        val tabToTable = LinkedHashMap<Tab, ImportedSourceTable>()
-
-        tabelle.forEach { t ->
-            val tipo = if (t.ruolo == RuoloTabella.FATTI) "Fatti" else "Dimensione"
-            val tab = Tab("${t.nomeLogico} · $tipo")
-            tabs.add(tab)
-            tabToTable[tab] = t
-        }
-
-        fun mostra(t: ImportedSourceTable) {
-            holder.removeAll()
-            holder.add(buildColumnsGrid(t))
-        }
-
-        tabs.addSelectedChangeListener { ev -> tabToTable[ev.selectedTab]?.let { mostra(it) } }
-        tabToTable.values.firstOrNull()?.let { mostra(it) }
-
-        layout.add(tabs, holder)
-        return layout
-    }
-
-    private fun buildColumnsGrid(t: ImportedSourceTable): Component {
-        val righe = state.colonne[t.viewName] ?: return Span("Nessuna colonna")
-        val isFatti = t.ruolo == RuoloTabella.FATTI
-
-        val grid = Grid<ColumnChoice>().apply {
+        val intestazione = HorizontalLayout(
+            Span(if (bozza.areaId == null) "Nuovo dataset" else "Modifica dataset").apply { className = "lbi-section-title" },
+            nomeField,
+            Button("Annulla") { tornaAiDataset() },
+            Button("Salva", Icon(VaadinIcon.CHECK)) { salva() }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
+        ).apply {
             setWidthFull()
-            height = "460px"
-            setItems(righe)
+            defaultVerticalComponentAlignment = FlexComponent.Alignment.END
         }
 
-        grid.addColumn { it.nome }.setHeader("Colonna").setAutoWidth(true).setFlexGrow(1)
-        grid.addColumn { it.tipo }.setHeader("Tipo").setAutoWidth(true).setFlexGrow(0)
-        grid.addColumn { if (it.esempio.length > 50) it.esempio.take(50) + "…" else it.esempio }
-            .setHeader("Esempio").setAutoWidth(true).setFlexGrow(1)
+        val principale = HorizontalLayout(buildColonnaTabelle(), buildColonnaModello(), buildColonnaControlli()).apply {
+            setSizeFull()
+            isPadding = false
+        }
 
-        grid.addComponentColumn { c ->
-            if (c.bloccata) {
-                Span(c.ruolo.label).apply { style.set("opacity", "0.6") }
+        return VerticalLayout(intestazione, principale).apply {
+            setSizeFull()
+            setFlexGrow(1.0, principale)
+        }
+    }
+
+    // ---------- colonna sinistra: tabelle importate ----------
+
+    private fun buildColonnaTabelle(): Component {
+        tabelleGrid.apply {
+            setSizeFull()
+            addColumn { it.nomeLogico }.setHeader("Tabella").setAutoWidth(true)
+            addColumn { if (it.ruolo == RuoloTabella.FATTI) "Fatti" else "Dimensione" }
+                .setHeader("Ruolo").setAutoWidth(true)
+            addItemDoubleClickListener { aggiungiTabella(it.item) }
+        }
+        val tabelle = datasetService.tabelleDisponibili()
+        tabelleGrid.setItems(tabelle)
+
+        val aggiungi = Button("Aggiungi al dataset", Icon(VaadinIcon.PLUS)) {
+            val scelta = tabelleGrid.asSingleSelect().value
+            if (scelta == null) {
+                Notification.show("Scegli una tabella dall'elenco", 3000, Notification.Position.MIDDLE)
             } else {
-                ComboBox<Ruolo>().apply {
-                    setItems(if (isFatti) listOf(Ruolo.DIMENSIONE, Ruolo.METRICA, Ruolo.IGNORA) else listOf(Ruolo.DIMENSIONE, Ruolo.IGNORA))
-                    setItemLabelGenerator { it.label }
-                    isAllowCustomValue = false
-                    value = c.ruolo
-                    width = "170px"
-                    addValueChangeListener { ev ->
-                        val nuovo = ev.value ?: return@addValueChangeListener
-                        c.ruolo = nuovo
-                        if (nuovo == Ruolo.METRICA && c.aggregazioni.isEmpty()) {
-                            c.aggregazioni.add(suggestDefaultAggregation(c.nome))
-                        }
-                        grid.dataProvider.refreshItem(c)
-                    }
-                }
+                aggiungiTabella(scelta)
             }
-        }.setHeader("Ruolo").setAutoWidth(true).setFlexGrow(0)
+        }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
 
-        if (isFatti) {
-            grid.addComponentColumn { c ->
-                if (c.ruolo != Ruolo.METRICA) {
-                    Span("")
-                } else {
-                    CheckboxGroup<TipoAggregazione>().apply {
-                        setItems(*TipoAggregazione.values())
-                        setItemLabelGenerator { aggregationLabel(it) }
-                        value = c.aggregazioni.toSet()
-                        addValueChangeListener { ev ->
-                            c.aggregazioni.clear()
-                            c.aggregazioni.addAll(ev.value)
-                        }
-                    }
-                }
-            }.setHeader("Aggregazioni").setAutoWidth(true).setFlexGrow(1)
+        val vuoto = Span("Nessuna tabella importata: importale dalla pagina Tabelle importate.")
+            .apply { isVisible = tabelle.isEmpty() }
+
+        return VerticalLayout(
+            Span("Tabelle importate").apply { className = "lbi-wizard-label" },
+            Span("Doppio clic per aggiungere. La stessa tabella si può aggiungere più volte.")
+                .apply { element.style.set("font-size", "var(--lumo-font-size-xs)") },
+            vuoto, tabelleGrid, aggiungi
+        ).apply {
+            setWidth("22%")
+            isPadding = false
+            setFlexGrow(1.0, tabelleGrid)
         }
-        return grid
     }
 
-    private fun aggregationLabel(tipo: TipoAggregazione): String = when (tipo) {
+    // ---------- colonna centrale: tabelle e campi, metriche ----------
+
+    private fun buildColonnaModello(): Component {
+        val tabCampi = Tab("Tabelle e campi")
+        val tabMetriche = Tab("Metriche")
+        val tabs = Tabs(tabCampi, tabMetriche)
+
+        val pannelloCampi = buildPannelloCampi()
+        val pannelloMetriche = buildPannelloMetriche().apply { isVisible = false }
+        tabs.addSelectedChangeListener {
+            val campi = tabs.selectedTab == tabCampi
+            pannelloCampi.isVisible = campi
+            pannelloMetriche.isVisible = !campi
+        }
+
+        return VerticalLayout(tabs, pannelloCampi, pannelloMetriche).apply {
+            setWidth("48%")
+            isPadding = false
+            setFlexGrow(1.0, pannelloCampi)
+            setFlexGrow(1.0, pannelloMetriche)
+        }
+    }
+
+    private fun buildPannelloCampi(): VerticalLayout {
+        occorrenzeGrid.apply {
+            setWidthFull()
+            height = "230px"
+            addColumn { it.alias }.setHeader("Alias").setAutoWidth(true)
+            addColumn { it.nomeLogico }.setHeader("Tabella").setAutoWidth(true)
+            addColumn { if (it.ruolo == RuoloTabella.FATTI) "Fatti" else "Dimensione" }
+                .setHeader("Ruolo").setAutoWidth(true)
+            addColumn { o ->
+                bozza.campi().count { it.occorrenzaId == o.id && !it.escluso }
+            }.setHeader("Campi").setAutoWidth(true)
+            addComponentColumn { o ->
+                HorizontalLayout(
+                    Button(Icon(VaadinIcon.EDIT)) { apriRinominaAlias(o) }.apply {
+                        addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL)
+                        element.setAttribute("title", "Rinomina alias")
+                    },
+                    Button(Icon(VaadinIcon.TRASH)) { confermaRimuoviTabella(o) }.apply {
+                        addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_ERROR)
+                        element.setAttribute("title", "Togli dal dataset")
+                    }
+                ).apply { isPadding = false; isSpacing = false }
+            }.setHeader("")
+            addSelectionListener { ev ->
+                if (!aggiornando) {
+                    occorrenzaSelezionata = ev.firstSelectedItem.orElse(null)?.id
+                    aggiornaCampi()
+                }
+            }
+        }
+
+        campiGrid.apply {
+            setSizeFull()
+            addComponentColumn { campo ->
+                Checkbox(RiferimentoCampo(campo.occorrenzaId, campo.colonna) in bozza.dimensioni).apply {
+                    isEnabled = !campo.escluso
+                    addValueChangeListener { ev ->
+                        bozza = bozza.impostaDimensione(campo.occorrenzaId, campo.colonna, ev.value)
+                        modificato = true
+                    }
+                    element.setAttribute("title", "Usa come dimensione (filtro)")
+                }
+            }.setHeader("Dim.").setAutoWidth(true).setFlexGrow(0)
+            addComponentColumn { campo ->
+                Span(campo.nomeCampo + if (campo.escluso) "  (escluso)" else "").apply {
+                    if (campo.escluso) {
+                        element.style.set("color", "var(--lumo-disabled-text-color)")
+                        element.style.set("text-decoration", "line-through")
+                    }
+                }
+            }.setHeader("Campo").setAutoWidth(true)
+            addColumn { it.nomeOrigine }.setHeader("Colonna").setAutoWidth(true)
+            addColumn { it.tipo }.setHeader("Tipo").setAutoWidth(true)
+            addColumn { if (it.isChiave) "chiave" else "" }.setHeader("").setAutoWidth(true)
+            addColumn { campo -> associatiCon(campo) }.setHeader("Associato con").setAutoWidth(true)
+            addComponentColumn { campo ->
+                MenuBar().apply {
+                    addThemeVariants(MenuBarVariant.LUMO_TERTIARY_INLINE)
+                    val radice = addItem(Icon(VaadinIcon.ELLIPSIS_DOTS_V))
+                    radice.subMenu.addItem("Rinomina") { apriRinominaCampo(campo) }
+                    radice.subMenu.addItem("Associa a...") { apriAssociaCampo(campo) }
+                    if (campo.escluso) {
+                        radice.subMenu.addItem("Ripristina") {
+                            modifica { it.ripristinaCampo(campo.occorrenzaId, campo.colonna) }
+                        }
+                    } else {
+                        radice.subMenu.addItem("Escludi dal dataset") {
+                            modifica { it.escludiCampo(campo.occorrenzaId, campo.colonna) }
+                        }
+                    }
+                }
+            }.setHeader("")
+        }
+
+        return VerticalLayout(
+            Span("Tabelle del dataset").apply { className = "lbi-wizard-label" },
+            occorrenzeGrid,
+            Span("Campi della tabella selezionata").apply { className = "lbi-wizard-label" },
+            campiGrid
+        ).apply {
+            isPadding = false
+            setSizeFull()
+            setFlexGrow(1.0, campiGrid)
+        }
+    }
+
+    private fun buildPannelloMetriche(): VerticalLayout {
+        metricheGrid.apply {
+            setSizeFull()
+            addColumn { it.nome }.setHeader("Metrica").setAutoWidth(true)
+            addColumn { etichettaAggregazione(it.tipo) }.setHeader("Aggregazione").setAutoWidth(true)
+            addColumn { m -> bozza.occorrenze.firstOrNull { it.id == m.areaTabellaId }?.alias ?: "—" }
+                .setHeader("Tabella").setAutoWidth(true)
+            addColumn { m -> nomeCampoDi(m) }.setHeader("Campo").setAutoWidth(true)
+            addComponentColumn { m ->
+                HorizontalLayout(
+                    Button(Icon(VaadinIcon.EDIT)) { apriMetrica(m) }.apply {
+                        addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL)
+                    },
+                    Button(Icon(VaadinIcon.TRASH)) { modifica { it.rimuoviMetrica(m.id) } }.apply {
+                        addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_ERROR)
+                    }
+                ).apply { isPadding = false; isSpacing = false }
+            }.setHeader("")
+        }
+        val aggiungi = Button("Aggiungi metrica", Icon(VaadinIcon.PLUS)) { apriMetrica(null) }
+            .apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
+
+        return VerticalLayout(aggiungi, metricheGrid).apply {
+            isPadding = false
+            setSizeFull()
+            setFlexGrow(1.0, metricheGrid)
+        }
+    }
+
+    // ---------- colonna destra: associazioni e problemi ----------
+
+    private fun buildColonnaControlli(): Component {
+        associazioniGrid.apply {
+            setWidthFull()
+            height = "260px"
+            addColumn { it.nomeCampo }.setHeader("Campo").setAutoWidth(true)
+            addColumn { a ->
+                a.occorrenze.mapNotNull { id -> bozza.occorrenze.firstOrNull { it.id == id }?.alias }.joinToString(", ")
+            }.setHeader("Tabelle").setAutoWidth(true)
+            addComponentColumn { a ->
+                Span(if (a.confidenza == Confidenza.ALTA) "Alta" else "Media").apply {
+                    element.style.set(
+                        "color",
+                        if (a.confidenza == Confidenza.ALTA) "var(--lumo-success-text-color)" else "var(--lumo-secondary-text-color)"
+                    )
+                }
+            }.setHeader("Confidenza").setAutoWidth(true)
+            addColumn { if (it.perValore) "per valore" else "" }.setHeader("").setAutoWidth(true)
+        }
+
+        return VerticalLayout(
+            Span("Associazioni").apply { className = "lbi-wizard-label" },
+            Span("Campi con lo stesso nome in più tabelle. Confidenza alta: il campo è una chiave.")
+                .apply { element.style.set("font-size", "var(--lumo-font-size-xs)") },
+            associazioniGrid,
+            Span("Problemi").apply { className = "lbi-wizard-label" },
+            problemiBox
+        ).apply {
+            setWidth("30%")
+            isPadding = false
+        }
+    }
+
+    // ================= Aggiornamento della UI =================
+
+    private fun aggiorna() {
+        aggiornaOccorrenze()
+        aggiornaCampi()
+        metricheGrid.setItems(bozza.metriche)
+        associazioniGrid.setItems(bozza.associazioni())
+        aggiornaProblemi()
+    }
+
+    private fun aggiornaOccorrenze() {
+        aggiornando = true
+        try {
+            occorrenzeGrid.setItems(bozza.occorrenze)
+            if (occorrenzaSelezionata != null && bozza.occorrenze.none { it.id == occorrenzaSelezionata }) {
+                occorrenzaSelezionata = bozza.occorrenze.firstOrNull()?.id
+            }
+            val sel = bozza.occorrenze.firstOrNull { it.id == occorrenzaSelezionata }
+            if (sel != null) occorrenzeGrid.asSingleSelect().value = sel else occorrenzeGrid.asSingleSelect().clear()
+        } finally {
+            aggiornando = false
+        }
+    }
+
+    private fun aggiornaCampi() {
+        val sel = occorrenzaSelezionata
+        campiGrid.setItems(bozza.campi().filter { it.occorrenzaId == sel })
+    }
+
+    private fun aggiornaProblemi() {
+        problemiBox.removeAll()
+        val esito = bozza.valida()
+        if (esito.errori.isEmpty() && esito.avvisi.isEmpty()) {
+            problemiBox.add(Span("Nessun problema").apply {
+                element.style.set("color", "var(--lumo-success-text-color)")
+            })
+            return
+        }
+        esito.errori.forEach {
+            problemiBox.add(Span("✖ ${it.messaggio}").apply {
+                element.style.set("color", "var(--lumo-error-text-color)")
+                element.style.set("margin-bottom", "var(--lumo-space-s)")
+            })
+        }
+        esito.avvisi.forEach {
+            problemiBox.add(Span("⚠ ${it.messaggio}").apply {
+                element.style.set("color", "var(--lumo-warning-text-color)")
+                element.style.set("margin-bottom", "var(--lumo-space-s)")
+            })
+        }
+    }
+
+    /** Applica una modifica alla bozza; i nomi non validi (Naming) sono segnalati senza perdere lo stato. */
+    private fun modifica(operazione: (DatasetBozza) -> DatasetBozza) {
+        try {
+            bozza = operazione(bozza)
+            modificato = true
+            aggiorna()
+        } catch (e: IllegalArgumentException) {
+            Notification.show(e.message ?: "Operazione non valida", 6000, Notification.Position.MIDDLE)
+        }
+    }
+
+    private fun aggiungiTabella(tabella: ImportedTable) {
+        try {
+            bozza = datasetService.aggiungiTabella(bozza, tabella.id)
+            modificato = true
+            occorrenzaSelezionata = bozza.occorrenze.lastOrNull()?.id
+            aggiorna()
+        } catch (e: IllegalArgumentException) {
+            Notification.show(e.message ?: "Operazione non valida", 6000, Notification.Position.MIDDLE)
+        }
+    }
+
+    private fun associatiCon(campo: CampoEffettivo): String {
+        if (campo.escluso) return ""
+        val altri = bozza.campi().filter {
+            !it.escluso && it.nomeCampo == campo.nomeCampo && it.occorrenzaId != campo.occorrenzaId
+        }
+        return altri.map { it.alias }.distinct().joinToString(", ")
+    }
+
+    private fun nomeCampoDi(m: MetricaBozza): String {
+        val colonna = m.colonna ?: return "—"
+        return bozza.campi().firstOrNull { it.occorrenzaId == m.areaTabellaId && it.colonna == colonna }
+            ?.nomeOrigine ?: colonna
+    }
+
+    private fun etichettaAggregazione(tipo: TipoAggregazione): String = when (tipo) {
         TipoAggregazione.SUM -> "Somma"
         TipoAggregazione.AVG -> "Media"
-        TipoAggregazione.COUNT -> "Conteggio"
-        TipoAggregazione.COUNT_DISTINCT -> "Conteggio distinto"
+        TipoAggregazione.COUNT -> "Conteggio righe"
+        TipoAggregazione.COUNT_DISTINCT -> "Conteggio distinti"
         TipoAggregazione.MIN -> "Minimo"
         TipoAggregazione.MAX -> "Massimo"
     }
 
-    /** Aggregazione più plausibile dal nome colonna: solo un default, modificabile. */
-    private fun suggestDefaultAggregation(colName: String): TipoAggregazione {
-        val n = colName.lowercase()
-        val mediaHints = listOf("giorni", "tempo", "durata", "media", "pct", "percentuale", "rate")
-        return if (mediaHints.any { n.contains(it) }) TipoAggregazione.AVG else TipoAggregazione.SUM
-    }
+    // ================= Finestre =================
 
-    private fun suggestMetricName(colName: String, tipo: TipoAggregazione): String {
-        val leggibile = colName.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }
-        val prefisso = when (tipo) {
-            TipoAggregazione.SUM -> "Totale"
-            TipoAggregazione.AVG -> "Media"
-            TipoAggregazione.COUNT -> "Conteggio"
-            TipoAggregazione.COUNT_DISTINCT -> "Conteggio distinto"
-            TipoAggregazione.MIN -> "Minimo"
-            TipoAggregazione.MAX -> "Massimo"
+    private fun apriRinominaAlias(o: OccorrenzaBozza) {
+        val campo = TextField("Alias della tabella").apply { setWidthFull(); value = o.alias }
+        finestra("Rinomina alias", campo, "Rinomina") {
+            modifica { it.rinominaAlias(o.id, campo.value.orEmpty()) }
         }
-        return "$prefisso $leggibile"
     }
 
-    // ================= Piano di creazione (dimensioni + metriche) =================
+    private fun apriRinominaCampo(c: CampoEffettivo) {
+        val campo = TextField("Nome del campo nel dataset").apply { setWidthFull(); value = c.nomeCampo }
+        finestra("Rinomina campo", campo, "Rinomina") {
+            modifica { it.rinominaCampo(c.occorrenzaId, c.colonna, campo.value.orEmpty()) }
+        }
+    }
 
     /**
-     * Traduce le scelte dell'utente in dimensioni e metriche da registrare.
-     * Usato sia per validare (step COLONNE/CONFERMA) sia per creare.
+     * "Associa a...": il campo scelto prende il nome del campo di un'altra
+     * tabella. Se le colonne hanno nomi diversi l'associazione è per valore.
      */
-    private fun buildPlan(): Plan {
-        val fatti = fattiScelta()!!
-        val dims = mutableListOf<DimPlan>()
-        val metriche = mutableListOf<MetricPlan>()
-
-        state.colonne[fatti.viewName].orEmpty().forEach { c ->
-            when (c.ruolo) {
-                Ruolo.DIMENSIONE -> dims += DimPlan(c.nome, c.nome, fatti.viewName)
-                Ruolo.METRICA -> c.aggregazioni.sortedBy { it.ordinal }.forEach { agg ->
-                    metriche += MetricPlan(suggestMetricName(c.nome, agg), c.nome, agg)
-                }
-                else -> Unit
-            }
+    private fun apriAssociaCampo(c: CampoEffettivo) {
+        val altri = bozza.campi().filter { !it.escluso && it.occorrenzaId != c.occorrenzaId }
+        if (altri.isEmpty()) {
+            Notification.show("Non ci sono campi di altre tabelle", 4000, Notification.Position.MIDDLE)
+            return
         }
-
-        // Attributi delle Dimensioni: se lo stesso nome compare in più
-        // Dimensioni si aggiunge il nome logico della tabella.
-        val daDimensioni = dimensioniScelte().flatMap { t ->
-            state.colonne[t.viewName].orEmpty().filter { it.ruolo == Ruolo.DIMENSIONE }.map { t to it }
-        }
-        val conteggio = daDimensioni.groupingBy { it.second.nome.lowercase() }.eachCount()
-        daDimensioni.forEach { (t, c) ->
-            val nome = if ((conteggio[c.nome.lowercase()] ?: 0) > 1) "${c.nome} (${t.nomeLogico})" else c.nome
-            dims += DimPlan(nome, c.nome, t.viewName)
-        }
-        return Plan(dims, metriche)
-    }
-
-    private fun validateColonne(): String? {
-        val fatti = fattiScelta() ?: return "Nessuna tabella Fatti"
-        val plan = buildPlan()
-        if (plan.dimensioni.isEmpty()) return "Serve almeno una dimensione"
-
-        val metricheSenzaAgg = state.colonne[fatti.viewName].orEmpty()
-            .filter { it.ruolo == Ruolo.METRICA && it.aggregazioni.isEmpty() }
-        if (metricheSenzaAgg.isNotEmpty())
-            return "Scegli almeno un'aggregazione per: ${metricheSenzaAgg.joinToString(", ") { it.nome }}"
-        if (plan.metriche.isEmpty()) return "Serve almeno una metrica (colonna dei Fatti con ruolo Metrica)"
-
-        // Colonne fisiche che collidono dopo la normalizzazione, per tabella.
-        // Colonne fisiche che collidono dopo la normalizzazione, per tabella.
-        tabelleScelte().forEach { t ->
-            val usate = state.colonne[t.viewName].orEmpty().filter { it.ruolo != Ruolo.IGNORA }
-            val collisioni = try {
-                ColumnProposal.collisioni(usate.map { it.nome })
-            } catch (e: Exception) {
-                return "Colonna non utilizzabile in ${t.nomeLogico}: ${e.message}"
-            }
-            if (collisioni.isNotEmpty()) return ColumnProposal.messaggioCollisioni(t.nomeLogico, collisioni)
-        }
-
-        try { plan.dimensioni.forEach { Naming.slug(it.nomeDimensione) } }
-        catch (e: Exception) { return "Nome dimensione non utilizzabile: ${e.message}" }
-
-        val nomiMetriche = plan.metriche.map { it.nome.lowercase() }
-        val doppie = nomiMetriche.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
-        if (doppie.isNotEmpty()) return "Nomi di metrica duplicati: ${doppie.joinToString(", ")}"
-        return null
-    }
-
-    // ================= STEP 6: Conferma =================
-
-    private fun buildStepConferma(): Component {
-        val layout = VerticalLayout().apply { isPadding = false }
-        val fatti = fattiScelta() ?: return Span("Nessuna tabella Fatti: torna indietro")
-        val plan = buildPlan()
-
-        layout.add(TextField("Nome del dataset").apply {
-            value = state.nomeDataset.ifBlank { fatti.nomeLogico }
-            state.nomeDataset = value
+        val combo = ComboBox<CampoEffettivo>("Associa «${c.nomeCampo}» al campo").apply {
             setWidthFull()
-            addValueChangeListener { state.nomeDataset = it.value }
-        })
-
-        layout.add(Span("Riepilogo").apply { className = "lbi-wizard-label" })
-        layout.add(Span("Fatti: ${fatti.nomeLogico} (${fatti.viewName})"))
-        dimensioniScelte().forEach { d ->
-            val nDim = plan.dimensioni.count { it.viewName == d.viewName }
-            layout.add(Span("Dimensione: ${d.nomeLogico} (${d.viewName}) — chiave ${d.colonnaChiave}, $nDim campi"))
+            setItems(altri)
+            setItemLabelGenerator { "${it.alias} · ${it.nomeOrigine}" }
         }
-        layout.add(Span("Dimensioni sui Fatti: ${plan.dimensioni.count { it.viewName == fatti.viewName }}"))
-        layout.add(Span("Metriche: ${plan.metriche.size} (${plan.metriche.joinToString(", ") { it.nome }})"))
-        layout.add(Span(
-            "Alla creazione viene registrato il dataset. I dati si caricano con \"Sincronizza\"."
-        ).apply { className = "lbi-wizard-label" })
-        return layout
+        finestra("Associa campo", combo, "Associa") {
+            val scelto = combo.value
+            if (scelto == null) {
+                Notification.show("Scegli il campo", 3000, Notification.Position.MIDDLE)
+            } else {
+                modifica { it.associa(scelto.occorrenzaId, scelto.colonna, c.occorrenzaId, c.colonna) }
+            }
+        }
     }
 
-    // ================= Nomi fisici =================
-
-    /** Nome del database sorgente per il naming: parametro della connessione, poi schema. */
-    private fun nomeDbSorgente(): String =
-        state.connessione?.parametri?.get(JdbcSourceConnector.PARAM_DATABASE)?.takeIf { it.isNotBlank() }
-            ?: state.schema?.takeIf { it.isNotBlank() }
-            ?: "db"
-
-    /** viewName -> nome fisico ClickHouse (<motore>_<db>__<nome>). */
-    private fun nomiFisici(): Map<String, String> {
-        val motore = state.connessione?.tipo ?: error("Connessione non disponibile")
-        val db = nomeDbSorgente()
-        return tabelleScelte().associate { it.viewName to Naming.importedTable(motore, db, it.nomeLogico) }
+    private fun confermaRimuoviTabella(o: OccorrenzaBozza) {
+        val testo = Span("La tabella \"${o.alias}\" esce dal dataset, con le sue metriche e dimensioni. " +
+                "La tabella importata non viene toccata.")
+        finestra("Togliere \"${o.alias}\"?", testo, "Togli") {
+            modifica { it.rimuoviTabella(o.id) }
+        }
     }
 
-    private fun validateConferma(): String? {
-        val nome = state.nomeDataset.trim()
-        if (nome.isBlank()) return "Indica il nome del dataset"
-        try { Naming.slug(nome) } catch (e: Exception) { return "Nome dataset non utilizzabile: ${e.message}" }
-        if (registryRepository.findAreaByNome(nome) != null) return "Esiste già un dataset chiamato \"$nome\""
-
-        val fisici = try { nomiFisici() } catch (e: Exception) { return "Nome tabella non utilizzabile: ${e.message}" }
-
-
-        // Nel passo ponte il wizard crea ancora le tabelle insieme al dataset:
-        // una tabella già importata (da un altro dataset o dalla pagina
-        // "Tabelle importate") non si ricrea. Il riuso arriva con la Fase D.
-        val giaUsati = importedTableRepository.findTabelleFisiche()
-        val conflitti = fisici.values.filter { it in giaUsati }
-        if (conflitti.isNotEmpty())
-            return "Tabelle già importate: ${conflitti.joinToString(", ")}. " +
-                    "Cambia il nome logico o usa tabelle diverse."
-        return validateColonne()
+    /** Finestra con un contenuto, Annulla e un pulsante di conferma. */
+    private fun finestra(titolo: String, contenuto: Component, conferma: String, azione: () -> Unit) {
+        val dialog = Dialog().apply {
+            headerTitle = titolo
+            width = "460px"
+        }
+        dialog.add(VerticalLayout(contenuto).apply { isPadding = false })
+        dialog.footer.add(
+            Button("Annulla") { dialog.close() },
+            Button(conferma) {
+                dialog.close()
+                azione()
+            }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
+        )
+        dialog.open()
     }
 
-    private fun createDataset() {
-        val nome = state.nomeDataset.trim()
-        val plan = buildPlan()
-        val tabelle = tabelleScelte()
-        val fatti = tabelle.first { it.ruolo == RuoloTabella.FATTI }
-        val fisici = nomiFisici()
-        val connessione = state.connessione ?: error("Connessione non disponibile")
-        var areaId: UUID? = null
+    /** Aggiunge (esistente = null) o modifica una metrica. */
+    private fun apriMetrica(esistente: MetricaBozza?) {
+        val fatti = bozza.occorrenze.filter { it.ruolo == RuoloTabella.FATTI }
+        if (fatti.isEmpty()) {
+            Notification.show("Aggiungi prima una tabella Fatti", 4000, Notification.Position.MIDDLE)
+            return
+        }
+        val tabellaCombo = ComboBox<OccorrenzaBozza>("Tabella Fatti").apply {
+            setWidthFull()
+            setItems(fatti)
+            setItemLabelGenerator { it.alias }
+            value = fatti.firstOrNull { it.id == esistente?.areaTabellaId } ?: fatti.first()
+        }
+        val tipoCombo = ComboBox<TipoAggregazione>("Aggregazione").apply {
+            setWidthFull()
+            setItems(TipoAggregazione.entries)
+            setItemLabelGenerator { etichettaAggregazione(it) }
+            value = esistente?.tipo ?: TipoAggregazione.SUM
+        }
+        val campoCombo = ComboBox<CampoEffettivo>("Campo").apply {
+            setWidthFull()
+            setItemLabelGenerator { it.nomeOrigine }
+        }
+        val nomeMetrica = TextField("Nome della metrica").apply {
+            setWidthFull()
+            value = esistente?.nome.orEmpty()
+        }
 
-        try {
-            val area = registryService.createArea(nome, fisici.getValue(fatti.viewName))
-            areaId = area.id
-
-            val sourceId = UUID.randomUUID()
-            areaSourceRepository.save(
-                AreaSource(
-                    id = sourceId,
-                    areaId = area.id,
-                    tipoSorgente = connessione.tipo,
-                    connectionId = connessione.id,
-                    config = SourceConfig(
-                        schema = state.schema,
-                        // L'elenco tabelle non sta più nella sorgente: vive in
-                        // ImportedTable (connessione, schema e nome origine) e
-                        // nel ponte lbi_area_imported_table.
-                        tabelle = emptyList(),
-                        syncMode = SyncMode.FULL_RELOAD
-                    ),
-                    // Le view QLK_* esistono già sulla sorgente e le abbiamo
-                    // appena lette: non c'è nessuna view da creare o verificare.
-                    status = SourceStatus.VERIFIED,
-                    errorDetail = null,
-                    createdAt = Instant.now()
-                )
+        fun riempiCampi() {
+            val occ = tabellaCombo.value
+            val tipo = tipoCombo.value
+            val soloNumerici = tipo in setOf(
+                TipoAggregazione.SUM, TipoAggregazione.AVG, TipoAggregazione.MIN, TipoAggregazione.MAX
             )
-
-            val idTabelle = mutableMapOf<String, UUID>()
-            tabelle.forEach { t ->
-                val id = UUID.randomUUID()
-                idTabelle[t.viewName] = id
-                importedTableRepository.save(
-                    ImportedTable(
-                        id = id,
-                        areaId = area.id,
-                        nomeLogico = t.nomeLogico,
-                        tabellaFisica = fisici.getValue(t.viewName),
-                        ruolo = t.ruolo,
-                        sourceId = sourceId,
-                        colonnaChiave = t.colonnaChiave,
-                        connectionId = connessione.id,
-                        schemaOrigine = state.schema,
-                        nomeOrigine = t.viewName
-                    )
-                )
-                importedTableRepository.linkToArea(area.id, id)
-                importedTableRepository.saveColumns(
-                    state.colonne[t.viewName].orEmpty()
-                        .filter { it.ruolo != Ruolo.IGNORA }
-                        .map { c ->
-                            ImportedColumn(
-                                id = UUID.randomUUID(),
-                                importedTableId = id,
-                                nome = c.nome,
-                                tipo = c.tipo,
-                                isChiave = c.ruolo == Ruolo.CHIAVE || c.ruolo == Ruolo.CONDIVISA
-                            )
-                        }
-                )
+            val candidati = bozza.campi().filter {
+                occ != null && it.occorrenzaId == occ.id && !it.escluso && (!soloNumerici || it.numerico)
             }
+            campoCombo.setItems(candidati)
+            campoCombo.isEnabled = tipo != TipoAggregazione.COUNT
+            campoCombo.value = candidati.firstOrNull { it.colonna == esistente?.colonna }
+        }
+        tabellaCombo.addValueChangeListener { riempiCampi() }
+        tipoCombo.addValueChangeListener { riempiCampi() }
+        riempiCampi()
 
-            plan.dimensioni.forEach { d ->
-                val dimensione = registryService.findOrCreateDimensione(d.nomeDimensione)
-                registryRepository.saveAreaDimensione(
-                    AreaDimensione(
-                        areaId = area.id,
-                        dimensioneId = dimensione.id,
-                        colonnaFisica = Naming.column(d.colonna),
-                        obbligatoria = false,
-                        cardinalitaStimata = null,
-                        valoreGrezzo = false,
-                        importedTableId = idTabelle.getValue(d.viewName)
-                    )
-                )
+        val contenuto = VerticalLayout(tabellaCombo, tipoCombo, campoCombo, nomeMetrica).apply { isPadding = false }
+        finestra(if (esistente == null) "Aggiungi metrica" else "Modifica metrica", contenuto, "Salva") {
+            val occ = tabellaCombo.value
+            val tipo = tipoCombo.value
+            val campo = campoCombo.value
+            if (occ == null || tipo == null) return@finestra
+            if (tipo != TipoAggregazione.COUNT && campo == null) {
+                Notification.show("Scegli il campo", 3000, Notification.Position.MIDDLE)
+                return@finestra
             }
-
-            plan.metriche.forEach { m ->
-                registryService.addMetrica(
-                    areaId = area.id,
-                    nome = m.nome,
-                    colonnaFisica = m.colonna,
-                    tipoAggregazione = m.tipo,
-                    importedTableId = idTabelle.getValue(fatti.viewName)
-                )
+            val nome = nomeMetrica.value.orEmpty().trim().ifEmpty {
+                if (tipo == TipoAggregazione.COUNT) "Numero righe"
+                else "${etichettaAggregazione(tipo)} ${campo?.nomeOrigine.orEmpty()}"
             }
-            registryRepository.bumpVersion()
+            val nuova = MetricaBozza(
+                id = esistente?.id ?: UUID.randomUUID(),
+                nome = nome,
+                areaTabellaId = occ.id,
+                colonna = if (tipo == TipoAggregazione.COUNT) null else campo?.colonna,
+                tipo = tipo
+            )
+            modifica { b -> (if (esistente != null) b.rimuoviMetrica(esistente.id) else b).aggiungiMetrica(nuova) }
+        }
+    }
 
+    // ================= Salvataggio =================
+
+    private fun salva() {
+        try {
+            adminGuard.requireAdmin()
+        } catch (e: SecurityException) {
+            Notification.show(e.message ?: "Operazione non consentita")
+            return
+        }
+        try {
+            val id = datasetService.salva(bozza)
+            modificato = false
             Notification.show(
-                "Dataset \"$nome\" creato. Premi \"Sincronizza\" per caricare i dati.",
+                "Dataset \"${bozza.nome.trim()}\" salvato. Premi \"Sincronizza\" per caricare i dati.",
                 6000, Notification.Position.MIDDLE
             )
-            getUI().ifPresent { it.navigate(AssociativeExplorerView::class.java, area.id.toString()) }
+            getUI().ifPresent { it.navigate(AssociativeExplorerView::class.java, id.toString()) }
+        } catch (e: DatasetNonValidoException) {
+            aggiornaProblemi()
+            Notification.show(
+                "Il dataset ha ${e.esito.errori.size} problemi da correggere (vedi a destra)",
+                7000, Notification.Position.MIDDLE
+            )
         } catch (e: Exception) {
-            areaId?.let { rollback(it) }
-            Notification.show("Errore nella creazione: ${e.message}", 8000, Notification.Position.MIDDLE)
+            Notification.show("Errore nel salvataggio: ${e.message}", 10000, Notification.Position.MIDDLE)
         }
-    }
-
-    /**
-     * Annulla quanto scritto per un dataset creato a metà. L'ordine conta
-     * per le chiavi esterne: dimensioni e metriche, poi le tabelle importate
-     * (le loro colonne cadono in cascata), poi la sorgente, infine l'area.
-     */
-    private fun rollback(areaId: UUID) {
-        fun tenta(passo: () -> Unit) { try { passo() } catch (_: Exception) { } }
-        tenta { registryRepository.deleteAreaMetricheByArea(areaId) }
-        tenta { registryRepository.deleteAreaDimensioniByArea(areaId) }
-        tenta { importedTableRepository.unlinkArea(areaId) }
-        tenta { importedTableRepository.deleteByArea(areaId) }
-        tenta { areaSourceRepository.findByArea(areaId).forEach { areaSourceRepository.delete(it.id) } }
-        tenta { registryRepository.deleteArea(areaId) }
-        tenta { registryRepository.bumpVersion() }
     }
 }

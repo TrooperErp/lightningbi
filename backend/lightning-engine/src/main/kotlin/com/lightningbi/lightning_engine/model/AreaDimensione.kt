@@ -51,7 +51,12 @@ data class AreaDimensione(
      * e AggregateService fa JOIN con i Fatti sulla chiave condivisa
      * (ImportedTable.colonnaChiave) quando questa dimensione è richiesta.
      */
-    val importedTableId: UUID? = null
+    val importedTableId: UUID? = null,
+    /**
+     * Occorrenza della tabella nel dataset (AreaTabella.id) che ospita la
+     * colonna. Null solo per i dati precedenti alla migrazione 030.
+     */
+    val areaTabellaId: UUID? = null
 )
 
 /** Come aggregare la colonna. COUNT non richiede che colonnaFisica sia valorizzata. */
@@ -94,5 +99,10 @@ data class AreaMetrica(
      * appartiene a un Fatti preciso. Nullable solo nel passo ponte A.4: diventa
      * obbligatoria nel blocco unico della Fase C.
      */
-    val importedTableId: UUID? = null
+    val importedTableId: UUID? = null,
+    /**
+     * Occorrenza dei Fatti (AreaTabella.id) su cui la metrica si calcola.
+     * Null solo per i dati precedenti alla migrazione 030.
+     */
+    val areaTabellaId: UUID? = null
 )
