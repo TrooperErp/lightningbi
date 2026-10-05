@@ -1,7 +1,9 @@
 package com.lightningbi.lightning_engine.etl
 
 import com.lightningbi.lightning_engine.model.ImportedColumn
+import com.lightningbi.lightning_engine.service.CalendarioService
 import com.lightningbi.lightning_engine.service.ColumnProposal
+import com.lightningbi.lightning_engine.service.ComponenteCalendario
 import com.lightningbi.lightning_engine.service.Naming
 import com.lightningbi.lightning_engine.service.SymbolLookupService
 import org.slf4j.LoggerFactory
@@ -11,7 +13,8 @@ import java.math.RoundingMode
 
 @Service
 class TransformService(
-    private val symbolLookupService: SymbolLookupService
+    private val symbolLookupService: SymbolLookupService,
+    private val calendarioService: CalendarioService
 ) {
     private val log = LoggerFactory.getLogger(TransformService::class.java)
 
@@ -32,7 +35,11 @@ class TransformService(
         val fisica: String,
         val isChiave: Boolean,
         /** Ha una copia numerica `<fisica>__n`. */
-        val numerica: Boolean
+        val numerica: Boolean,
+        /** Campo derivato da una data: etichetta (minuscola) della colonna data di origine. */
+        val derivataDa: String? = null,
+        /** Campo derivato da una data: componente del calendario. */
+        val componente: ComponenteCalendario? = null
     )
 
     /**
@@ -57,6 +64,12 @@ class TransformService(
      *   una chiave int sui Fatti e numeric su una Dimensione darebbe id
      *   diversi e il collegamento resterebbe vuoto senza errori.
      *
+     * - I campi DERIVATI da una data (calendario, come i campi derivati di Qlik:
+     *   anno, mese, giorno...) non esistono sulla sorgente: si calcolano dalla
+     *   colonna data di origine, con valori duali (testo e numero). Una data
+     *   assente dà id 0 (non definito).
+     * - Le date si normalizzano in un testo canonico ordinabile (2026-10-01).
+     *
      * Le righe arrivano come le restituisce il connettore: le chiavi sono le
      * etichette colonna in minuscolo. Le righe in uscita hanno i nomi FISICI.
      * Le colonne che non sono tra quelle importate non vengono lette.
@@ -76,7 +89,12 @@ class TransformService(
                 origine = c.nome.lowercase(),
                 fisica = Naming.column(c.nome),
                 isChiave = c.isChiave,
-                numerica = !c.isChiave && ColumnProposal.isNumerico(c.tipo)
+                numerica = !c.derivata && !c.isChiave && ColumnProposal.isNumerico(c.tipo),
+                derivataDa = c.derivataDa?.lowercase(),
+                componente = c.componente?.let { codice ->
+                    ComponenteCalendario.daCodice(codice)
+                        ?: throw IllegalStateException("Componente di calendario sconosciuto '$codice' (colonna '${c.nome}')")
+                }
             )
         }
 
@@ -86,22 +104,42 @@ class TransformService(
         }
 
         val disponibili = rows.first().keys
-        val mancanti = campi.map { it.origine }.filter { it !in disponibili }
+        val mancanti = campi.filter { it.componente == null }.map { it.origine }.filter { it !in disponibili }
         require(mancanti.isEmpty()) {
             "La sorgente non espone le colonne attese: ${mancanti.joinToString(", ")}. " +
                     "Colonne trovate: ${disponibili.joinToString(", ")}"
         }
 
+        // Per i campi derivati: il numero che accompagna ogni testo (valori duali).
+        val numeriDerivati: Array<MutableMap<String, BigDecimal>?> = arrayOfNulls(campi.size)
+
         // Valori normalizzati, calcolati una volta sola: [colonna][riga].
         val testi: Array<Array<String?>> = Array(campi.size) { j ->
-            val origine = campi[j].origine
-            Array(rows.size) { i -> normalizza(rows[i][origine]) }
+            val campo = campi[j]
+            val componente = campo.componente
+            if (componente != null) {
+                val padre = campo.derivataDa ?: error("Campo derivato senza colonna di origine: ${campo.fisica}")
+                val dualiDelCampo = HashMap<String, BigDecimal>()
+                numeriDerivati[j] = dualiDelCampo
+                Array(rows.size) { i ->
+                    val data = calendarioService.daValore(rows[i][padre])
+                    if (data == null) null
+                    else {
+                        val derivato = calendarioService.derivato(componente, data)
+                        dualiDelCampo[derivato.testo] = derivato.numero
+                        derivato.testo
+                    }
+                }
+            } else {
+                val origine = campo.origine
+                Array(rows.size) { i -> normalizza(rows[i][origine]) }
+            }
         }
 
         // Una symbol table per campo, un solo giro di lookup per colonna.
         val idMaps: List<Map<String, Long>> = campi.indices.map { j ->
             val valori = testi[j].asSequence().filterNotNull().toSet()
-            symbolLookupService.getOrCreateIds(campi[j].fisica, valori)
+            symbolLookupService.getOrCreateIds(campi[j].fisica, valori, numeriDerivati[j] ?: emptyMap())
         }
 
         val valid = ArrayList<Map<String, Any?>>(rows.size)
@@ -172,6 +210,10 @@ class TransformService(
                 if (valore.isNaN() || valore.isInfinite()) return null
                 BigDecimal(valore.toString()).stripTrailingZeros().toPlainString()
             }
+            // Date: testo canonico ordinabile (2026-10-01), non il toString del driver.
+            is java.util.Date, is java.time.LocalDate, is java.time.LocalDateTime,
+            is java.time.OffsetDateTime, is java.time.Instant ->
+                calendarioService.daValore(valore)?.let { calendarioService.testoCanonico(it) } ?: valore.toString()
             else -> valore.toString()
         }.trim()
         return testo.ifEmpty { null }

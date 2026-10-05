@@ -204,25 +204,16 @@ class AssociativeExplorerView(
         val currentAreaId = areaId
         val isAdmin = isCurrentUserAdmin()
 
-        val adminDatasetEntries: List<LbiSidebarMenu.MenuEntry> = if (isAdmin) {
-            listOf(
-                LbiSidebarMenu.MenuEntry("+ Nuovo dataset", icon = VaadinIcon.PLUS) {
-                    getUI().ifPresent { it.navigate(NewDatasetView::class.java) }
-                },
-                LbiSidebarMenu.MenuEntry(
-                    "Sincronizza",
-                    enabled = hasSource && sourceStatus == SourceStatus.VERIFIED,
-                    icon = VaadinIcon.REFRESH
-                ) { runEtl() }
-            )
-        } else emptyList()
+
 
         val groups = mutableListOf(
             LbiSidebarMenu.MenuGroup(
                 label = "Dataset",
                 entries = currentAreas.map { area ->
-                    LbiSidebarMenu.MenuEntry(area.nome, icon = VaadinIcon.TABLE) { switchArea(area.id) }
-                } + adminDatasetEntries,
+                    LbiSidebarMenu.MenuEntry(area.nome, icon = VaadinIcon.TABLE) {
+                        getUI().ifPresent { it.navigate(DatasetFiltriView::class.java, area.id.toString()) }
+                    }
+                } ,
                 active = true,
                 icon = VaadinIcon.DATABASE
             ),
@@ -265,10 +256,23 @@ class AssociativeExplorerView(
                 LbiSidebarMenu.MenuGroup(
                     label = "Amministrazione",
                     entries = listOf(
-                        LbiSidebarMenu.MenuEntry("Elimina dataset", enabled = currentAreaId != null, icon = VaadinIcon.TRASH) { confirmDeleteArea() },
                         LbiSidebarMenu.MenuEntry("Tabelle importate", icon = VaadinIcon.DATABASE) {
                             getUI().ifPresent { it.navigate(TabelleImportateView::class.java) }
                         },
+                        LbiSidebarMenu.MenuEntry("+ Nuovo dataset", icon = VaadinIcon.PLUS) {
+                            getUI().ifPresent { it.navigate(NewDatasetView::class.java) }
+                        },
+                        LbiSidebarMenu.MenuEntry("Modello dati", enabled = currentAreaId != null, icon = VaadinIcon.TABLE) {
+                            currentAreaId?.let { id ->
+                                getUI().ifPresent { it.navigate(NewDatasetView::class.java, id.toString()) }
+                            }
+                        },
+                        LbiSidebarMenu.MenuEntry(
+                            "Sincronizza dataset",
+                            enabled = hasSource && sourceStatus == SourceStatus.VERIFIED,
+                            icon = VaadinIcon.REFRESH
+                        ) { runEtl() },
+                        LbiSidebarMenu.MenuEntry("Elimina dataset", enabled = currentAreaId != null, icon = VaadinIcon.TRASH) { confirmDeleteArea() },
                         LbiSidebarMenu.MenuEntry("Gestione utenti", icon = VaadinIcon.USERS) {
                             getUI().ifPresent { it.navigate(AdminView::class.java) }
                         }

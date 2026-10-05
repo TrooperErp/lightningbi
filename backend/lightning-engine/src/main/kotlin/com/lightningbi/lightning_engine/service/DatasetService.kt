@@ -98,7 +98,7 @@ class DatasetService(
                 m.areaTabellaId?.let { MetricaBozza(m.id, m.nome, it, m.colonnaFisica, m.tipoAggregazione) }
             }
 
-        return DatasetBozza(areaId, area.nome, occorrenze, dimensioni, metriche)
+        return DatasetBozza(areaId, area.nome, occorrenze, dimensioni, metriche, area.campoCalendario)
     }
 
     // ---------- salvataggio ----------
@@ -125,6 +125,9 @@ class DatasetService(
             ?: error("Tabella importata ${primoFatti.importedTableId} non trovata")
 
         val area = salvaArea(areaIdEsistente, nome, tabellaFatti.tabellaFisica)
+        if (area.campoCalendario != bozza.campoCalendario) {
+            registryRepository.updateArea(area.copy(campoCalendario = bozza.campoCalendario))
+        }
         assicuraSorgente(area.id, tabellaFatti)
 
         // 1. via tutte le dimensioni (si riscrivono) e le metriche tolte o cambiate

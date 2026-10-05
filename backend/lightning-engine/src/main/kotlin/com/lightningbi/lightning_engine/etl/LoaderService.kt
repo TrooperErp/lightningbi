@@ -40,22 +40,46 @@ class LoaderService(
      */
     private val batchSize = 10_000
 
+
+    /** Massimo numero di riga: lbi_rid è un UInt32. */
+    private val MAX_RID = 4_294_967_295L
+
     /** Chiavi per istruzione di cancellazione: tiene la lunghezza dell'SQL ragionevole. */
     private val deleteChunk = 5_000
+
 
     /**
      * Append puro: aggiunge righe senza toccare quelle esistenti. Righe già
      * presenti verranno duplicate se la sorgente le riespone.
+     *
+     * Ogni riga riceve un numero di riga persistente (lbi_rid), a partire da
+     * [primoRid]. Restituisce il primo numero ancora libero, da passare al
+     * caricamento successivo.
      */
-    fun load(tabellaFisica: String, rows: List<Map<String, Any?>>, columns: List<String>) {
+    fun load(tabellaFisica: String, rows: List<Map<String, Any?>>, columns: List<String>, primoRid: Long): Long {
         val table = requireIdentifier(tabellaFisica, "table")
         val cols = columns.map { requireIdentifier(it, "column") }
+        require(Naming.RID_COLUMN !in cols) { "La colonna '${Naming.RID_COLUMN}' non si carica: la assegna il loader" }
         if (rows.isEmpty()) {
             log.info("Load su {}: nessuna riga da inserire", table)
-            return
+            return primoRid
         }
-        insertBatched(table, rows, cols)
+        val ultimo = primoRid + rows.size - 1
+        check(ultimo <= MAX_RID) {
+            "La tabella $table supera i $MAX_RID numeri di riga: serve un ricarico completo"
+        }
+        insertBatched(table, rows, cols, primoRid)
         log.info("Load su {}: {} righe inserite", table, rows.size)
+        return ultimo + 1
+    }
+
+    /** Primo numero di riga libero di una tabella (0 se è vuota). */
+    fun prossimoRid(tabellaFisica: String): Long {
+        val table = requireIdentifier(tabellaFisica, "table")
+        return jdbcTemplate.queryForObject(
+            "SELECT if(count() = 0, 0, toInt64(max(${Naming.RID_COLUMN})) + 1) FROM $table",
+            Long::class.java
+        ) ?: 0L
     }
 
     /**
@@ -129,11 +153,14 @@ class LoaderService(
         return risultato
     }
 
-    private fun insertBatched(table: String, rows: List<Map<String, Any?>>, cols: List<String>) {
-        val placeholders = cols.joinToString(",") { "?" }
-        val sql = "INSERT INTO $table (${cols.joinToString(",")}) VALUES ($placeholders)"
+    private fun insertBatched(table: String, rows: List<Map<String, Any?>>, cols: List<String>, primoRid: Long) {
+        val tutte = cols + Naming.RID_COLUMN
+        val placeholders = tutte.joinToString(",") { "?" }
+        val sql = "INSERT INTO $table (${tutte.joinToString(",")}) VALUES ($placeholders)"
 
+        var base = primoRid
         rows.chunked(batchSize).forEach { chunk ->
+            val inizio = base
             // BatchPreparedStatementSetter invece della variante con
             // List<Array<Any>>: quest'ultima non accetta valori nulli, e
             // TransformService ne produce legittimamente (le copie numeriche
@@ -145,10 +172,12 @@ class LoaderService(
                 override fun setValues(ps: PreparedStatement, i: Int) {
                     val row = chunk[i]
                     cols.forEachIndexed { idx, col -> ps.setObject(idx + 1, row[col]) }
+                    ps.setObject(cols.size + 1, inizio + i)
                 }
 
                 override fun getBatchSize(): Int = chunk.size
             })
+            base += chunk.size
         }
     }
 

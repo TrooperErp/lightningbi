@@ -1,117 +1,124 @@
 package com.lightningbi.lightning_engine.service
 
-import com.lightningbi.lightning_engine.model.AreaDimensione
 import com.lightningbi.lightning_engine.model.RuoloTabella
-import com.lightningbi.lightning_engine.repository.ImportedTableRepository
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.util.UUID
 
 /**
- * Costruisce la parte FROM/JOIN delle query su un dataset a schema a stella
- * e risolve il nome (qualificato) delle colonne: tabella Fatti (alias "f")
- * + una tabella per ogni Dimensione realmente usata dalla richiesta
- * (alias d0, d1, ...). Le Dimensioni non usate NON entrano nella query.
+ * Costruisce il FROM/JOIN di una query di aggregazione per UN Fatti del
+ * dataset. Le righe da contare sono già decise dalle selezioni (bitmap delle
+ * righe vive, GrafoDataset); i JOIN servono solo a leggere gli attributi dei
+ * campi di raggruppamento (alias f = il Fatti, d0, d1, ... = le altre tabelle).
  *
- * Classe condivisa da AggregateService e BitmapIndexBuilder, così la
- * logica dei JOIN vive in un posto solo.
+ * Per ogni campo di raggruppamento:
+ *  1. se il Fatti ha il campo, si usa la sua colonna (nessun JOIN);
+ *  2. altrimenti si cerca una tabella che lo contiene raggiungibile dal Fatti
+ *     lungo le associazioni, e si fa il JOIN lungo il percorso (anche a
+ *     cascata);
+ *  3. se non è raggiungibile il valore è 0, "non definito": è il caso di un
+ *     campo che il Fatti non può raggiungere (misura non collegata, §2).
  *
- * REGOLE DEL JOIN
- * - LEFT ANY JOIN: LEFT tiene le righe dei Fatti senza corrispondenza
- *   (chiave 0 = "non definito"), come oggi una dimensione nulla vale 0;
- *   ANY prende una sola riga della Dimensione per chiave, così una
- *   Dimensione con righe duplicate non moltiplica le somme dei Fatti.
- * - Condizione: chiave scelta nel wizard, PIÙ ogni altra colonna chiave
- *   della Dimensione (isChiave, es. CODICE_DITTA) che esiste anche sui
- *   Fatti come dimensione. Serve perché _KEYCLIENTE da sola non è
- *   univoca fra ditte diverse. Questo presuppone che il nome della
- *   dimensione sui Fatti coincida con il nome della colonna (stessa
- *   symbol table): lo garantisce il wizard.
+ * Non si attraversano altri Fatti: collegare due Fatti sullo stesso campo
+ * moltiplicherebbe le righe. Gli attributi di un altro Fatti sono "non definiti".
+ *
+ * LEFT ANY JOIN: LEFT tiene le righe senza corrispondenza (valore 0), ANY
+ * prende una sola riga per chiave, così una tabella con righe duplicate non
+ * moltiplica le somme.
+ *
+ * Il JOIN usa la stessa colonna fisica nelle due tabelle (gli id della stessa
+ * symbol table). Le associazioni tra colonne dal nome fisico diverso
+ * ("per valore") non sono ancora attraversabili (fase E5): il campo risulta
+ * non raggiungibile e se ne avvisa nel log.
  */
 @Service
-class StarQueryBuilder(
-    private val importedTableRepository: ImportedTableRepository
-) {
-    private val identificatoreFisico = Regex("^[a-z][a-z0-9_]*$")
+class StarQueryBuilder {
+    private val log = LoggerFactory.getLogger(StarQueryBuilder::class.java)
 
-    /**
-     * @param fromClause testo da mettere dopo FROM (Fatti + JOIN sulle Dimensioni usate)
-     */
     class Plan(
         val fromClause: String,
-        private val colonnePerDimensione: Map<UUID, String>,
-        private val aliasFatti: String
+        private val colonnePerDimensione: Map<UUID, String>
     ) {
-        /** Colonna della dimensione, qualificata (es. "d0.descrizione") nello schema a stella. */
-        fun dimColumn(dimensioneId: UUID): String? = colonnePerDimensione[dimensioneId]
+        /** Espressione SQL del campo di raggruppamento (qualificata, o la costante 0). */
+        fun dimColumn(dimensioneId: UUID): String = colonnePerDimensione.getValue(dimensioneId)
 
-        /** Colonna di una metrica: le metriche stanno sempre sui Fatti. */
-        fun metricColumn(colonna: String): String = "$aliasFatti.$colonna"
+        /** Colonna di una metrica: le metriche stanno sempre sul Fatti. */
+        fun metricColumn(colonna: String): String = "f.$colonna"
     }
 
-    /**
-     * @param dimensioniUsate dimensioni presenti in group by, colonne o selezioni
-     * @param dimensioni tutte le AreaDimensione dell'area
-     */
-    fun plan(
-        areaId: UUID,
-        dimensioniUsate: Set<UUID>,
-        dimensioni: List<AreaDimensione>
-    ): Plan {
-        val tabelle = importedTableRepository.findLinkedToArea(areaId)
-        val fatti = tabelle.singleOrNull { it.ruolo == RuoloTabella.FATTI }
-            ?: error("L'area $areaId deve avere esattamente una tabella Fatti importata")
-        val tabellePerId = tabelle.associateBy { it.id }
-        val aliasFatti = "f"
+    /** Un campo di raggruppamento: la dimensione, il nome del campo e la tabella proprietaria (se nota). */
+    data class DimensioneUsata(val dimensioneId: UUID, val campo: String, val tabellaProprietaria: UUID?)
 
-        val colonneFattiComeDimensione = dimensioni
-            .filter { it.importedTableId == null || it.importedTableId == fatti.id }
-            .map { it.colonnaFisica }
-            .toSet()
+    fun plan(modello: ModelloDataset, fatti: UUID, dimensioni: List<DimensioneUsata>): Plan {
+        val padre = alberoDa(modello, fatti)
+        val alias = mutableMapOf(fatti to "f")
+        val joins = mutableListOf<String>()
 
-        val usate = dimensioni.filter { it.dimensioneId in dimensioniUsate }
-        val idTabelleDimensione = usate
-            .mapNotNull { it.importedTableId }
-            .filter { it != fatti.id }
-            .distinct()
-        val aliasPerTabella = idTabelleDimensione.withIndex().associate { (i, id) -> id to "d$i" }
-
-        val joins = idTabelleDimensione.map { id ->
-            val t = tabellePerId[id] ?: error("Tabella importata $id non trovata per l'area $areaId")
-            val alias = aliasPerTabella.getValue(id)
-            val chiave = t.colonnaChiave?.let { Naming.column(it) }
-                ?: error("La tabella '${t.nomeLogico}' non ha una chiave di JOIN")
-
-            val chiaviExtra = importedTableRepository.findColumnsByTable(id)
-                .filter { it.isChiave }
-                .map { Naming.column(it.nome) }
-                .filter { it != chiave && it in colonneFattiComeDimensione }
-
-            val condizioni = (listOf(chiave) + chiaviExtra).map { col ->
-                fisico(col, "colonna di JOIN")
-                "$aliasFatti.$col = $alias.$col"
+        /** Alias della tabella, aggiungendo i JOIN lungo il percorso; null se non raggiungibile. */
+        fun raggiungi(tabella: UUID): String? {
+            alias[tabella]?.let { return it }
+            val (da, collegamento) = padre[tabella] ?: return null
+            val aliasDa = raggiungi(da) ?: return null
+            val condizioni = mutableListOf<String>()
+            val aliasA = "d${joins.size}"
+            for (campo in collegamento.campi) {
+                val colDa = modello.colonnaDi(da, campo)
+                val colA = modello.colonnaDi(tabella, campo)
+                if (colDa == null || colA == null || colDa != colA) {
+                    log.warn(
+                        "Dataset {}: il collegamento '{}' non è attraversabile (colonne diverse: '{}' e '{}'): " +
+                                "fase E5", modello.areaId, collegamento.nome, colDa, colA
+                    )
+                    return null
+                }
+                condizioni += "$aliasDa.${Naming.requirePhysical(colDa, "colonna")} = " +
+                        "$aliasA.${Naming.requirePhysical(colA, "colonna")}"
             }
-            "LEFT ANY JOIN ${fisico(t.tabellaFisica, "tabella")} AS $alias ON ${condizioni.joinToString(" AND ")}"
+            joins += "LEFT ANY JOIN ${modello.fisica(tabella)} AS $aliasA ON ${condizioni.joinToString(" AND ")}"
+            alias[tabella] = aliasA
+            return aliasA
         }
 
-        val colonne = usate.associate { ad ->
-            val alias = ad.importedTableId
-                ?.takeIf { it != fatti.id }
-                ?.let { aliasPerTabella.getValue(it) }
-                ?: aliasFatti
-            ad.dimensioneId to "$alias.${fisico(ad.colonnaFisica, "colonna")}"
+        val colonne = mutableMapOf<UUID, String>()
+        dimensioni.forEach { d ->
+            val propria = modello.colonnaDi(fatti, d.campo)
+            if (propria != null) {
+                colonne[d.dimensioneId] = "f.${Naming.requirePhysical(propria, "colonna")}"
+                return@forEach
+            }
+            val candidati = (listOfNotNull(d.tabellaProprietaria) + modello.grafo.tabelleCon(d.campo))
+                .distinct()
+                .filter { it != fatti }
+            var risolto: String? = null
+            for (t in candidati) {
+                val a = raggiungi(t) ?: continue
+                val col = modello.colonnaDi(t, d.campo) ?: continue
+                risolto = "$a.${Naming.requirePhysical(col, "colonna")}"
+                break
+            }
+            colonne[d.dimensioneId] = risolto ?: "toUInt32(0)"
         }
 
-        val from = (listOf("${fisico(fatti.tabellaFisica, "tabella")} AS $aliasFatti") + joins).joinToString(" ")
-        return Plan(from, colonne, aliasFatti)
+        val from = (listOf("${modello.fisica(fatti)} AS f") + joins).joinToString(" ")
+        return Plan(from, colonne)
     }
 
-    /**
-     * Verifica che l'identificatore sia sicuro da inserire in SQL. Non usa
-     * Naming.slug: i nomi delle tabelle importate contengono un doppio
-     * underscore (<motore>_<db>__<nome>) che slug() collasserebbe.
-     */
-    private fun fisico(valore: String, cosa: String): String {
-        require(identificatoreFisico.matches(valore)) { "Identificatore $cosa non valido: '$valore'" }
-        return valore
+    /** Per ogni tabella raggiungibile dal Fatti: da quale tabella e per quale collegamento. Non entra in altri Fatti. */
+    private fun alberoDa(modello: ModelloDataset, fatti: UUID): Map<UUID, Pair<UUID, Collegamento>> {
+        val ruoli = modello.bozza.occorrenze.associate { it.id to it.ruolo }
+        val padre = mutableMapOf<UUID, Pair<UUID, Collegamento>>()
+        val visti = mutableSetOf(fatti)
+        val coda = ArrayDeque<UUID>().apply { add(fatti) }
+        while (coda.isNotEmpty()) {
+            val t = coda.removeFirst()
+            modello.grafo.collegamenti.filter { t in it.occorrenze }.forEach { c ->
+                c.occorrenze.filter { it !in visti && ruoli[it] != RuoloTabella.FATTI }.forEach { u ->
+                    visti += u
+                    padre[u] = t to c
+                    coda.add(u)
+                }
+            }
+        }
+        return padre
     }
 }

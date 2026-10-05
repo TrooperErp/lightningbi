@@ -47,7 +47,8 @@ class TableImportService(
     private val registryRepository: RegistryRepository,
     private val connectionOrchestrator: ConnectionOrchestrator,
     private val symbolTableService: SymbolTableService,
-    private val adminGuard: AdminGuard
+    private val adminGuard: AdminGuard,
+    private val calendarioService: CalendarioService
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -151,9 +152,9 @@ class TableImportService(
             nomeOrigine = nomeOrigine
         )
         importedTableRepository.save(tabella)
-        importedTableRepository.saveColumns(
-            colonne.map { ImportedColumn(UUID.randomUUID(), tabella.id, it.nome, it.tipo, it.isChiave) }
-        )
+        val colonneTabella = colonne.map { ImportedColumn(UUID.randomUUID(), tabella.id, it.nome, it.tipo, it.isChiave) }
+        // Come i campi derivati di Qlik: per ogni colonna data, anno, mese, giorno... (calendario comune).
+        importedTableRepository.saveColumns(colonneTabella + colonneCalendario(tabella.id, colonneTabella))
         // Ogni tabella parte con la sua configurazione di sincronizzazione (completa).
         tableSyncRepository.save(TableSync(importedTableId = tabella.id))
         return tabella
@@ -193,5 +194,43 @@ class TableImportService(
             log.warn("Tabella importata '{}' eliminata dal registry ma la tabella ClickHouse '{}' non si è potuta eliminare: resta orfana",
                 tabella.nomeLogico, tabella.tabellaFisica, e)
         }
+    }
+    /**
+     * Le colonne derivate dal calendario per le colonne data di una tabella:
+     * una per ogni componente configurato (anno, mese, giorno...). Salta quelle
+     * che esistono già e quelle il cui nome fisico coinciderebbe con una colonna vera.
+     */
+    private fun colonneCalendario(tabellaId: UUID, colonne: List<ImportedColumn>): List<ImportedColumn> {
+        val fisiche = colonne.map { Naming.column(it.nome) }.toMutableSet()
+        val nuove = mutableListOf<ImportedColumn>()
+        colonne.filter { !it.derivata && calendarioService.isData(it.tipo) }.forEach { data ->
+            calendarioService.componenti().forEach { componente ->
+                val esiste = colonne.any { it.derivataDa == data.nome && it.componente == componente.codice }
+                if (esiste) return@forEach
+                val nome = calendarioService.nomeLogico(data.nome, componente)
+                if (!fisiche.add(Naming.column(nome))) {
+                    log.warn("Campo derivato '{}' non creato: esiste già una colonna con lo stesso nome fisico", nome)
+                    return@forEach
+                }
+                nuove += ImportedColumn(UUID.randomUUID(), tabellaId, nome, "calendario", false, data.nome, componente.codice)
+            }
+        }
+        return nuove
+    }
+
+    /**
+     * Aggiunge alla tabella le colonne derivate dalle date che mancano: tabelle
+     * importate prima del calendario, o componenti aggiunti in configurazione.
+     * La chiama la sincronizzazione (senza controllo admin: gira anche in un
+     * thread a parte e si limita ad aggiungere campi derivati).
+     *
+     * @return quante colonne ha aggiunto
+     */
+    @Transactional("postgresTransactionManager")
+    fun assicuraCalendario(importedTableId: UUID): Int {
+        val colonne = importedTableRepository.findColumnsByTable(importedTableId)
+        val nuove = colonneCalendario(importedTableId, colonne)
+        if (nuove.isNotEmpty()) importedTableRepository.saveColumns(nuove)
+        return nuove.size
     }
 }

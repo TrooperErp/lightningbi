@@ -65,5 +65,21 @@ data class ImportedColumn(
     val importedTableId: UUID,
     val nome: String,
     val tipo: String,
-    val isChiave: Boolean = false
-)
+    val isChiave: Boolean = false,
+    /**
+     * Se il campo è DERIVATO da una data (calendario, come i campi derivati di
+     * Qlik): nome della colonna data di origine. Una colonna derivata non esiste
+     * sulla sorgente: la calcola la sincronizzazione.
+     */
+    val derivataDa: String? = null,
+    /** Componente del calendario (anno, mese, giorno...); presente solo con [derivataDa]. */
+    val componente: String? = null
+) {
+    init {
+        require((derivataDa == null) == (componente == null)) {
+            "derivataDa e componente vanno insieme (colonna '$nome')"
+        }
+    }
+
+    val derivata: Boolean get() = derivataDa != null
+}

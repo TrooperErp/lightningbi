@@ -51,6 +51,13 @@ object Naming {
      */
     fun numericColumn(colonna: String): String = column(colonna) + "__n"
 
+    /**
+     * Numero di riga persistente delle tabelle importate (UInt32): identifica
+     * la riga nelle bitmap dell'indice associativo. Nome riservato: una colonna
+     * della sorgente con lo stesso nome non è ammessa.
+     */
+    const val RID_COLUMN = "lbi_rid"
+
     /** Verifica che un identificatore fisico sia sicuro da inserire in SQL (accetta il doppio underscore delle tabelle importate). */
     fun requirePhysical(value: String, what: String): String {
         require(valid.matches(value)) { "Identificatore $what non valido: '$value'" }

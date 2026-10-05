@@ -58,6 +58,13 @@ data class AggregateRequest(
      */
     val metricIds: List<UUID> = emptyList(),
 
+
+    /**
+     * Misure di un'analisi, già trasformate in metriche (MisuraAnalisi.comeMetrica). Si usano
+     * insieme a quelle del dataset: [metricIds] sceglie quali calcolare tra le une e le altre.
+     */
+    val misure: List<AreaMetrica> = emptyList(),
+
     /**
      * Ordinamento. Null = nessuno (comportamento storico, adatto alla grid).
      * Per un grafico va sempre valorizzato: una serie non ordinata è illeggibile.

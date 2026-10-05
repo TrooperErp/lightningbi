@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="032-pivot-misura" author="lightningbi">
+        <!-- Misure di una singola analisi: come in Qlik la misura si scrive nell'oggetto
+             (campo, aggregazione, nome) e non si crea al caricamento. Una misura sta in
+             pivotValues della vista insieme alle metriche del dataset: l'id può essere
+             di una lbi_area_metrica oppure di una di queste. -->
+        <createTable tableName="lbi_pivot_view_misura">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" primaryKeyName="pk_pivot_view_misura" nullable="false"/>
+            </column>
+            <column name="pivot_view_id" type="uuid">
+                <constraints nullable="false"
+                             foreignKeyName="fk_pivot_view_misura_view"
+                             references="pg_lbi_pivot_view(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="nome" type="varchar(200)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="tipo_aggregazione" type="varchar(30)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Occorrenza della tabella (Fatti) e colonna fisica; null solo per il conteggio di righe. -->
+            <column name="area_tabella_id" type="uuid">
+                <constraints nullable="true"
+                             foreignKeyName="fk_pivot_view_misura_tabella"
+                             references="lbi_area_imported_table(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="colonna_fisica" type="varchar(255)"/>
+            <column name="posizione" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <addUniqueConstraint tableName="lbi_pivot_view_misura" columnNames="pivot_view_id, nome"
+                             constraintName="uq_pivot_view_misura_nome"/>
+        <createIndex indexName="idx_pivot_view_misura_view" tableName="lbi_pivot_view_misura">
+            <column name="pivot_view_id"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

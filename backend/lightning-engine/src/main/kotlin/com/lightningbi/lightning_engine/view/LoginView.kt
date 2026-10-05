@@ -119,6 +119,6 @@ class LoginView(
             )
         )
 
-        ui.ifPresent { it.navigate(AssociativeExplorerView::class.java) }
+        ui.ifPresent { it.navigate(DatasetFiltriView::class.java) }
     }
 }

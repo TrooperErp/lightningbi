@@ -164,19 +164,11 @@ class ChartsView(
 
     private fun navigateToAssociative(targetAreaId: UUID?) {
         if (targetAreaId == null) {
-            ui.ifPresent { it.navigate(AssociativeExplorerView::class.java) }
+            ui.ifPresent { it.navigate(DatasetFiltriView::class.java) }
             return
         }
-        val currentUser = CurrentUserHolder.get()
-        if (currentUser != null && pivotViewId != null) {
-            // Rende attiva l'Analisi di partenza per l'utente PRIMA di
-            // navigare: AssociativeExplorerView.afterNavigation carica
-            // sempre l'ultima vista attiva per l'utente (ensureActiveView),
-            // quindi senza questo passaggio "Torna all'analisi" potrebbe
-            // riaprire un'Analisi diversa da quella da cui si è arrivati.
-            pivotViewService.setActiveView(currentUser.userId, targetAreaId, pivotViewId!!)
-        }
-        ui.ifPresent { it.navigate(AssociativeExplorerView::class.java, targetAreaId.toString()) }
+        val param = if (pivotViewId != null) "$targetAreaId,$pivotViewId" else targetAreaId.toString()
+        ui.ifPresent { it.navigate(AnalisiView::class.java, param) }
     }
 
     private fun buildContent(currentAreaId: UUID, areaNome: String): Component {

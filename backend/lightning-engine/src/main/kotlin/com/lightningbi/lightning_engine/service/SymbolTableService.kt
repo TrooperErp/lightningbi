@@ -93,10 +93,13 @@ class SymbolTableService(
         require(fuori.isEmpty()) {
             "Colonne di ordinamento non presenti tra le colonne id di $tabellaFisica: ${fuori.joinToString(", ")}"
         }
-
+        require(Naming.RID_COLUMN !in ids) {
+            "Il nome di colonna '${Naming.RID_COLUMN}' è riservato (tabella $tabellaFisica)"
+        }
         val defs = buildList {
             ids.forEach { add("$it UInt32") }
             numeriche.forEach { add("${Naming.numericColumn(it)} Nullable(Decimal(38, 6))") }
+            add("${Naming.RID_COLUMN} UInt32")
         }.joinToString(",\n                ")
 
         jdbcTemplate.execute(

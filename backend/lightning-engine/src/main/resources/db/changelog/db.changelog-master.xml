@@ -30,4 +30,6 @@
 <include file="db/changelog/028-table-sync-datastamp.xml"/>
 <include file="db/changelog/029-etl-run-table.xml"/>
 <include file="db/changelog/030-area-tabella.xml"/>
+<include file="db/changelog/031-calendario.xml"/>
+<include file="db/changelog/032-pivot-misura.xml"/>
 </databaseChangeLog>

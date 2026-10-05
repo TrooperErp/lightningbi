@@ -68,7 +68,11 @@ class SymbolLookupService(
      * non si riscrivono: se erano stati creati prima di value_number restano
      * senza numero.
      */
-    fun getOrCreateIds(colonna: String, values: Set<String>): Map<String, Long> {
+    fun getOrCreateIds(
+        colonna: String,
+        values: Set<String>,
+        numeri: Map<String, BigDecimal> = emptyMap()
+    ): Map<String, Long> {
         if (values.isEmpty()) return emptyMap()
         val table = Naming.symbolTable(colonna)
 
@@ -103,7 +107,7 @@ class SymbolLookupService(
             // Due inserimenti distinti, senza legare mai un null: i valori
             // numerici portano anche value_number, gli altri solo il testo.
             val (numerici, testuali) = newRows
-                .map { (valore, id) -> Triple(valore, id, toNumero(valore)) }
+                .map { (valore, id) -> Triple(valore, id, numeri[valore] ?: toNumero(valore)) }
                 .partition { it.third != null }
             numerici.chunked(chunkSize).forEach { chunk ->
                 jdbcTemplate.batchUpdate(

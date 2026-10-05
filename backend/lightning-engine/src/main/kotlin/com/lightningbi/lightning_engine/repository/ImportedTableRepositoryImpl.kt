@@ -59,7 +59,10 @@ class ImportedTableRepositoryImpl(
                     UUID.fromString(rs.getString("imported_table_id")),
                     rs.getString("nome"),
                     rs.getString("tipo"),
-                    rs.getBoolean("is_chiave")
+                    rs.getBoolean("is_chiave"),
+                    rs.getString("derivata_da"),
+                    rs.getString("componente")
+
                 )
             },
             importedTableId
@@ -69,8 +72,8 @@ class ImportedTableRepositoryImpl(
         if (columns.isEmpty()) return
         jdbcTemplate.batchUpdate(
             """INSERT INTO lbi_imported_column
-               (id, imported_table_id, nome, tipo, is_chiave)
-               VALUES (?, ?, ?, ?, ?)""",
+               (id, imported_table_id, nome, tipo, is_chiave, derivata_da, componente)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             columns,
             columns.size
         ) { ps, c ->
@@ -79,6 +82,8 @@ class ImportedTableRepositoryImpl(
             ps.setString(3, c.nome)
             ps.setString(4, c.tipo)
             ps.setBoolean(5, c.isChiave)
+            ps.setString(6, c.derivataDa)
+            ps.setString(7, c.componente)
         }
     }
 

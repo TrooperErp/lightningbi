@@ -1,108 +1,137 @@
 package com.lightningbi.lightning_engine.service
 
-import com.lightningbi.lightning_engine.repository.RegistryRepository
+import com.lightningbi.lightning_engine.repository.ImportedTableRepository
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import java.util.UUID
 
 /**
- * Ricostruisce l'indice bitmap associativo (ch_lbi_assoc_bitmap) di
- * un'Area, leggendo per intero la sua tabella fatti.
+ * Ricostruisce l'indice bitmap associativo (ch_lbi_idx) di un dataset.
  *
- * Una sola scansione della tabella fatti: ogni riga riceve un numero
- * (rowNumberInAllBlocks, unico all'interno della query) e viene
- * "esplosa" in una coppia (dimensione, valore) per ogni dimensione
- * dell'area. Raggruppando per (dimensione, valore) si ottiene la bitmap
- * dei numeri di riga in cui quel valore compare. Siccome il numero di
- * riga è calcolato una volta sola per riga sorgente, prima dell'ARRAY
- * JOIN, è coerente tra tutte le bitmap della stessa ricostruzione -
- * che è l'unica cosa che serve: tra una ricostruzione e l'altra la
- * numerazione può cambiare, perché l'indice viene sempre rifatto da zero.
+ * Come in Qlik le tabelle restano SEPARATE: nessun JOIN. Per ogni tabella
+ * (occorrenza) del dataset si fa una sola scansione della sua tabella
+ * importata, "esplodendo" ogni riga in una coppia (campo, valore) per ogni
+ * campo indicizzato; raggruppando per (campo, valore) si ottiene la bitmap
+ * dei numeri di riga PERSISTENTI (lbi_rid, assegnati al caricamento) in cui
+ * il valore compare in quella tabella.
  *
- * Scrive in ch_lbi_assoc_bitmap_staging e poi sostituisce la partizione
- * dell'area nella tabella principale con REPLACE PARTITION (atomico):
- * chi interroga l'indice durante la ricostruzione vede sempre la
- * versione precedente completa, mai una a metà.
+ * Campi indicizzati: quelli usati come dimensione (filtri) e quelli di
+ * associazione, cioè condivisi da più tabelle (la propagazione delle
+ * selezioni passa da lì anche se non sono dimensioni). Una tabella Dimensione
+ * ha già tutti i suoi valori, anche quelli senza righe nei Fatti.
  *
- * Va chiamato DOPO il load dei fatti e PRIMA del bump della dataVersion
- * (EtlCompletionService.completeSuccess): così una versione dati nuova
- * esiste solo quando l'indice è già allineato, e la cache degli stati
- * non può associare dati nuovi a un indice vecchio.
+ * Il nome del campo nell'indice è il nome del campo nel dataset (dopo
+ * rinomine e qualifiche), non quello della colonna.
  *
- * I valori NULL delle dimensioni diventano 0 (come rs.getLong sugli
- * altri percorsi di lettura).
+ * Scrive in ch_lbi_idx_staging e poi sostituisce la partizione del dataset
+ * con REPLACE PARTITION (atomico): chi interroga durante la ricostruzione
+ * vede sempre la versione precedente completa.
  *
- * SCHEMA A STELLA: la scansione parte dai Fatti con il JOIN sulle tabelle
- * Dimensione (StarQueryBuilder), fatto UNA volta sola qui. Il numero di
- * riga è quello delle righe dei Fatti, e gli attributi delle Dimensioni
- * vengono "esplosi" come quelli dei Fatti: dopo la ricostruzione il calcolo
- * degli stati non fa più nessun JOIN.
+ * Va chiamato DOPO la sincronizzazione delle tabelle e PRIMA del bump della
+ * dataVersion (EtlCompletionService): una versione dati nuova esiste solo
+ * quando l'indice è già allineato.
  *
- * Costo: righe dei Fatti x numero di dimensioni. Le colonne messe su
- * "Ignora" nel wizard non pesano.
+ * Limite noto (fase E5): le associazioni "per valore", cioè tra colonne dal
+ * nome fisico diverso, non unificano ancora gli id. Se ne avvisa nel log.
+ *
+ * Le dimensioni salvate prima della migrazione 030, senza occorrenza, non
+ * sono indicizzate: il dataset va salvato di nuovo.
+ *
+ * Costo: righe di ogni tabella x numero dei suoi campi indicizzati.
  */
 @Service
 class BitmapIndexBuilder(
     private val jdbcTemplate: JdbcTemplate,
-    private val registryRepository: RegistryRepository,
-    private val starQueryBuilder: StarQueryBuilder
+    private val datasetService: DatasetService,
+    private val importedTableRepository: ImportedTableRepository,
+    private val symbolTableService: SymbolTableService
 ) {
     private val log = LoggerFactory.getLogger(BitmapIndexBuilder::class.java)
 
-    private val mainTable = "ch_lbi_assoc_bitmap"
-    private val stagingTable = "ch_lbi_assoc_bitmap_staging"
+    private val mainTable = "ch_lbi_idx"
+    private val stagingTable = "ch_lbi_idx_staging"
 
     fun rebuild(areaId: UUID) {
         val start = System.currentTimeMillis()
 
-        registryRepository.findAreaById(areaId) ?: error("Area $areaId non trovata")
-        val dimensioni = registryRepository.findDimensioniByArea(areaId)
-        // Il FROM è Fatti + JOIN sulle Dimensioni (nomi già validati dal
-        // builder: i nomi <motore>_<db>__<nome> non passano da Naming.slug).
-        val plan = starQueryBuilder.plan(areaId, dimensioni.map { it.dimensioneId }.toSet(), dimensioni)
-        val table = plan.fromClause
+        val bozza = datasetService.carica(areaId) ?: error("Dataset $areaId non trovato")
 
         // L'UUID in forma stringa è sicuro da interpolare (formato fisso,
         // solo esadecimali e trattini): serve come letterale perché i
         // nomi di partizione in ALTER TABLE non accettano parametri "?".
         val partition = areaId.toString()
 
-        // Pulizia di eventuali residui di una ricostruzione precedente
-        // interrotta a metà.
+        // Pulizia di eventuali residui di una ricostruzione interrotta a metà.
         jdbcTemplate.execute("ALTER TABLE $stagingTable DROP PARTITION '$partition'")
 
-        if (dimensioni.isEmpty()) {
-            jdbcTemplate.execute("ALTER TABLE $mainTable DROP PARTITION '$partition'")
-            log.info("Indice bitmap area {}: nessuna dimensione, indice svuotato", areaId)
-            return
-        }
+        val campi = bozza.campi().filter { !it.escluso }
+        val nomiDimensione = campi
+            .filter { RiferimentoCampo(it.occorrenzaId, it.colonna) in bozza.dimensioni }
+            .map { it.nomeCampo }
+            .toSet()
+        val associazioni = bozza.associazioni()
 
-        val coppie = dimensioni.joinToString(", ") { d ->
-            requireIdentifier(d.colonnaFisica, "column")
-            val col = plan.dimColumn(d.dimensioneId) ?: error("Colonna non risolta per la dimensione ${d.dimensioneId}")
-            "('${d.dimensioneId}', toInt64(ifNull($col, 0)))"
-        }
+        val indicizzati = nomiDimensione + associazioni.map { it.nomeCampo }
+        val composte = bozza.chiaviComposte()
 
-        val insertSql = """
-            INSERT INTO $stagingTable (area_id, dimensione_id, valore_id, righe)
-            SELECT
-                toUUID('$partition'),
-                toUUID(coppia.1),
-                coppia.2,
-                groupBitmapState(toUInt32(rid))
-            FROM
-            (
-                SELECT
-                    rowNumberInAllBlocks() AS rid,
-                    [$coppie] AS coppie
-                FROM $table
+        associazioni.filter { it.perValore }.forEach {
+            log.warn(
+                "Dataset {}: il campo '{}' associa colonne con nomi fisici diversi; " +
+                        "gli id non sono ancora unificati (fase E5)", areaId, it.nomeCampo
             )
-            ARRAY JOIN coppie AS coppia
-            GROUP BY coppia.1, coppia.2
-        """.trimIndent()
+        }
 
-        jdbcTemplate.execute(insertSql)
+        var campiIndicizzati = 0
+        bozza.occorrenze.forEach { occ ->
+            val suoi = campi.filter { it.occorrenzaId == occ.id && it.nomeCampo in indicizzati }
+            if (suoi.isEmpty()) return@forEach
+
+            val tabella = importedTableRepository.findById(occ.importedTableId)
+                ?: error("Tabella importata ${occ.importedTableId} non trovata")
+            val fisica = Naming.requirePhysical(tabella.tabellaFisica, "tabella")
+            check(Naming.RID_COLUMN in symbolTableService.colonneDi(fisica)) {
+                "La tabella '${tabella.nomeLogico}' non ha i numeri di riga: serve un \"Ricarico completo\""
+            }
+
+            val voci = suoi.map { c ->
+                val nome = Naming.requirePhysical(c.nomeCampo, "campo")
+                val colonna = Naming.requirePhysical(c.colonna, "colonna")
+                "('$nome', toUInt64($colonna))"
+            }.toMutableList()
+            // Chiavi composte che passano da questa tabella: voce con l'hash a 64 bit
+            // della combinazione degli id (stesso ordine dei campi in tutte le tabelle).
+            composte.filter { occ.id in it.occorrenze }.forEach { chiave ->
+                val colonne = chiave.campi.map { nomeCampo ->
+                    Naming.requirePhysical(suoi.first { it.nomeCampo == nomeCampo }.colonna, "colonna")
+                }
+                val nome = Naming.requirePhysical(chiave.nome, "campo")
+                voci += "('$nome', cityHash64(${colonne.joinToString(", ")}))"
+            }
+            val coppie = voci.joinToString(", ")
+
+            jdbcTemplate.execute(
+                """
+                INSERT INTO $stagingTable (area_id, tabella_id, campo, valore_id, righe)
+                SELECT
+                    toUUID('$partition'),
+                    toUUID('${occ.id}'),
+                    coppia.1,
+                    coppia.2,
+                    groupBitmapState(rid)
+                FROM
+                (
+                    SELECT
+                        ${Naming.RID_COLUMN} AS rid,
+                        [$coppie] AS coppie
+                    FROM $fisica
+                )
+                ARRAY JOIN coppie AS coppia
+                GROUP BY coppia.1, coppia.2
+                """.trimIndent()
+            )
+            campiIndicizzati += suoi.size
+        }
 
         val righeIndice = jdbcTemplate.queryForObject(
             "SELECT count() FROM $stagingTable WHERE area_id = toUUID('$partition')",
@@ -110,8 +139,7 @@ class BitmapIndexBuilder(
         ) ?: 0L
 
         if (righeIndice == 0L) {
-            // Tabella fatti vuota: nessuna partizione in staging da usare
-            // per REPLACE, si svuota direttamente l'indice principale.
+            // Niente da indicizzare (nessun campo o tabelle vuote): l'indice del dataset si svuota.
             jdbcTemplate.execute("ALTER TABLE $mainTable DROP PARTITION '$partition'")
         } else {
             jdbcTemplate.execute("ALTER TABLE $mainTable REPLACE PARTITION '$partition' FROM $stagingTable")
@@ -119,17 +147,8 @@ class BitmapIndexBuilder(
         }
 
         log.info(
-            "Indice bitmap area {} ricostruito: {} dimensioni, {} valori indicizzati, {} ms",
-            areaId, dimensioni.size, righeIndice, System.currentTimeMillis() - start
+            "Indice del dataset {} ricostruito: {} tabelle, {} campi indicizzati, {} valori, {} ms",
+            areaId, bozza.occorrenze.size, campiIndicizzati, righeIndice, System.currentTimeMillis() - start
         )
-    }
-
-    /** Stessa difesa anti-injection usata in AggregateService. */
-    private fun requireIdentifier(value: String, what: String): String {
-        val normalized = Naming.slug(value)
-        require(normalized == value) {
-            "Identificatore $what non normalizzato nel registry: '$value' (atteso '$normalized')."
-        }
-        return value
     }
 }

@@ -5,7 +5,13 @@ import java.util.UUID
 data class Area(
     val id: UUID,
     val nome: String,
-    val tabellaFisica: String
+    val tabellaFisica: String,
+    /**
+     * Campo data del calendario del dataset (nome del campo): i suoi derivati
+     * Anno, Mese, Giorno compaiono nella barra in cima alla pagina dei filtri.
+     * Null finché l'admin non lo sceglie in Modello dati.
+     */
+    val campoCalendario: String? = null
 )
 
 data class Dimensione(

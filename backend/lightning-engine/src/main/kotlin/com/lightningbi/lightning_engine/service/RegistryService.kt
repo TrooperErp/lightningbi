@@ -13,7 +13,8 @@ class RegistryService(
     private val registryRepository: RegistryRepository,
     private val areaSourceRepository: AreaSourceRepository,
     private val importedTableRepository: ImportedTableRepository,
-    private val symbolTableService: SymbolTableService
+    private val symbolTableService: SymbolTableService,
+    private val indiceAssociativoService: IndiceAssociativoService
 ) {
     fun getArea(nome: String) = registryRepository.findAreaByNome(nome)
     fun getDimensioniArea(areaId: UUID) = registryRepository.findDimensioniByArea(areaId)
@@ -116,6 +117,7 @@ class RegistryService(
     fun deleteMetrica(metricaId: UUID) {
         registryRepository.deleteAreaMetrica(metricaId)
         registryRepository.bumpVersion()
+
     }
 
     /**
@@ -141,9 +143,10 @@ class RegistryService(
      *     tabella ClickHouse sparita mentre il registry pensa ancora che
      *     esista.
      *
-     * Tabelle ClickHouse eliminate: la tabella fatti dell'area
-     * (Area.tabellaFisica, per i dataset legacy a view singola) e la
-     * tabella fisica di ogni ImportedTable (dataset a schema a stella).
+     * Tabelle ClickHouse eliminate: solo quelle create insieme a questo dataset
+     * (vecchio wizard). Le tabelle importate dalla pagina Tabelle importate
+     * sono indipendenti e non si toccano mai; si elimina invece l'indice del
+     * dataset.
      */
     @Transactional("postgresTransactionManager")
     fun deleteAreaCompleta(areaId: UUID) {
@@ -151,10 +154,9 @@ class RegistryService(
 
         // Da leggere PRIMA di cancellare le righe: dopo non c'è più modo di
         // sapere quali tabelle ClickHouse appartenevano all'area.
-        val tabelleFisiche = (
-                listOf(area.tabellaFisica) +
-                        importedTableRepository.findByArea(areaId).map { it.tabellaFisica }
-                ).distinct()
+        // Solo le tabelle create con QUESTO dataset (area_id valorizzato). Area.tabellaFisica
+        // è la tabella di un Fatti condiviso con altri dataset: non si elimina mai da qui.
+        val tabelleFisiche = importedTableRepository.findByArea(areaId).map { it.tabellaFisica }.distinct()
 
         registryRepository.deleteAreaMetricheByArea(areaId)
         registryRepository.deleteAreaDimensioniByArea(areaId)
@@ -163,6 +165,7 @@ class RegistryService(
         areaSourceRepository.findByArea(areaId).forEach { areaSourceRepository.delete(it.id) }
         registryRepository.deleteArea(areaId)
         registryRepository.bumpVersion()
+        indiceAssociativoService.elimina(areaId)
 
         val nonEliminate = mutableListOf<String>()
         var primoErrore: Exception? = null

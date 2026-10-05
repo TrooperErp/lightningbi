@@ -20,6 +20,7 @@ import java.security.MessageDigest
 import java.time.Duration
 import java.util.HexFormat
 import java.util.UUID
+import org.springframework.jdbc.core.RowMapper
 
 @Service
 class AggregateService(
@@ -29,12 +30,16 @@ class AggregateService(
     private val redisTemplate: StringRedisTemplate,
     private val objectMapper: ObjectMapper,
     private val symbolLookupService: SymbolLookupService,
-    private val starQueryBuilder: StarQueryBuilder
+    private val starQueryBuilder: StarQueryBuilder,
+    private val modelloDatasetCache: ModelloDatasetCache
 ) {
+
     private val log = LoggerFactory.getLogger(AggregateService::class.java)
     private val cacheTtl = Duration.ofHours(6)
     private val rowLimit = 10_000
     private val maxColonnePivot = 50
+    /** Righe massime per Fatti quando i risultati di più Fatti si uniscono in memoria. */
+    private val maxRigheUnione = 100_000
 
     fun getAggregates(req: AggregateRequest): AggregateResult =
         getAggregates(req, versionService.snapshotVersions(req.areaId))
@@ -43,7 +48,7 @@ class AggregateService(
         registryRepository.findAreaById(req.areaId) ?: error("Area not found: ${req.areaId}")
         val dims = registryRepository.findDimensioniByArea(req.areaId)
         val dimById = dims.associateBy { it.dimensioneId }
-        val tutteMetriche = registryRepository.findMetricheByArea(req.areaId)
+        val tutteMetriche = registryRepository.findMetricheByArea(req.areaId) + req.misure
 
         val validDimIds = dims.map { it.dimensioneId }.toSet()
         val cleanSelections = req.selections
@@ -84,7 +89,8 @@ class AggregateService(
             metriche = metriche,
             order = if (cleanColumnBy.isEmpty()) req.order else null,
             orderMetrica = orderMetrica,
-            limit = if (cleanColumnBy.isEmpty()) effectiveLimit else rowLimit
+            limit = if (cleanColumnBy.isEmpty()) effectiveLimit else rowLimit,
+            registryVersion = versions.registryVersion
         )
 
         var result = if (cleanColumnBy.isEmpty()) {
@@ -111,11 +117,12 @@ class AggregateService(
         areaId: UUID,
         result: AggregateResult,
         groupBy: List<UUID>,
-        metricIds: List<UUID>
+        metricIds: List<UUID>,
+        misure: List<AreaMetrica> = emptyList()
     ): List<PivotEngine.PivotNode> {
         if (groupBy.isEmpty() || result.rows.isEmpty()) return emptyList()
 
-        val tutteMetriche = registryRepository.findMetricheByArea(areaId)
+        val tutteMetriche = registryRepository.findMetricheByArea(areaId) + misure
         val metriche = if (metricIds.isEmpty()) tutteMetriche
         else tutteMetriche.filter { it.id in metricIds.toSet() }
 
@@ -146,16 +153,11 @@ class AggregateService(
         metriche: List<AreaMetrica>,
         order: AggregateOrder?,
         orderMetrica: AreaMetrica?,
-        limit: Int
+        limit: Int,
+        registryVersion: Long
     ): AggregateResult {
-        // Dimensioni realmente usate dalla richiesta: solo le loro tabelle
-        // entrano nel JOIN (schema a stella).
+        val modello = modelloDatasetCache.get(areaId, registryVersion)
         val allGroupDims = groupBy + columnBy
-        val dimsUsate = allGroupDims.toSet() + selections.filterValues { it.isNotEmpty() }.keys
-        val plan = starQueryBuilder.plan(areaId, dimsUsate, dimById.values.toList())
-        // Il nome tabella è già validato dal builder (i nomi
-        // <motore>_<db>__<nome> non passano da Naming.slug).
-        val t = plan.fromClause
 
         metriche.forEach { m ->
             require(m.colonnaFisica != null || m.tipoAggregazione == TipoAggregazione.COUNT) {
@@ -163,42 +165,100 @@ class AggregateService(
             }
             m.colonnaFisica?.let { requireIdentifier(it, "metric column") }
         }
-
         allGroupDims.mapNotNull { dimById[it]?.colonnaFisica }.forEach { requireIdentifier(it, "group column") }
-        val groupCols = allGroupDims.mapNotNull { plan.dimColumn(it) }
 
-        // Le colonne sono qualificate (d0.x, f.y): si danno alias espliciti
-        // per leggerle per nome dal risultato.
+        // Nome del campo di ogni dimensione, come sta nell'indice.
+        val nomi = registryRepository.findDimensioniByIds((allGroupDims + selections.keys).distinct())
+            .associate { it.id to Naming.column(it.nome) }
+        val selezioniPerCampo = selections.mapNotNull { (dimId, valori) ->
+            nomi[dimId]?.takeIf { modello.grafo.tabelleCon(it).isNotEmpty() }?.let { it to valori }
+        }.toMap()
+
+        // Ogni metrica si calcola sul PROPRIO Fatti; i risultati dei vari Fatti
+        // si affiancano sulle dimensioni in comune, senza mai sommare righe di Fatti diversi.
+        val perFatti = metriche.groupBy { m ->
+            m.areaTabellaId ?: error("La metrica '${m.nome}' non ha una tabella Fatti: salva di nuovo il dataset")
+        }
+        val unico = perFatti.size == 1
+        val tetto = if (unico) limit else maxRigheUnione
+
+        var troncato = false
+        val parziali = perFatti.map { (fattiId, metricheFatti) ->
+            val righe = aggregaFatti(
+                modello, fattiId, metricheFatti, allGroupDims, dimById, nomi, selezioniPerCampo,
+                if (unico) order else null, if (unico) orderMetrica else null, tetto
+            )
+            if (righe.size > tetto) troncato = true
+            righe.take(tetto)
+        }
+        if (unico) return AggregateResult(parziali.first(), troncato)
+
+        // Più Fatti: unione sulle chiavi di raggruppamento. Una metrica senza riga per
+        // quella chiave vale 0 ("non definito").
+        val unite = LinkedHashMap<Map<UUID, Long>, MutableMap<String, BigDecimal>>()
+        parziali.forEach { righe ->
+            righe.forEach { r -> unite.getOrPut(r.groupKeys) { mutableMapOf() }.putAll(r.values) }
+        }
+        var righe = unite.map { (chiavi, valori) ->
+            AggregateRow(chiavi, metriche.associate { m -> m.nome to (valori[m.nome] ?: BigDecimal.ZERO) })
+        }
+        if (orderMetrica != null) {
+            righe = when (order) {
+                AggregateOrder.METRIC_DESC -> righe.sortedByDescending { it.values[orderMetrica.nome] ?: BigDecimal.ZERO }
+                AggregateOrder.METRIC_ASC -> righe.sortedBy { it.values[orderMetrica.nome] ?: BigDecimal.ZERO }
+                else -> righe
+            }
+        }
+        return AggregateResult(righe.take(limit), troncato || righe.size > limit)
+    }
+
+    /** Aggrega le metriche di UN Fatti sulle sue righe vive; restituisce fino a limit + 1 righe. */
+    private fun aggregaFatti(
+        modello: ModelloDataset,
+        fattiId: UUID,
+        metriche: List<AreaMetrica>,
+        allGroupDims: List<UUID>,
+        dimById: Map<UUID, AreaDimensione>,
+        nomi: Map<UUID, String>,
+        selezioniPerCampo: Map<String, Set<Long>>,
+        order: AggregateOrder?,
+        orderMetrica: AreaMetrica?,
+        limit: Int
+    ): List<AggregateRow> {
+        val usate = allGroupDims.map { dimId ->
+            StarQueryBuilder.DimensioneUsata(
+                dimId, nomi[dimId] ?: error("Dimensione $dimId senza nome"), dimById[dimId]?.areaTabellaId
+            )
+        }
+        val plan = starQueryBuilder.plan(modello, fattiId, usate)
+
+        val groupCols = allGroupDims.map { plan.dimColumn(it) }
         val groupAliases = groupCols.indices.map { "g_$it" }
         val groupSelect = groupCols.mapIndexed { i, c -> "$c AS g_$i" }
 
-        val (where, args) = buildWhere(selections, dimById, plan)
+        // Righe del Fatti compatibili con le selezioni (propagate lungo il grafo).
+        val viva = modello.grafo.righeVive(fattiId, selezioniPerCampo)
+        val whereClause = if (viva == null) "" else "WHERE bitmapContains($viva, f.${Naming.RID_COLUMN})"
 
         val metricAliases = metriche.mapIndexed { i, m -> m to "m_$i" }
         val selectCols = groupSelect +
                 metricAliases.map { (m, alias) -> "${sqlExpression(m, plan)} AS $alias" }
-
-        val groupClause = if (groupCols.isEmpty()) "" else "GROUP BY ${groupCols.joinToString(",")}"
-        val whereClause = if (where.isEmpty()) "" else "WHERE $where"
-
+        val groupClause = if (groupAliases.isEmpty()) "" else "GROUP BY ${groupAliases.joinToString(",")}"
         val orderClause = when (order) {
             AggregateOrder.METRIC_DESC -> "ORDER BY ${aliasOf(metricAliases, orderMetrica)} DESC"
             AggregateOrder.METRIC_ASC -> "ORDER BY ${aliasOf(metricAliases, orderMetrica)} ASC"
             else -> ""
         }
 
-        val sql = "SELECT ${selectCols.joinToString(",")} FROM $t $whereClause $groupClause $orderClause LIMIT ${limit + 1}"
+        val sql = "SELECT ${selectCols.joinToString(",")} FROM ${plan.fromClause} $whereClause $groupClause $orderClause LIMIT ${limit + 1}"
 
-        val rawRows = jdbcTemplate.query(sql, { rs, _ ->
+        return jdbcTemplate.query(sql, RowMapper<AggregateRow> { rs, _ ->
             val groupKeys = allGroupDims.zip(groupAliases).associate { (dimId, col) -> dimId to rs.getLong(col) }
             val values = metricAliases.associate { (m, alias) ->
                 m.nome to (rs.getBigDecimal(alias) ?: BigDecimal.ZERO)
             }
             AggregateRow(groupKeys, values)
-        }, *args.toTypedArray())
-
-        val truncated = rawRows.size > limit
-        return AggregateResult(if (truncated) rawRows.take(limit) else rawRows, truncated)
+        })
     }
 
     private fun pivotByColumns(
@@ -386,25 +446,7 @@ class AggregateService(
         return AggregateResult(result.rows.sortedWith(comparator), result.truncated)
     }
 
-    private fun buildWhere(
-        selections: Map<UUID, Set<Long>>,
-        dimById: Map<UUID, AreaDimensione>,
-        plan: StarQueryBuilder.Plan
-    ): Pair<String, List<Any>> {
-        val whereClauses = mutableListOf<String>()
-        val args = mutableListOf<Any>()
 
-        selections.forEach { (dimId, values) ->
-            if (values.isEmpty()) return@forEach
-            val grezza = dimById[dimId]?.colonnaFisica ?: return@forEach
-            requireIdentifier(grezza, "column")
-            val col = plan.dimColumn(dimId) ?: return@forEach
-            whereClauses += "$col IN (${values.joinToString(",") { "?" }})"
-            args.addAll(values)
-        }
-
-        return whereClauses.joinToString(" AND ") to args
-    }
 
     private fun requireIdentifier(value: String, what: String): String {
         val normalized = Naming.slug(value)
@@ -428,7 +470,10 @@ class AggregateService(
             .joinToString(";") { (dimId, values) -> "$dimId=${values.sorted().joinToString(",")}" }
         val canonicalGroupBy = groupBy.joinToString(",")
         val canonicalColumnBy = columnBy.joinToString(",")
-        val canonicalMetrics = metriche.map { it.id.toString() }.sorted().joinToString(",")
+        // Per le misure di un'analisi conta la definizione, non solo l'id: se si cambia campo o aggregazione l'id resta.
+        val canonicalMetrics = metriche
+            .map { "${it.id}:${it.tipoAggregazione}:${it.colonnaFisica}:${it.areaTabellaId}" }
+            .sorted().joinToString(",")
 
         val raw = buildString {
             append(req.areaId); append('|')

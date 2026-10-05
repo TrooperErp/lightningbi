@@ -16,6 +16,7 @@ import com.lightningbi.lightning_engine.service.EmailService
 import com.lightningbi.lightning_engine.service.Naming
 import com.lightningbi.lightning_engine.service.SymbolLookupService
 import com.lightningbi.lightning_engine.service.SymbolTableService
+import com.lightningbi.lightning_engine.service.TableImportService
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.redis.core.StringRedisTemplate
@@ -66,6 +67,7 @@ class TableSyncRunner(
     private val symbolLookupService: SymbolLookupService,
     private val redisTemplate: StringRedisTemplate,
     private val emailService: EmailService,
+    private val tableImportService: TableImportService,
     /** Massimo di unità restituite da una query di chiavi. Superato = errore bloccante. */
     @Value("\${lbi.sync.keys-max-rows:200000}") private val keysMaxRows: Int,
     @Value("\${lbi.sync.keys-timeout-seconds:600}") private val keysTimeoutSeconds: Int,
@@ -194,6 +196,10 @@ class TableSyncRunner(
             ?: throw IllegalStateException("La tabella '${tabella.nomeLogico}' non ha il nome di origine")
         val schema = tabella.schemaOrigine
 
+        // Calendario: per le colonne data di tabelle importate prima di questo passo (o con
+        // componenti nuovi in configurazione) crea i campi derivati mancanti.
+        tableImportService.assicuraCalendario(tabella.id)
+
         val colonne = importedTableRepository.findColumnsByTable(tabella.id)
         require(colonne.isNotEmpty()) { "La tabella '${tabella.nomeLogico}' non ha colonne importate" }
         val config = tableSyncRepository.findByTable(tabella.id) ?: TableSync(importedTableId = tabella.id)
@@ -219,7 +225,7 @@ class TableSyncRunner(
         val completa = forzaCompleta ||
                 config.modalita == ModalitaSync.COMPLETA ||
                 config.ultimaSyncInizio == null ||
-                symbolTableService.colonneDi(tabella.tabellaFisica) != colonneCaricate.toSet()
+                symbolTableService.colonneDi(tabella.tabellaFisica) != (colonneCaricate + Naming.RID_COLUMN).toSet()
 
         val esito = if (completa) {
             sincronizzaCompleta(tabella, colonne, numeriche, ordinamento, colonneCaricate, connectionId, schema, nomeOrigine, progresso, rinnova)
@@ -247,7 +253,8 @@ class TableSyncRunner(
             log.warn("Impossibile leggere le colonne della sorgente per '{}': proseguo", tabella.nomeLogico, e)
             return
         }
-        val mancanti = colonne.map { it.nome }.filter { it.lowercase() !in reali }
+        // I campi derivati (calendario) non esistono sulla sorgente: li calcola la sincronizzazione.
+        val mancanti = colonne.filter { !it.derivata }.map { it.nome }.filter { it.lowercase() !in reali }
         check(mancanti.isEmpty()) {
             "Nella sorgente non ci sono più le colonne importate di '${tabella.nomeLogico}': ${mancanti.joinToString(", ")}. " +
                     "La sincronizzazione è bloccata per evitare un fallimento a metà."
@@ -278,6 +285,7 @@ class TableSyncRunner(
             colonneOrdinamento = ordinamento
         )
 
+        var prossimoRid = 0L
         var caricate = 0L
         var scartate = 0L
         connectionOrchestrator.extract(connectionId, schema, nomeOrigine) { righe ->
@@ -286,7 +294,7 @@ class TableSyncRunner(
                 val (valide, errori) = transformService.transform(
                     blocco, colonne, chiaveObbligatoria = tabella.ruolo == RuoloTabella.DIMENSIONE
                 )
-                loaderService.load(tabella.tabellaFisica, valide, colonneCaricate)
+                prossimoRid = loaderService.load(tabella.tabellaFisica, valide, colonneCaricate, prossimoRid)
                 caricate += valide.size
                 scartate += errori.size
                 progresso("${tabella.nomeLogico}: $caricate righe caricate")
@@ -363,6 +371,7 @@ class TableSyncRunner(
         if (daRileggere.isNotEmpty()) {
             progresso("${tabella.nomeLogico}: sostituisco ${daRileggere.size} unità")
             rinnova()
+            var prossimoRid = loaderService.prossimoRid(tabella.tabellaFisica)
             val esistenti = chiaviComeId(colonneUnita, daRileggere.keys.toList())
             loaderService.deleteUnits(tabella.tabellaFisica, colonneUnita, esistenti)
 
@@ -374,7 +383,7 @@ class TableSyncRunner(
                     val (valide, errori) = transformService.transform(
                         blocco, colonne, chiaveObbligatoria = tabella.ruolo == RuoloTabella.DIMENSIONE
                     )
-                    loaderService.load(tabella.tabellaFisica, valide, colonneCaricate)
+                    prossimoRid = loaderService.load(tabella.tabellaFisica, valide, colonneCaricate, prossimoRid)
                     caricate += valide.size
                     scartate += errori.size
                     progresso("${tabella.nomeLogico}: $caricate righe riscritte")

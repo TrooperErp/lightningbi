@@ -61,7 +61,11 @@ data class CampoEffettivo(
     val isChiave: Boolean,
     /** Nome del campo nel dataset: due campi con lo stesso nome sono associati. */
     val nomeCampo: String,
-    val escluso: Boolean
+    val escluso: Boolean,
+    /** Campo derivato da una data (calendario): nome della colonna data di origine; null per gli altri. */
+    val derivataDa: String? = null,
+    /** Componente del calendario (anno, mese, giorno...); presente solo con [derivataDa]. */
+    val componente: String? = null
 ) {
     val numerico: Boolean get() = ColumnProposal.isNumerico(tipo)
 }
@@ -76,6 +80,18 @@ data class Associazione(
     val occorrenze: List<UUID>,
     val confidenza: Confidenza,
     val perValore: Boolean
+)
+
+/**
+ * Chiave composta (la "chiave sintetica" di Qlik): due o più campi condivisi
+ * dalle STESSE tabelle. Nell'indice è una voce a sé, che ha per valore
+ * l'hash a 64 bit della combinazione degli id dei campi, e fa da collegamento
+ * nella propagazione. Il nome è deterministico: "chiave__" + i campi in ordine.
+ */
+data class ChiaveComposta(
+    val nome: String,
+    val campi: List<String>,
+    val occorrenze: Set<UUID>
 )
 
 data class Problema(
@@ -96,8 +112,14 @@ data class DatasetBozza(
     val occorrenze: List<OccorrenzaBozza> = emptyList(),
     /** Campi usati come dimensione (filtri). Uno per nome di campo; vedi DatasetService. */
     val dimensioni: Set<RiferimentoCampo> = emptySet(),
-    val metriche: List<MetricaBozza> = emptyList()
+    val metriche: List<MetricaBozza> = emptyList(),
+    /**
+     * Nome del campo data del calendario: i suoi derivati (Anno, Mese, Giorno) compaiono nella
+     * barra in cima alla pagina dei filtri. Null finché non si sceglie.
+     */
+    val campoCalendario: String? = null
 ) {
+
 
     // ---------- campi ----------
 
@@ -125,7 +147,10 @@ data class DatasetBozza(
                     tipo = c.tipo,
                     isChiave = c.isChiave,
                     nomeCampo = nome,
-                    escluso = ecc?.escluso == true
+                    escluso = ecc?.escluso == true,
+                    derivataDa = c.derivataDa,
+                    componente = c.componente
+
                 )
             }
         }
@@ -206,6 +231,33 @@ data class DatasetBozza(
 
     fun rimuoviMetrica(metricaId: UUID): DatasetBozza = copy(metriche = metriche.filterNot { it.id == metricaId })
 
+    // ---------- calendario ----------
+
+    /** I campi data che hanno campi derivati (anno, mese, giorno...): quelli tra cui scegliere per il calendario. */
+    fun campiData(): List<CampoEffettivo> {
+        val inclusi = campi().filter { !it.escluso }
+        val padri = inclusi.filter { it.derivataDa != null }
+            .map { it.occorrenzaId to it.derivataDa!!.lowercase() }
+            .toSet()
+        return inclusi.filter { it.derivataDa == null && (it.occorrenzaId to it.nomeOrigine.lowercase()) in padri }
+    }
+
+    /** I campi derivati del campo data del calendario, per componente ("anno", "mese", "giorno"...). */
+    fun campiCalendario(): Map<String, CampoEffettivo> {
+        val nome = campoCalendario ?: return emptyMap()
+        val data = campiData().firstOrNull { it.nomeCampo == nome } ?: return emptyMap()
+        return campi()
+            .filter { !it.escluso && it.occorrenzaId == data.occorrenzaId && it.derivataDa?.lowercase() == data.nomeOrigine.lowercase() }
+            .associateBy { it.componente ?: "" }
+    }
+
+    /** Sceglie il campo data del calendario; i suoi derivati diventano dimensioni (la barra li legge). */
+    fun impostaCalendario(nomeCampo: String?): DatasetBozza {
+        val scelto = copy(campoCalendario = nomeCampo)
+        val derivati = scelto.campiCalendario().values.map { RiferimentoCampo(it.occorrenzaId, it.colonna) }
+        return scelto.copy(dimensioni = scelto.dimensioni + derivati)
+    }
+
     private fun conEccezione(occorrenzaId: UUID, colonna: String, ecc: EccezioneCampo?): DatasetBozza {
         occorrenza(occorrenzaId)
         return copy(occorrenze = occorrenze.map { o ->
@@ -224,7 +276,7 @@ data class DatasetBozza(
         val occ = occorrenza(occorrenzaId)
         val suoi = campi().filter { it.occorrenzaId == occorrenzaId && !it.escluso }
         val nuoveDim = suoi
-            .filter { !(it.numerico && !it.isChiave) }
+            .filter { !it.isChiave && !it.numerico && it.derivataDa == null }
             .map { RiferimentoCampo(occorrenzaId, it.colonna) }
         var risultato = copy(dimensioni = dimensioni + nuoveDim)
         if (occ.ruolo == RuoloTabella.FATTI) {
@@ -273,6 +325,20 @@ data class DatasetBozza(
                 )
             }
             .sortedBy { it.nomeCampo }
+
+    /**
+     * Le chiavi composte del modello: gruppi di due o più campi condivisi
+     * dalle stesse tabelle. Sono anche le chiavi sintetiche segnalate da [valida].
+     */
+    fun chiaviComposte(): List<ChiaveComposta> =
+        associazioni()
+            .groupBy { it.occorrenze.toSet() }
+            .filter { it.value.size > 1 }
+            .map { (occorrenze, assoc) ->
+                val campi = assoc.map { it.nomeCampo }.sorted()
+                ChiaveComposta("chiave__" + campi.joinToString("__"), campi, occorrenze)
+            }
+            .sortedBy { it.nome }
 
     // ---------- validazione ----------
 

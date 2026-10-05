@@ -20,14 +20,14 @@ class RegistryRepositoryImpl(
     override fun findAreaByNome(nome: String): Area? =
         jdbcTemplate.query(
             "SELECT * FROM lbi_area WHERE nome = ?",
-            { rs, _ -> Area(UUID.fromString(rs.getString("id")), rs.getString("nome"), rs.getString("tabella_fisica")) },
+            { rs, _ -> mapArea(rs) },
             nome
         ).firstOrNull()
 
     override fun findAreaById(id: UUID): Area? =
         jdbcTemplate.query(
             "SELECT * FROM lbi_area WHERE id = ?",
-            { rs, _ -> Area(UUID.fromString(rs.getString("id")), rs.getString("nome"), rs.getString("tabella_fisica")) },
+            { rs, _ -> mapArea(rs) },
             id
         ).firstOrNull()
 
@@ -75,6 +75,13 @@ class RegistryRepositoryImpl(
         rs.getString("espressione"),
         rs.getString("imported_table_id")?.let { UUID.fromString(it) },
         rs.getObject("area_tabella_id") as UUID?
+    )
+
+    private fun mapArea(rs: java.sql.ResultSet): Area = Area(
+        UUID.fromString(rs.getString("id")),
+        rs.getString("nome"),
+        rs.getString("tabella_fisica"),
+        rs.getString("campo_calendario")
     )
 
 
@@ -125,8 +132,8 @@ class RegistryRepositoryImpl(
     }
     override fun updateArea(area: Area) {
         jdbcTemplate.update(
-            "UPDATE lbi_area SET nome = ?, tabella_fisica = ? WHERE id = ?",
-            area.nome, area.tabellaFisica, area.id
+            "UPDATE lbi_area SET nome = ?, tabella_fisica = ?, campo_calendario = ? WHERE id = ?",
+            area.nome, area.tabellaFisica, area.campoCalendario, area.id
         )
     }
 
@@ -171,7 +178,7 @@ class RegistryRepositoryImpl(
     override fun findAllAree(): List<Area> =
         jdbcTemplate.query(
             "SELECT * FROM lbi_area ORDER BY nome",
-            { rs, _ -> Area(UUID.fromString(rs.getString("id")), rs.getString("nome"), rs.getString("tabella_fisica")) }
+            { rs, _ -> mapArea(rs) },
         )
 
     override fun findAllDimensioni(): List<Dimensione> =

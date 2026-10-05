@@ -77,6 +77,8 @@ class NewDatasetView(
     private var aggiornando = false
 
     private val nomeField = TextField("Nome del dataset")
+    /** Campo data del calendario: i suoi derivati (Anno, Mese, Giorno) vanno nella barra dei filtri. */
+    private val calendarioCombo = ComboBox<CampoEffettivo>("Campo data del calendario")
     private val tabelleGrid = Grid<ImportedTable>()
     private val occorrenzeGrid = Grid<OccorrenzaBozza>()
     private val campiGrid = Grid<CampoEffettivo>()
@@ -92,7 +94,7 @@ class NewDatasetView(
 
     override fun beforeEnter(event: BeforeEnterEvent) {
         if (!adminGuard.isAdmin()) {
-            event.forwardTo(AssociativeExplorerView::class.java)
+            event.forwardTo(DatasetFiltriView::class.java)
             return
         }
         bozza = DatasetBozza()
@@ -181,7 +183,7 @@ class NewDatasetView(
     }
 
     private fun tornaAiDataset() {
-        getUI().ifPresent { it.navigate(AssociativeExplorerView::class.java) }
+        getUI().ifPresent { it.navigate(DatasetFiltriView::class.java) }
     }
 
     private fun buildContent(): Component {
@@ -196,10 +198,20 @@ class NewDatasetView(
                 }
             }
         }
+        calendarioCombo.apply {
+            setWidth("320px")
+            isClearButtonVisible = true
+            setItemLabelGenerator { "${it.alias} · ${it.nomeOrigine}" }
+            addValueChangeListener {
+                if (it.isFromClient) modifica { b -> b.impostaCalendario(it.value?.nomeCampo) }
+            }
+        }
+        aggiornaCalendario()
 
         val intestazione = HorizontalLayout(
             Span(if (bozza.areaId == null) "Nuovo dataset" else "Modifica dataset").apply { className = "lbi-section-title" },
             nomeField,
+            calendarioCombo,
             Button("Annulla") { tornaAiDataset() },
             Button("Salva", Icon(VaadinIcon.CHECK)) { salva() }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
         ).apply {
@@ -336,7 +348,7 @@ class NewDatasetView(
             addComponentColumn { campo ->
                 MenuBar().apply {
                     addThemeVariants(MenuBarVariant.LUMO_TERTIARY_INLINE)
-                    val radice = addItem(Icon(VaadinIcon.ELLIPSIS_DOTS_V))
+                    val radice = addItem(Icon(VaadinIcon.ELLIPSIS_DOTS_V).apply { color = "black" })
                     radice.subMenu.addItem("Rinomina") { apriRinominaCampo(campo) }
                     radice.subMenu.addItem("Associa a...") { apriAssociaCampo(campo) }
                     if (campo.escluso) {
@@ -434,6 +446,7 @@ class NewDatasetView(
         aggiornaCampi()
         metricheGrid.setItems(bozza.metriche)
         associazioniGrid.setItems(bozza.associazioni())
+        aggiornaCalendario()
         aggiornaProblemi()
     }
 
@@ -449,6 +462,15 @@ class NewDatasetView(
         } finally {
             aggiornando = false
         }
+    }
+    /** Il menu del campo data: le date che hanno campi derivati (Anno, Mese, Giorno), con la scelta attuale. */
+    private fun aggiornaCalendario() {
+        val date = bozza.campiData()
+        calendarioCombo.setItems(date)
+        calendarioCombo.value = date.firstOrNull { it.nomeCampo == bozza.campoCalendario }
+        calendarioCombo.isEnabled = date.isNotEmpty()
+        calendarioCombo.helperText =
+            if (date.isEmpty()) "Nessuna data con Anno/Mese/Giorno: esegui il Ricarico completo delle tabelle con date" else null
     }
 
     private fun aggiornaCampi() {
@@ -676,7 +698,7 @@ class NewDatasetView(
                 "Dataset \"${bozza.nome.trim()}\" salvato. Premi \"Sincronizza\" per caricare i dati.",
                 6000, Notification.Position.MIDDLE
             )
-            getUI().ifPresent { it.navigate(AssociativeExplorerView::class.java, id.toString()) }
+            getUI().ifPresent { it.navigate(DatasetFiltriView::class.java, id.toString()) }
         } catch (e: DatasetNonValidoException) {
             aggiornaProblemi()
             Notification.show(

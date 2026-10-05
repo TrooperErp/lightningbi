@@ -66,7 +66,7 @@ class AdminView(
     override fun beforeEnter(event: BeforeEnterEvent) {
         val user = CurrentUserHolder.get()
         if (user == null || !permissionCheckService.hasPermission(user.roleName, "MANAGE_USERS")) {
-            event.forwardTo(AssociativeExplorerView::class.java)
+            event.forwardTo(DatasetFiltriView::class.java)
             return
         }
         if (!paginaCostruita) {
@@ -90,7 +90,7 @@ class AdminView(
                 label = "Analisi",
                 entries = listOf(
                     LbiSidebarMenu.MenuEntry("Torna alle analisi", icon = VaadinIcon.ARROW_LEFT) {
-                        getUI().ifPresent { it.navigate(AssociativeExplorerView::class.java) }
+                        getUI().ifPresent { it.navigate(DatasetFiltriView::class.java) }
                     }
                 ),
                 icon = VaadinIcon.CHART
