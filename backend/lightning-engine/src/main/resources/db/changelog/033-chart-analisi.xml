@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="033-chart-analisi" author="lightningbi">
+        <!-- Un grafico appartiene a un'ANALISI e usa le sue misure (lbi_pivot_view_misura),
+             non più le metriche del dataset. I vecchi grafici puntavano a metriche del
+             dataset che nei dataset nuovi non esistono: le loro righe si tolgono. -->
+        <delete tableName="lbi_area_chart_metrica"/>
+        <delete tableName="lbi_area_chart"/>
+
+        <addColumn tableName="lbi_area_chart">
+            <column name="pivot_view_id" type="uuid">
+                <constraints nullable="false"
+                             foreignKeyName="fk_area_chart_pivot_view"
+                             references="pg_lbi_pivot_view(id)"
+                             deleteCascade="true"/>
+            </column>
+        </addColumn>
+
+        <!-- Togliendo un grafico (o la sua analisi) se ne vanno anche le misure collegate. -->
+        <addForeignKeyConstraint baseTableName="lbi_area_chart_metrica" baseColumnNames="chart_id"
+                                 constraintName="fk_area_chart_metrica_chart"
+                                 referencedTableName="lbi_area_chart"
+                                 referencedColumnNames="id"
+                                 onDelete="CASCADE"/>
+
+        <createIndex indexName="idx_area_chart_pivot_view" tableName="lbi_area_chart">
+            <column name="pivot_view_id"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

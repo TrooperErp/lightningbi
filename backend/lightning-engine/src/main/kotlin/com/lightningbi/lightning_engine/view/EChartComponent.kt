@@ -47,23 +47,36 @@ class EChartComponent : Div() {
         // configurazione con meno serie o etichette diverse.
         element.executeJs(
             """
-    const el = document.getElementById(${'$'}0);
-    const opt = JSON.parse(${'$'}1);
     let attempts = 0;
+    function mostra(testo) {
+        const el = document.getElementById(${'$'}0);
+        if (el) {
+            el.textContent = testo;
+            el.style.padding = '12px';
+            el.style.color = '#b00020';
+        }
+    }
     function tryRender() {
         attempts++;
-        if (typeof echarts === 'undefined') {
+        const el = document.getElementById(${'$'}0);
+        if (typeof echarts === 'undefined' || !el) {
             if (attempts < 60) {
                 setTimeout(tryRender, 50);
+            } else if (!el) {
+                mostra('Riquadro del grafico non trovato nella pagina');
+            } else {
+                mostra('Libreria dei grafici non caricata (js/echarts.min.js)');
             }
             return;
         }
-        if (el) {
+        try {
             let chart = echarts.getInstanceByDom(el);
             if (!chart) {
                 chart = echarts.init(el);
             }
-            chart.setOption(opt, true);
+            chart.setOption(JSON.parse(${'$'}1), true);
+        } catch (e) {
+            mostra('Errore nel disegno del grafico: ' + e.message);
         }
     }
     tryRender();

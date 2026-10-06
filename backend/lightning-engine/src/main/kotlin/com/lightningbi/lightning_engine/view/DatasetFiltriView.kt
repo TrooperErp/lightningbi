@@ -155,8 +155,10 @@ class DatasetFiltriView(
 
             val campi = bozza.campi().filter { !it.escluso }
             bozza.occorrenze.forEach { occ ->
+
+                // I campi tecnici (chiavi, prefissi della connessione) non si mostrano: servono solo a collegare le tabelle.
                 val suoi = campi.filter {
-                    it.occorrenzaId == occ.id && RiferimentoCampo(occ.id, it.colonna) in bozza.dimensioni
+                    it.occorrenzaId == occ.id && !it.tecnico && RiferimentoCampo(occ.id, it.colonna) in bozza.dimensioni
                 }
                 boxes.add(boxTabella(area, occ.alias, occ.id, suoi, dimensioni))
             }
@@ -541,8 +543,17 @@ class DatasetFiltriView(
             LbiSidebarMenu.MenuGroup("Dataset", dataset, active = true, icon = VaadinIcon.DATABASE),
             LbiSidebarMenu.MenuGroup(
                 label = "Analisi di ${area?.nome ?: ""}",
-                entries = if (areaId == null) emptyList() else analisi.map { vista ->
-                    LbiSidebarMenu.MenuEntry(vista.nome, icon = VaadinIcon.TABLE) { apriAnalisi(areaId, vista) }
+                entries = when {
+                    areaId == null -> emptyList()
+                    // Dataset senza analisi: la pagina Analisi ne crea una al primo ingresso.
+                    analisi.isEmpty() -> listOf(
+                        LbiSidebarMenu.MenuEntry("Apri analisi", icon = VaadinIcon.TABLE) {
+                            getUI().ifPresent { it.navigate(AnalisiView::class.java, areaId.toString()) }
+                        }
+                    )
+                    else -> analisi.map { vista ->
+                        LbiSidebarMenu.MenuEntry(vista.nome, icon = VaadinIcon.TABLE) { apriAnalisi(areaId, vista) }
+                    }
                 },
                 icon = VaadinIcon.CHART
             ),

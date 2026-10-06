@@ -58,6 +58,8 @@ enum class ChartType {
 data class AreaChart(
     val id: UUID,
     val areaId: UUID,
+    /** L'analisi a cui il grafico appartiene: ne usa le misure e le selezioni dell'utente. */
+    val pivotViewId: UUID,
     val titolo: String,
     val tipo: ChartType,
     val orderBy: AggregateOrder = AggregateOrder.DIMENSION,

@@ -1,128 +1,666 @@
 package com.lightningbi.lightning_engine.view
 
+import com.lightningbi.lightning_engine.model.AggregateOrder
+import com.lightningbi.lightning_engine.model.Area
 import com.lightningbi.lightning_engine.model.AreaChart
 import com.lightningbi.lightning_engine.model.ChartResult
 import com.lightningbi.lightning_engine.model.ChartType
-import com.lightningbi.lightning_engine.repository.AreaSourceRepository
+import com.lightningbi.lightning_engine.model.MisuraAnalisi
+import com.lightningbi.lightning_engine.model.PivotView
+import com.lightningbi.lightning_engine.repository.MisuraAnalisiRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
-import com.lightningbi.lightning_engine.service.ChartService
 import com.lightningbi.lightning_engine.repository.UserPivotStateRepository
+import com.lightningbi.lightning_engine.service.AdminGuard
+import com.lightningbi.lightning_engine.service.AnalisiService
+import com.lightningbi.lightning_engine.service.AuthService
+import com.lightningbi.lightning_engine.service.ChartService
+import com.lightningbi.lightning_engine.service.DimensioneAnalisi
+import com.lightningbi.lightning_engine.service.PivotViewService
 import com.vaadin.flow.component.Component
 import com.vaadin.flow.component.button.Button
+import com.vaadin.flow.component.button.ButtonVariant
+import com.vaadin.flow.component.checkbox.Checkbox
 import com.vaadin.flow.component.combobox.ComboBox
+import com.vaadin.flow.component.dependency.Uses
 import com.vaadin.flow.component.dialog.Dialog
 import com.vaadin.flow.component.grid.Grid
+import com.vaadin.flow.component.html.Div
 import com.vaadin.flow.component.html.Span
-import com.vaadin.flow.component.orderedlayout.HorizontalLayout
-import com.vaadin.flow.component.orderedlayout.VerticalLayout
+import com.vaadin.flow.component.icon.Icon
+import com.vaadin.flow.component.icon.VaadinIcon
 import com.vaadin.flow.component.notification.Notification
+import com.vaadin.flow.component.orderedlayout.VerticalLayout
+import com.vaadin.flow.component.textfield.IntegerField
 import com.vaadin.flow.component.textfield.TextField
+import com.vaadin.flow.data.value.ValueChangeMode
 import com.vaadin.flow.router.BeforeEvent
 import com.vaadin.flow.router.HasUrlParameter
 import com.vaadin.flow.router.Route
 import java.util.UUID
-import com.lightningbi.lightning_engine.service.AuthService
-import com.lightningbi.lightning_engine.model.AggregateOrder
-import com.vaadin.flow.component.dependency.Uses
-import com.vaadin.flow.component.icon.Icon
-import com.lightningbi.lightning_engine.service.AdminGuard
-import com.vaadin.flow.component.icon.VaadinIcon
 
 /**
- * Pagina di gestione grafici per un'Analisi. Resta sempre agganciata a
- * un'area precisa (ricevuta dall'URL): il gruppo "Analisi" nella sidebar
- * qui mostra SOLO quella singola area, non l'elenco completo - non
- * esiste modo di cambiare analisi restando su questa pagina.
+ * Pagina "Grafici": i grafici di UN'analisi. Stessa impostazione della pagina Analisi
+ * (guscio, pannelli Campi, Righe, Colonne e Misure, stessi pulsanti), con in più la scelta
+ * del tipo di grafico, le opzioni e l'anteprima.
  *
- * Si apre direttamente sulle nove card di scelta tipo, stile Tableau:
- * niente pulsante "nuovo grafico" separato, il click su una card apre
- * subito la creazione con quel tipo già deciso.
+ * - Un grafico appartiene a un'analisi e usa le SUE misure (si scrivono nella pagina
+ *   Analisi con + Misura). Le selezioni sono quelle dell'utente, uguali per pivot e grafici.
+ * - Le schede dei tipi aprono il modulo di creazione; il modulo si precompila con righe,
+ *   colonne e misure dell'analisi da cui si arriva.
+ * - Il tipo di un grafico esistente non si cambia: cambia i vincoli, si elimina e si ricrea.
  *
- * Righe/Colonne/Valori del grafico si scelgono con un PivotPanel dedicato
- * INLINE nella pagina (non più in un Dialog): sotto compare una preview
- * live del grafico (EChartComponent), ricalcolata ad ogni modifica del
- * pivot o delle opzioni.
- *
- * I grafici dipendono dall'ANALISI (Area), non da nessuna PivotView:
- * TUTTI i campi (dimensioni + metriche) dell'area sono sempre
- * selezionabili nel PivotPanel del grafico, nessuno disabilitato -
- * comportamento diverso da prima del refactor multi-vista, quando i
- * campi ammessi dipendevano dall'ultimo pivot salvato dall'utente in
- * pagina Analisi. Le selezioni (verde/bianco/grigio), invece, sono le
- * stesse condivise per l'Area e si applicano comunque al calcolo/
- * preview del grafico.
- *
- * IMPORTANTE: il callback onChange di PivotPanel scatta SINCRONO già
- * dentro setFieldsWithIds/restoreState, quindi PRIMA che l'assegnazione
- * "val pivotPanel = buildChartPivotPanelWithCallback(...)" sia conclusa.
- * Per questo aggiornaPreview riceve righe/colonne/valori come PARAMETRI
- * del callback stesso, non li rilegge da una variabile pivotPanel
- * catturata nella lambda (quello causava
- * UninitializedPropertyAccessException con un lateinit var).
+ * Route "charts/{dataset},{analisi}".
  */
 @Route("charts")
 @Uses(Icon::class)
 class ChartsView(
     private val chartService: ChartService,
     private val registryRepository: RegistryRepository,
-    private val areaSourceRepository: AreaSourceRepository,
-    private val authService: AuthService,
     private val userPivotStateRepository: UserPivotStateRepository,
-
-    private val pivotViewService: com.lightningbi.lightning_engine.service.PivotViewService,
-    private val adminGuard: AdminGuard
+    private val misuraAnalisiRepository: MisuraAnalisiRepository,
+    private val pivotViewService: PivotViewService,
+    private val analisiService: AnalisiService,
+    private val adminGuard: AdminGuard,
+    private val authService: AuthService
 ) : VerticalLayout(), HasUrlParameter<String> {
 
     private var areaId: UUID? = null
-    private val grid = Grid<AreaChart>()
     private var pivotViewId: UUID? = null
+    private var area: Area? = null
+    private var analisi: List<PivotView> = emptyList()
+    private var dimensioni: List<DimensioneAnalisi> = emptyList()
+    private var misure: List<MisuraAnalisi> = emptyList()
 
+    // Stato del modulo (creazione o modifica).
+    private var tipoForm: ChartType? = null
+    private var graficoInModifica: AreaChart? = null
+    private var aggiornandoForm = false
+    private var listenerInstallati = false
+    private val righe = mutableListOf<UUID>()
+    private val colonne = mutableListOf<UUID>()
+    private val valori = mutableListOf<UUID>()
 
-    /** Area del form (creazione/edit) inline: vuota quando nessun grafico è in editing. */
-    private val formArea = VerticalLayout().apply {
-        isPadding = false
+    private val nomiDimensioni: Map<UUID, String> get() = dimensioni.associate { it.dimensioneId to it.nome }
+
+    private val formArea = Div().apply {
+        className = "lbi-qv-form"
         isVisible = false
-        className = "lbi-chart-form-area"
+    }
+    private val titolo = TextField("Titolo").apply { setWidthFull() }
+    private val ordinamento = ComboBox<AggregateOrder>("Ordinamento").apply {
+        setItems(AggregateOrder.entries)
+        setItemLabelGenerator {
+            when (it) {
+                AggregateOrder.DIMENSION -> "Per etichetta (A-Z)"
+                AggregateOrder.METRIC_DESC -> "Per valore, decrescente"
+                AggregateOrder.METRIC_ASC -> "Per valore, crescente"
+            }
+        }
+        value = AggregateOrder.DIMENSION
+        setWidthFull()
+    }
+    private val limite = IntegerField("Limite righe (vuoto = automatico)").apply { setWidthFull() }
+    private val seguiColonne = Checkbox("Segui le Colonne (una serie per valore, es. una per anno)")
+    private val evidenziaCali = Checkbox("Evidenzia i cali (rosso) confrontando l'ultima colonna con la precedente")
+        .apply { isEnabled = false }
+
+    private val ricercaCampi = TextField().apply {
+        placeholder = "Cerca"
+        isClearButtonVisible = true
+        valueChangeMode = ValueChangeMode.LAZY
+        valueChangeTimeout = 200
+        setWidthFull()
+        addClassName("lbi-qv-search")
+    }
+    private val elencoCampi = Div().apply { className = "lbi-qv-panel-body" }
+    private val contenitoreRighe = Div().apply { className = "lbi-qv-zone" }
+    private val contenitoreColonne = Div().apply { className = "lbi-qv-zone" }
+    private val contenitoreValori = Div().apply { className = "lbi-qv-zone" }
+    private val anteprima = Div().apply { className = "lbi-qv-anteprima" }
+    private val carteTipo = mutableMapOf<ChartType, Div>()
+    private val griglia = Grid<AreaChart>()
+
+    /** La libreria che disegna i grafici si carica quando la pagina è attaccata al browser. */
+    override fun onAttach(attachEvent: com.vaadin.flow.component.AttachEvent) {
+        super.onAttach(attachEvent)
+        attachEvent.ui.page.addJavaScript("js/echarts.min.js")
     }
 
     override fun setParameter(event: BeforeEvent, parameter: String) {
-        val parts = parameter.split(",")
+        val parti = parameter.split(",")
         areaId = try {
-            UUID.fromString(parts[0])
+            UUID.fromString(parti[0])
         } catch (e: IllegalArgumentException) {
-            Notification.show("Analisi non valida")
+            Notification.show("Dataset non valido")
             null
         }
-        pivotViewId = parts.getOrNull(1)?.let {
+        pivotViewId = parti.getOrNull(1)?.let {
             try { UUID.fromString(it) } catch (e: IllegalArgumentException) { null }
         }
-        buildPage()
+        if (pivotViewId == null) {
+            val dataset = areaId
+            val utente = CurrentUserHolder.get()
+            if (dataset != null && utente != null) {
+                pivotViewId = pivotViewService.ensureActiveView(utente.userId, dataset).id
+            }
+        }
+        costruisci()
     }
 
-    private fun buildPage() {
+    // ================= Pagina =================
+
+    private fun costruisci() {
         removeAll()
         setSizeFull()
         isPadding = false
+        isSpacing = false
 
-        val currentAreaId = areaId
-        val area = currentAreaId?.let { registryRepository.findAreaById(it) }
 
-        val content: Component = if (area == null) {
-            Span("Analisi non trovata.").apply { className = "lbi-wizard-label" }
-        } else {
-            buildContent(area.id, area.nome)
+        tipoForm = null
+        tipoForm = null
+        graficoInModifica = null
+        carteTipo.clear()
+
+        val dataset = areaId?.let { registryRepository.findAreaById(it) }
+        area = dataset
+        val aree = registryRepository.findAllAree().sortedBy { it.nome.lowercase() }
+        if (dataset == null) {
+            val vuota = Div(Span("Dataset non trovato.").apply { className = "lbi-qv-empty" }).apply { className = "lbi-qv-page" }
+            val shell = LbiAppShell(menu(null, aree, emptyList(), null), vuota, authService)
+            add(shell)
+            setFlexGrow(1.0, shell)
+            return
         }
 
-        // "Amministrazione" compare SOLO per l'admin (MANAGE_USERS): le pagine
-        // di destinazione rifanno il controllo, perché gli URL restano
-        // raggiungibili a mano.
-        val gruppoAmministrazione = if (adminGuard.isAdmin()) {
-            listOf(
+        analisi = analisiService.elenco(dataset.id)
+        dimensioni = analisiService.dimensioniDisponibili(dataset.id)
+        misure = pivotViewId?.let { misuraAnalisiRepository.findByView(it) } ?: emptyList()
+        val vista = analisi.firstOrNull { it.id == pivotViewId }
+
+        val contenuto = Div(
+            barraAlta(dataset, vista),
+            schedeTipo(),
+            formArea.also { costruisciForm() },
+            pannelloElenco()
+        ).apply { className = "lbi-qv-page" }
+
+        val shell = LbiAppShell(
+            menu(dataset, aree, analisi, vista), contenuto, authService,
+            analysisName = listOfNotNull(dataset.nome, vista?.nome, "Grafici").joinToString(" · ")
+        )
+        add(shell)
+        setFlexGrow(1.0, shell)
+        ricaricaElenco()
+    }
+
+    private fun barraAlta(dataset: Area, vista: PivotView?): Component {
+        val titoloPagina = Div(
+            Span("GRAFICI").apply { className = "lbi-qv-title-text" },
+            Span("${dataset.nome} · ${vista?.nome ?: ""}").apply { className = "lbi-qv-title-sub" }
+        ).apply { className = "lbi-qv-title" }
+        val indietro = Button("Torna all'analisi", Icon(VaadinIcon.ARROW_LEFT)) { tornaAllAnalisi() }
+            .apply {
+                addClassName("lbi-qv-clear")
+                addThemeVariants(ButtonVariant.LUMO_PRIMARY)
+            }
+        return Div(titoloPagina, indietro).apply { className = "lbi-qv-top" }
+    }
+
+    private fun tornaAllAnalisi() {
+        val dataset = areaId ?: return
+        val param = if (pivotViewId != null) "$dataset,$pivotViewId" else dataset.toString()
+        getUI().ifPresent { it.navigate(AnalisiView::class.java, param) }
+    }
+
+    // ---------- schede dei tipi ----------
+
+    /** Le schede di scelta del tipo, con la miniatura di ogni grafico: aprono il modulo di creazione. */
+    private fun schedeTipo(): Component {
+        val contenitore = Div().apply { className = "lbi-qv-tipi" }
+        ChartType.entries.forEach { tipo ->
+            val miniatura = Div().apply { element.setProperty("innerHTML", chartTypeIcon(tipo)) }
+            val scheda = Div(miniatura, Span(chartTypeLabel(tipo)).apply { className = "lbi-qv-tipo-nome" })
+                .apply {
+                    className = "lbi-qv-tipo"
+                    addClickListener { apriForm(tipo, null) }
+                }
+            carteTipo[tipo] = scheda
+            contenitore.add(scheda)
+        }
+        return Div(Div(Span("Nuovo grafico: scegli il tipo")).apply { className = "lbi-qv-panel-title" }, contenitore)
+            .apply { className = "lbi-qv-panel" }
+    }
+
+    private fun evidenziaTipo() {
+        carteTipo.forEach { (tipo, scheda) -> scheda.classNames.set("lbi-qv-tipo-selezionato", tipo == tipoForm) }
+    }
+
+    // ---------- modulo ----------
+
+    private fun costruisciForm() {
+        formArea.removeAll()
+        // I campi del modulo vivono quanto la pagina: i listener si installano una sola volta.
+        if (!listenerInstallati) {
+            listenerInstallati = true
+            ricercaCampi.addValueChangeListener { aggiornaCampi() }
+            seguiColonne.addValueChangeListener {
+                evidenziaCali.isEnabled = it.value
+                if (!it.value) evidenziaCali.value = false
+                if (!aggiornandoForm) aggiornaAnteprima()
+            }
+            titolo.addValueChangeListener { if (!aggiornandoForm) aggiornaAnteprima() }
+            ordinamento.addValueChangeListener { if (!aggiornandoForm) aggiornaAnteprima() }
+            limite.addValueChangeListener { if (!aggiornandoForm) aggiornaAnteprima() }
+            evidenziaCali.addValueChangeListener { if (!aggiornandoForm) aggiornaAnteprima() }
+        }
+
+        val campi = Div(Div(Span("Campi")).apply { className = "lbi-qv-panel-title" }, ricercaCampi, elencoCampi)
+            .apply { className = "lbi-qv-panel lbi-qv-left-panel" }
+
+        val zone = Div(
+            pannelloZona("Righe", contenitoreRighe),
+            pannelloZona("Colonne", contenitoreColonne),
+            pannelloZona("Misure", contenitoreValori)
+        ).apply { className = "lbi-qv-zones" }
+
+        val opzioni = Div(
+            Div(Span("Grafico")).apply { className = "lbi-qv-panel-title" },
+            Div(titolo, ordinamento, limite, seguiColonne, evidenziaCali).apply { className = "lbi-qv-opzioni" }
+        ).apply { className = "lbi-qv-panel" }
+
+        val anteprimaPannello = Div(Div(Span("Anteprima")).apply { className = "lbi-qv-panel-title" }, anteprima)
+            .apply { className = "lbi-qv-panel" }
+
+        val annulla = Button("Annulla") { chiudiForm() }
+        val salva = Button("Salva", Icon(VaadinIcon.CHECK)) { salvaGrafico() }
+            .apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
+        val pulsanti = Div(annulla, salva).apply { className = "lbi-qv-form-buttons" }
+
+        val centro = Div(zone, opzioni, anteprimaPannello, pulsanti).apply { className = "lbi-qv-boxes lbi-qv-analisi-centro" }
+        formArea.add(Div(campi, centro).apply { className = "lbi-qv-body" })
+    }
+
+    private fun apriForm(tipo: ChartType, esistente: AreaChart?) {
+        if (misure.isEmpty()) {
+            Notification.show("L'analisi non ha misure: aggiungine una dalla pagina Analisi con + Misura", 5000, Notification.Position.MIDDLE)
+            return
+        }
+        aggiornandoForm = true
+        try {
+            tipoForm = tipo
+            graficoInModifica = esistente
+            righe.clear(); colonne.clear(); valori.clear()
+            val misureIds = misure.map { it.id }.toSet()
+            if (esistente != null) {
+                righe += esistente.pivotRows
+                colonne += esistente.pivotColumns
+                valori += chartService.getMetricheDelGrafico(esistente.id).sortedBy { it.posizione }
+                    .map { it.metricaId }.filter { it in misureIds }
+                titolo.value = esistente.titolo
+                ordinamento.value = esistente.orderBy
+                limite.value = esistente.maxItems
+                seguiColonne.value = esistente.followsColumns
+                evidenziaCali.value = esistente.highlightDecline
+            } else {
+                titolo.value = ""
+                ordinamento.value = AggregateOrder.DIMENSION
+                limite.value = null
+                seguiColonne.value = false
+                evidenziaCali.value = false
+                // Come partenza: righe, colonne e misure dell'analisi da cui si arriva.
+                pivotViewId?.let { vistaId ->
+                    pivotViewService.findById(vistaId)?.let { vista ->
+                        righe += vista.pivotRows
+                        colonne += vista.pivotColumns
+                        valori += vista.pivotValues.filter { it in misureIds }
+                    }
+                }
+            }
+        } finally {
+            aggiornandoForm = false
+        }
+        formArea.isVisible = true
+        evidenziaTipo()
+        aggiornaCampi()
+        aggiornaZone()
+        aggiornaAnteprima()
+    }
+
+    private fun chiudiForm() {
+        formArea.isVisible = false
+        tipoForm = null
+        graficoInModifica = null
+        evidenziaTipo()
+        anteprima.removeAll()
+    }
+
+    private fun pannelloZona(testo: String, contenitore: Div): Component =
+        Div(Div(Span(testo)).apply { className = "lbi-qv-panel-title" }, contenitore)
+            .apply { className = "lbi-qv-panel lbi-qv-zone-panel" }
+
+    /** I campi dell'analisi per tabella, con i pulsanti per metterli in Righe o in Colonne, e le misure da usare. */
+    private fun aggiornaCampi() {
+        elencoCampi.removeAll()
+        val filtro = ricercaCampi.value.orEmpty().trim().lowercase()
+        val visibili = dimensioni.filter { filtro.isEmpty() || it.nome.lowercase().contains(filtro) }
+
+        if (misure.isNotEmpty()) {
+            elencoCampi.add(Div(Span("Misure dell'analisi")).apply { className = "lbi-qv-group-title" })
+            misure.filter { filtro.isEmpty() || it.nome.lowercase().contains(filtro) }.forEach { misura ->
+                val inUso = misura.id in valori
+                elencoCampi.add(
+                    Div(
+                        Span(misura.nome).apply { className = "lbi-qv-field-name" },
+                        Button("Misure") { aggiungiMisura(misura.id) }
+                    ).apply {
+                        className = "lbi-qv-field-row lbi-qv-field-add"
+                        classNames.set("lbi-qv-field-selected", inUso)
+                    }
+                )
+            }
+        }
+
+        visibili.groupBy { it.tabella }.forEach { (tabella, campiTabella) ->
+            elencoCampi.add(Div(Span(tabella)).apply { className = "lbi-qv-group-title" })
+            campiTabella.forEach { campo ->
+                val inUso = campo.dimensioneId in righe || campo.dimensioneId in colonne
+                elencoCampi.add(
+                    Div(
+                        Span(campo.nome).apply { className = "lbi-qv-field-name" },
+                        Button("Righe") { aggiungiDimensione(campo.dimensioneId, true) },
+                        Button("Colonne") { aggiungiDimensione(campo.dimensioneId, false) }
+                    ).apply {
+                        className = "lbi-qv-field-row lbi-qv-field-add"
+                        classNames.set("lbi-qv-field-selected", inUso)
+                    }
+                )
+            }
+        }
+        if (visibili.isEmpty() && misure.isEmpty()) elencoCampi.add(Span("Nessun campo").apply { className = "lbi-qv-empty" })
+    }
+
+    private fun aggiornaZone() {
+        contenitoreRighe.removeAll()
+        contenitoreColonne.removeAll()
+        contenitoreValori.removeAll()
+        riempiDimensioni(contenitoreRighe, righe)
+        riempiDimensioni(contenitoreColonne, colonne)
+
+        if (valori.isEmpty()) contenitoreValori.add(Span("Scegli una misura").apply { className = "lbi-qv-empty" })
+        val perId = misure.associateBy { it.id }
+        valori.forEachIndexed { i, id ->
+            val misura = perId[id] ?: return@forEachIndexed
+            contenitoreValori.add(
+                pillola(misura.nome, { sposta(valori, i, -1) }, { sposta(valori, i, 1) }, { valori.removeAt(i); dopoModifica() })
+            )
+        }
+    }
+
+    private fun riempiDimensioni(contenitore: Div, lista: MutableList<UUID>) {
+        if (lista.isEmpty()) contenitore.add(Span("Aggiungi un campo").apply { className = "lbi-qv-empty" })
+        lista.forEachIndexed { i, id ->
+            contenitore.add(
+                pillola(nomiDimensioni[id] ?: "?", { sposta(lista, i, -1) }, { sposta(lista, i, 1) }, { lista.removeAt(i); dopoModifica() })
+            )
+        }
+    }
+
+    /** Una voce di zona: nome e pulsanti sposta su, sposta giù, togli. */
+    private fun pillola(testo: String, su: () -> Unit, giu: () -> Unit, togli: () -> Unit): Component {
+        fun piccolo(simbolo: String, titoloPulsante: String, azione: () -> Unit) = Button(simbolo) { azione() }.apply {
+            addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL)
+            element.setAttribute("title", titoloPulsante)
+        }
+        val pulsanti = Div(
+            piccolo("▲", "Sposta su") { su() },
+            piccolo("▼", "Sposta giù") { giu() },
+            piccolo("✕", "Togli") { togli() }
+        ).apply { className = "lbi-qv-pill-buttons" }
+        return Div(Span(testo).apply { className = "lbi-qv-pill-text" }, pulsanti).apply { className = "lbi-qv-pill" }
+    }
+
+    private fun sposta(lista: MutableList<UUID>, indice: Int, verso: Int) {
+        val destinazione = indice + verso
+        if (destinazione !in lista.indices) return
+        val elemento = lista.removeAt(indice)
+        lista.add(destinazione, elemento)
+        dopoModifica()
+    }
+
+    private fun aggiungiDimensione(id: UUID, nelleRighe: Boolean) {
+        righe.remove(id)
+        colonne.remove(id)
+        if (nelleRighe) righe.add(id) else colonne.add(id)
+        dopoModifica()
+    }
+
+    private fun aggiungiMisura(id: UUID) {
+        if (id !in valori) valori.add(id)
+        dopoModifica()
+    }
+
+    private fun dopoModifica() {
+        aggiornaCampi()
+        aggiornaZone()
+        aggiornaAnteprima()
+    }
+
+    // ---------- anteprima e salvataggio ----------
+
+    /** Le selezioni correnti dell'utente per questo dataset: le stesse di Dataset e Analisi. */
+    private fun selezioni(): Map<UUID, Set<Long>> {
+        val dataset = areaId ?: return emptyMap()
+        val utente = CurrentUserHolder.get() ?: return emptyMap()
+        return userPivotStateRepository.find(utente.userId, dataset)?.selections ?: emptyMap()
+    }
+
+    private fun bozza(tipo: ChartType): AreaChart? {
+        val dataset = areaId ?: return null
+        val vistaId = pivotViewId ?: return null
+        return AreaChart(
+            id = graficoInModifica?.id ?: UUID.randomUUID(),
+            areaId = dataset,
+            pivotViewId = vistaId,
+            titolo = titolo.value?.trim()?.ifBlank { "Anteprima" } ?: "Anteprima",
+            tipo = tipo,
+            orderBy = ordinamento.value ?: AggregateOrder.DIMENSION,
+            maxItems = limite.value,
+            posizione = graficoInModifica?.posizione ?: 0,
+            followsColumns = seguiColonne.value,
+            highlightDecline = evidenziaCali.value,
+            pivotRows = righe.toList(),
+            pivotColumns = colonne.toList()
+        )
+    }
+
+    private fun aggiornaAnteprima() {
+        anteprima.removeAll()
+        val tipo = tipoForm ?: return
+        if (righe.isEmpty() || valori.isEmpty()) {
+            anteprima.add(Span("Aggiungi almeno un campo alle Righe e una misura per vedere l'anteprima.").apply { className = "lbi-qv-empty" })
+            return
+        }
+        val provvisorio = bozza(tipo) ?: return
+        try {
+            val esito = chartService.getChartDataForPreview(
+                provvisorio, valori.toList(), dimensioni.map { it.dimensioneId }.toSet(), selezioni()
+            )
+            when (esito) {
+                is ChartResult.Ready -> {
+                    val grafico = EChartComponent()
+                    anteprima.add(grafico)
+                    grafico.render(esito.data)
+                }
+                is ChartResult.Incoherent -> anteprima.add(Span(esito.reason).apply { className = "lbi-qv-empty" })
+            }
+        } catch (e: Exception) {
+            anteprima.add(Span("Impossibile calcolare l'anteprima: ${e.message}").apply { className = "lbi-qv-empty" })
+        }
+    }
+
+    private fun salvaGrafico() {
+        val tipo = tipoForm ?: return
+        val dataset = areaId ?: return
+        val nome = titolo.value?.trim()
+        if (nome.isNullOrBlank()) {
+            Notification.show("Il titolo è obbligatorio", 4000, Notification.Position.MIDDLE)
+            return
+        }
+        if (righe.isEmpty()) {
+            Notification.show("Metti almeno un campo nelle Righe", 4000, Notification.Position.MIDDLE)
+            return
+        }
+        if (valori.isEmpty()) {
+            Notification.show("Scegli almeno una misura", 4000, Notification.Position.MIDDLE)
+            return
+        }
+        if (seguiColonne.value && valori.size > 1) {
+            Notification.show(
+                "\"Segui le Colonne\" richiede una sola misura: togline alcune o disattiva l'opzione",
+                5000, Notification.Position.MIDDLE
+            )
+            return
+        }
+        try {
+            val esistente = graficoInModifica
+            if (esistente == null) {
+                chartService.create(
+                    areaId = dataset,
+                    pivotViewId = pivotViewId ?: error("Analisi non indicata"),
+                    titolo = nome,
+                    tipo = tipo,
+                    metricaIds = valori.toList(),
+                    pivotRows = righe.toList(),
+                    pivotColumns = colonne.toList(),
+                    orderBy = ordinamento.value ?: AggregateOrder.DIMENSION,
+                    maxItems = limite.value,
+                    followsColumns = seguiColonne.value,
+                    highlightDecline = evidenziaCali.value
+                )
+                Notification.show("Grafico creato", 3000, Notification.Position.BOTTOM_END)
+            } else {
+                chartService.update(
+                    esistente.copy(
+                        titolo = nome,
+                        orderBy = ordinamento.value ?: esistente.orderBy,
+                        maxItems = limite.value,
+                        followsColumns = seguiColonne.value,
+                        highlightDecline = evidenziaCali.value,
+                        pivotRows = righe.toList(),
+                        pivotColumns = colonne.toList()
+                    ),
+                    valori.toList()
+                )
+                Notification.show("Grafico aggiornato", 3000, Notification.Position.BOTTOM_END)
+            }
+            chiudiForm()
+            ricaricaElenco()
+        } catch (e: Exception) {
+            Notification.show("Errore: ${e.message}", 5000, Notification.Position.MIDDLE)
+        }
+    }
+
+    // ---------- elenco dei grafici ----------
+
+    private fun pannelloElenco(): Component {
+        griglia.apply {
+            removeAllColumns()
+            setWidthFull()
+            height = "260px"
+            addColumn { it.titolo }.setHeader("Titolo").setAutoWidth(true)
+            addColumn { chartTypeLabel(it.tipo) }.setHeader("Tipo").setAutoWidth(true)
+            addColumn { grafico ->
+                val perId = misure.associateBy { it.id }
+                chartService.getMetricheDelGrafico(grafico.id).mapNotNull { perId[it.metricaId]?.nome }.joinToString(", ")
+            }.setHeader("Misure").setAutoWidth(true)
+            addComponentColumn { grafico ->
+                Div(
+                    Button("Modifica") { apriForm(grafico.tipo, grafico) },
+                    Button("Elimina") { confermaElimina(grafico) }
+                ).apply { className = "lbi-qv-pill-buttons" }
+            }.setHeader("")
+        }
+        return Div(Div(Span("Grafici dell'analisi")).apply { className = "lbi-qv-panel-title" }, griglia)
+            .apply { className = "lbi-qv-panel" }
+    }
+
+    private fun ricaricaElenco() {
+        griglia.setItems(pivotViewId?.let { chartService.findByView(it) } ?: emptyList())
+    }
+
+    private fun confermaElimina(grafico: AreaChart) {
+        val dialog = Dialog().apply {
+            headerTitle = "Eliminare \"${grafico.titolo}\"?"
+            width = "440px"
+        }
+        dialog.add(Span("Il grafico sarà rimosso definitivamente."))
+        dialog.footer.add(
+            Button("Annulla") { dialog.close() },
+            Button("Elimina") {
+                chartService.delete(grafico.id)
+                if (graficoInModifica?.id == grafico.id) chiudiForm()
+                ricaricaElenco()
+                dialog.close()
+            }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
+        )
+        dialog.open()
+    }
+
+    // ================= Menu =================
+
+    private fun menu(
+        dataset: Area?,
+        aree: List<Area>,
+        elencoAnalisi: List<PivotView>,
+        attiva: PivotView?
+    ): List<LbiSidebarMenu.MenuGroup> {
+        val id = dataset?.id
+        val gruppi = mutableListOf(
+            LbiSidebarMenu.MenuGroup(
+                "Dataset",
+                aree.map { a ->
+                    LbiSidebarMenu.MenuEntry(a.nome, icon = VaadinIcon.TABLE) {
+                        getUI().ifPresent { it.navigate(DatasetFiltriView::class.java, a.id.toString()) }
+                    }
+                },
+                icon = VaadinIcon.DATABASE
+            ),
+            LbiSidebarMenu.MenuGroup(
+                label = "Analisi di ${dataset?.nome ?: ""}",
+                entries = if (id == null) emptyList() else elencoAnalisi.map { v ->
+                    LbiSidebarMenu.MenuEntry(v.nome, icon = VaadinIcon.TABLE) {
+                        getUI().ifPresent { it.navigate(AnalisiView::class.java, "$id,${v.id}") }
+                    }
+                },
+                icon = VaadinIcon.CHART
+            ),
+            LbiSidebarMenu.MenuGroup(
+                label = "Grafici",
+                entries = listOf(LbiSidebarMenu.MenuEntry("Gestisci grafici", enabled = false, icon = VaadinIcon.PIE_CHART) {}),
+                active = true,
+                icon = VaadinIcon.PIE_CHART
+            ),
+            LbiSidebarMenu.MenuGroup(
+                label = "Report",
+                entries = listOf(
+                    LbiSidebarMenu.MenuEntry("Stampe", icon = VaadinIcon.PRINT) { Notification.show("Funzione in arrivo") }
+                ),
+                icon = VaadinIcon.PRINT
+            )
+        )
+        if (adminGuard.isAdmin()) {
+            gruppi.add(
                 LbiSidebarMenu.MenuGroup(
                     label = "Amministrazione",
                     entries = listOf(
                         LbiSidebarMenu.MenuEntry("Tabelle importate", icon = VaadinIcon.DATABASE) {
                             getUI().ifPresent { it.navigate(TabelleImportateView::class.java) }
+                        },
+                        LbiSidebarMenu.MenuEntry("+ Nuovo dataset", icon = VaadinIcon.PLUS) {
+                            getUI().ifPresent { it.navigate(NewDatasetView::class.java) }
+                        },
+                        LbiSidebarMenu.MenuEntry("Modello dati", enabled = id != null, icon = VaadinIcon.TABLE) {
+                            id?.let { dsId -> getUI().ifPresent { it.navigate(NewDatasetView::class.java, dsId.toString()) } }
                         },
                         LbiSidebarMenu.MenuEntry("Gestione utenti", icon = VaadinIcon.USERS) {
                             getUI().ifPresent { it.navigate(AdminView::class.java) }
@@ -131,116 +669,11 @@ class ChartsView(
                     icon = VaadinIcon.COG
                 )
             )
-        } else emptyList()
-
-        val menuGroups = listOf(
-            LbiSidebarMenu.MenuGroup(
-                label = "Gestisci",
-                entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Torna all'analisi", enabled = area != null) {
-                        navigateToAssociative(area?.id)
-                    }
-                )
-            ),
-            LbiSidebarMenu.MenuGroup(
-                label = "Grafici",
-                entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Gestisci grafici", enabled = false) {}
-                ),
-                active = true
-            ),
-            LbiSidebarMenu.MenuGroup(
-                label = "Report",
-                entries = listOf(
-                    LbiSidebarMenu.MenuEntry("Stampe") { Notification.show("Funzione in arrivo") }
-                )
-            )
-        ) + gruppoAmministrazione
-
-        val shell = LbiAppShell(menuGroups, content, authService)
-        add(shell)
-        setFlexGrow(1.0, shell)
+        }
+        return gruppi
     }
 
-    private fun navigateToAssociative(targetAreaId: UUID?) {
-        if (targetAreaId == null) {
-            ui.ifPresent { it.navigate(DatasetFiltriView::class.java) }
-            return
-        }
-        val param = if (pivotViewId != null) "$targetAreaId,$pivotViewId" else targetAreaId.toString()
-        ui.ifPresent { it.navigate(AnalisiView::class.java, param) }
-    }
-
-    private fun buildContent(currentAreaId: UUID, areaNome: String): Component {
-        val typeGallery = buildTypeGallery(currentAreaId)
-
-        grid.apply {
-            removeAllColumns()
-            setWidthFull()
-            height = "320px"
-            addColumn { it.titolo }.setHeader("Titolo").setAutoWidth(true)
-            addColumn { it.tipo.name }.setHeader("Tipo").setAutoWidth(true)
-            addColumn { chart ->
-                chartService.getMetricheDelGrafico(chart.id)
-                    .mapNotNull { cm -> registryRepository.findMetricheByArea(currentAreaId).find { it.id == cm.metricaId }?.nome }
-                    .joinToString(", ")
-            }.setHeader("Metriche").setAutoWidth(true)
-
-            addComponentColumn { chart ->
-                HorizontalLayout(
-                    Button("Modifica") { openEditForm(currentAreaId, chart) },
-                    Button("Elimina") { confirmDelete(chart) }
-                ).apply { isPadding = false }
-            }.setHeader("")
-        }
-        reload(currentAreaId)
-
-        formArea.removeAll()
-        formArea.isVisible = false
-
-        return VerticalLayout(
-            Span("Grafici di \"$areaNome\"").apply { className = "lbi-section-title" },
-            Span("Scegli un tipo per creare un nuovo grafico. Righe, Colonne e Valori sono proprie del grafico, scelte fra tutti i campi dell'analisi.").apply {
-                className = "lbi-wizard-label"
-            },
-            typeGallery,
-            formArea,
-            Span("Grafici esistenti").apply { className = "lbi-section-title" },
-            grid
-        ).apply {
-            className = "lbi-center"
-            isPadding = true
-            setSizeFull()
-        }
-    }
-
-    /** Griglia delle nove card di scelta tipo, ognuna con la sua miniatura SVG. */
-    private fun buildTypeGallery(currentAreaId: UUID): Component {
-        val gallery = HorizontalLayout().apply {
-            className = "lbi-chart-type-gallery"
-            isPadding = false
-        }
-        ChartType.entries.forEach { tipo ->
-            gallery.add(buildTypeCard(tipo, currentAreaId))
-        }
-        return gallery
-    }
-
-    private fun buildTypeCard(tipo: ChartType, currentAreaId: UUID): Component {
-        val icon = com.vaadin.flow.component.html.Div().apply {
-            element.setProperty("innerHTML", chartTypeIcon(tipo))
-        }
-        val label = Span(chartTypeLabel(tipo)).apply { className = "lbi-chart-type-label" }
-
-        val card = VerticalLayout(icon, label).apply {
-            className = "lbi-chart-type-card"
-            isPadding = false
-            width = "110px"
-            height = "110px"
-            addClickListener { openCreateForm(currentAreaId, tipo) }
-        }
-        return card
-    }
+    // ================= Tipi di grafico =================
 
     private fun chartTypeLabel(tipo: ChartType): String = when (tipo) {
         ChartType.BAR -> "Barre"
@@ -342,425 +775,5 @@ class ChartsView(
                 <circle cx="42" cy="30" r="3" fill="#F28E2B"/>
             </svg>
         """.trimIndent()
-    }
-
-    private fun reload(currentAreaId: UUID) {
-        grid.setItems(chartService.findByArea(currentAreaId))
-    }
-
-    /**
-     * Tutti i campi (dimensioni + metriche) dell'Area: i grafici
-     * dipendono dall'Analisi, non da nessuna PivotView, quindi ogni
-     * campo dell'area è sempre ammesso/selezionabile qui, nessuno
-     * disabilitato.
-     */
-    private fun campiAmmessi(currentAreaId: UUID): Set<UUID> {
-        val dimensioni = registryRepository.findDimensioniByArea(currentAreaId).map { it.dimensioneId }
-        val metriche = registryRepository.findMetricheByArea(currentAreaId).map { it.id }
-        return (dimensioni + metriche).toSet()
-    }
-
-    /**
-     * Selezioni correnti (verde/bianco/grigio) dell'utente per quest'area:
-     * uniche e condivise per l'Area (non per vista), usate per calcolare
-     * la preview del grafico con gli stessi filtri che vede in pagina
-     * Analisi/Configura Analisi.
-     */
-    private fun selezioniCorrenti(currentAreaId: UUID): Map<UUID, Set<Long>> {
-        val userId = CurrentUserHolder.get()?.userId ?: return emptyMap()
-        return userPivotStateRepository.find(userId, currentAreaId)?.selections ?: emptyMap()
-    }
-
-    /**
-     * Costruisce il PivotPanel dedicato al grafico: tutti i campi
-     * dell'area, TUTTI abilitati (nessuna disabilitazione), perché i
-     * grafici dipendono dall'Analisi intera, non da una PivotView
-     * specifica.
-     *
-     * onChange riceve righe/colonne/valori come parametri diretti dal
-     * PivotPanel (non va letto da una variabile esterna catturata nella
-     * lambda): il costruttore/setFieldsWithIds/restoreState di PivotPanel
-     * possono scatenare onChange in modo sincrono, PRIMA che l'assegnazione
-     * "val pivotPanel = ..." nel chiamante sia completata.
-     */
-    private fun buildChartPivotPanelWithCallback(
-        currentAreaId: UUID,
-        onChange: (rows: List<UUID>, columns: List<UUID>, values: List<UUID>) -> Unit
-    ): PivotPanel {
-        val dimensioni = registryRepository.findDimensioniByArea(currentAreaId)
-            .mapNotNull { d -> registryRepository.findDimensione(d.dimensioneId)?.let { d.dimensioneId to it.nome } }
-        val metriche = registryRepository.findMetricheByArea(currentAreaId).map { it.id to it.nome }
-
-        val panel = PivotPanel(onChange)
-        panel.addAttachListener { panel.ensureDropTargetsAttached() }
-        panel.setFieldsWithIds(dimensioni, metriche)
-        return panel
-    }
-
-    /** Chiude il form inline (creazione o edit) senza salvare, ripulendo l'area. */
-    private fun closeForm() {
-        formArea.removeAll()
-        formArea.isVisible = false
-    }
-
-    /**
-     * Apre il form inline di creazione: il tipo arriva già deciso dal
-     * click sulla card. Righe/Colonne/Valori si scelgono col PivotPanel
-     * dedicato, con preview live sotto che si aggiorna ad ogni modifica
-     * del pivot o delle opzioni.
-     */
-    private fun openCreateForm(currentAreaId: UUID, tipo: ChartType) {
-        val metriche = registryRepository.findMetricheByArea(currentAreaId)
-        if (metriche.isEmpty()) {
-            Notification.show("L'analisi non ha metriche configurate: aggiungine prima dalla vista principale")
-            return
-        }
-
-        formArea.removeAll()
-
-        val titoloField = TextField("Titolo").apply { setWidthFull() }
-
-        val orderByCombo = ComboBox<AggregateOrder>("Ordinamento").apply {
-            setItems(AggregateOrder.entries)
-            setItemLabelGenerator {
-                when (it) {
-                    AggregateOrder.DIMENSION -> "Per etichetta (A-Z)"
-                    AggregateOrder.METRIC_DESC -> "Per valore, decrescente"
-                    AggregateOrder.METRIC_ASC -> "Per valore, crescente"
-                }
-            }
-            value = AggregateOrder.DIMENSION
-            setWidthFull()
-        }
-        val maxItemsField = com.vaadin.flow.component.textfield.IntegerField("Limite righe (vuoto = automatico)").apply {
-            setWidthFull()
-        }
-        val followsColumnsCheckbox = com.vaadin.flow.component.checkbox.Checkbox(
-            "Segui le Colonne del grafico (una serie per valore, es. una per anno)"
-        )
-        val highlightDeclineCheckbox = com.vaadin.flow.component.checkbox.Checkbox(
-            "Evidenzia i cali (rosso) confrontando l'ultima colonna con la precedente"
-        ).apply { isEnabled = false }
-        followsColumnsCheckbox.addValueChangeListener { event ->
-            highlightDeclineCheckbox.isEnabled = event.value
-            if (!event.value) highlightDeclineCheckbox.value = false
-        }
-
-        val previewContainer = VerticalLayout().apply { isPadding = false }
-
-        // Ultimo stato pivot noto, aggiornato dal callback del PivotPanel
-        // e riletto dai listener dei campi opzione (titolo, ordinamento,
-        // ecc.) per ricalcolare la preview senza dover leggere pivotPanel
-        // direttamente.
-        var ultimoPivotRows: List<UUID> = emptyList()
-        var ultimoPivotColumns: List<UUID> = emptyList()
-        var ultimoPivotValues: List<UUID> = emptyList()
-
-        fun aggiornaPreview(pivotRows: List<UUID>, pivotColumns: List<UUID>, pivotValues: List<UUID>) {
-            ultimoPivotRows = pivotRows
-            ultimoPivotColumns = pivotColumns
-            ultimoPivotValues = pivotValues
-
-            previewContainer.removeAll()
-            if (pivotRows.isEmpty() || pivotValues.isEmpty()) {
-                previewContainer.add(buildPreviewPlaceholder("Seleziona almeno una dimensione in Righe e una metrica in Valori"))
-                return
-            }
-            val bozza = AreaChart(
-                id = UUID.randomUUID(),
-                areaId = currentAreaId,
-                titolo = titoloField.value?.trim()?.ifBlank { "Anteprima" } ?: "Anteprima",
-                tipo = tipo,
-                orderBy = orderByCombo.value ?: AggregateOrder.DIMENSION,
-                maxItems = maxItemsField.value,
-                followsColumns = followsColumnsCheckbox.value,
-                highlightDecline = highlightDeclineCheckbox.value,
-                pivotRows = pivotRows,
-                pivotColumns = pivotColumns
-            )
-            renderPreview(previewContainer, bozza, pivotValues, currentAreaId)
-        }
-
-        val pivotPanel = buildChartPivotPanelWithCallback(currentAreaId) { rows, columns, values ->
-            aggiornaPreview(rows, columns, values)
-        }
-
-        // Preimposta Righe/Colonne/Valori con quelli dell'Analisi da cui si è
-        // aperta questa pagina, così l'utente non deve ritrascinare da capo
-        // gli stessi campi che aveva già scelto nel pivot dell'Analisi.
-        pivotViewId?.let { viewId ->
-            pivotViewService.findById(viewId)?.let { view ->
-                pivotPanel.restoreState(view.pivotRows, view.pivotColumns, view.pivotValues)
-                aggiornaPreview(view.pivotRows, view.pivotColumns, view.pivotValues)
-            }
-        }
-
-        titoloField.addValueChangeListener { aggiornaPreview(ultimoPivotRows, ultimoPivotColumns, ultimoPivotValues) }
-        orderByCombo.addValueChangeListener { aggiornaPreview(ultimoPivotRows, ultimoPivotColumns, ultimoPivotValues) }
-        maxItemsField.addValueChangeListener { aggiornaPreview(ultimoPivotRows, ultimoPivotColumns, ultimoPivotValues) }
-        followsColumnsCheckbox.addValueChangeListener { aggiornaPreview(ultimoPivotRows, ultimoPivotColumns, ultimoPivotValues) }
-        highlightDeclineCheckbox.addValueChangeListener { aggiornaPreview(ultimoPivotRows, ultimoPivotColumns, ultimoPivotValues) }
-
-        val cancelButton = Button("Annulla") { closeForm() }
-        val createButton = Button("Crea") {
-            val titolo = titoloField.value?.trim()
-            if (titolo.isNullOrBlank()) {
-                Notification.show("Il titolo è obbligatorio")
-                return@Button
-            }
-            val (pivotRows, pivotColumns, pivotValues) = pivotPanel.currentState()
-            if (pivotRows.isEmpty()) {
-                Notification.show("Seleziona almeno una dimensione in Righe")
-                return@Button
-            }
-            if (pivotValues.isEmpty()) {
-                Notification.show("Seleziona almeno una metrica in Valori")
-                return@Button
-            }
-            if (followsColumnsCheckbox.value && pivotValues.size > 1) {
-                Notification.show(
-                    "\"Segui le Colonne\" richiede una sola metrica: rimuovine alcune o disattiva l'opzione",
-                    5000, Notification.Position.MIDDLE
-                )
-                return@Button
-            }
-            try {
-                chartService.create(
-                    areaId = currentAreaId,
-                    titolo = titolo,
-                    tipo = tipo,
-                    metricaIds = pivotValues,
-                    pivotRows = pivotRows,
-                    pivotColumns = pivotColumns,
-                    orderBy = orderByCombo.value ?: AggregateOrder.DIMENSION,
-                    maxItems = maxItemsField.value,
-                    followsColumns = followsColumnsCheckbox.value,
-                    highlightDecline = highlightDeclineCheckbox.value
-                )
-                reload(currentAreaId)
-                closeForm()
-                Notification.show("Grafico creato", 3000, Notification.Position.BOTTOM_END)
-            } catch (e: Exception) {
-                Notification.show("Errore: ${e.message}", 5000, Notification.Position.MIDDLE)
-            }
-        }.apply { addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY) }
-
-        formArea.add(
-            Span("Nuovo grafico: ${chartTypeLabel(tipo)}").apply { className = "lbi-section-title" },
-            titoloField,
-            Span("Righe, Colonne e Valori (tutti i campi dell'analisi sono selezionabili)")
-                .apply { className = "lbi-wizard-label" },
-            pivotPanel,
-            orderByCombo,
-            maxItemsField,
-            followsColumnsCheckbox,
-            highlightDeclineCheckbox,
-            Span("Anteprima").apply { className = "lbi-section-title" },
-            previewContainer,
-            HorizontalLayout(cancelButton, createButton).apply { isPadding = false }
-        )
-        formArea.isVisible = true
-    }
-
-    /**
-     * Apre il form inline di modifica: stesso layout della creazione, ma
-     * precompilato con la configurazione salvata. Il tipo non è
-     * modificabile (cambiare tipo significa cambiare i vincoli: più
-     * semplice eliminare e ricreare col tipo giusto).
-     */
-    private fun openEditForm(currentAreaId: UUID, chart: AreaChart) {
-        val tutteMetriche = registryRepository.findMetricheByArea(currentAreaId)
-        if (tutteMetriche.isEmpty()) {
-            Notification.show("L'analisi non ha metriche configurate")
-            return
-        }
-        val metricheAttuali = chartService.getMetricheDelGrafico(chart.id)
-            .sortedBy { it.posizione }
-            .mapNotNull { cm -> tutteMetriche.find { it.id == cm.metricaId } }
-
-        formArea.removeAll()
-
-        val titoloField = TextField("Titolo").apply {
-            setWidthFull()
-            value = chart.titolo
-        }
-        val orderByCombo = ComboBox<AggregateOrder>("Ordinamento").apply {
-            setItems(AggregateOrder.entries)
-            setItemLabelGenerator {
-                when (it) {
-                    AggregateOrder.DIMENSION -> "Per etichetta (A-Z)"
-                    AggregateOrder.METRIC_DESC -> "Per valore, decrescente"
-                    AggregateOrder.METRIC_ASC -> "Per valore, crescente"
-                }
-            }
-            value = chart.orderBy
-            setWidthFull()
-        }
-        val maxItemsField = com.vaadin.flow.component.textfield.IntegerField("Limite righe (vuoto = automatico)").apply {
-            setWidthFull()
-            value = chart.maxItems
-        }
-        val followsColumnsCheckbox = com.vaadin.flow.component.checkbox.Checkbox(
-            "Segui le Colonne del grafico (una serie per valore, es. una per anno)"
-        ).apply { value = chart.followsColumns }
-        val highlightDeclineCheckbox = com.vaadin.flow.component.checkbox.Checkbox(
-            "Evidenzia i cali (rosso) confrontando l'ultima colonna con la precedente"
-        ).apply {
-            value = chart.highlightDecline
-            isEnabled = chart.followsColumns
-        }
-        followsColumnsCheckbox.addValueChangeListener { event ->
-            highlightDeclineCheckbox.isEnabled = event.value
-            if (!event.value) highlightDeclineCheckbox.value = false
-        }
-
-        val previewContainer = VerticalLayout().apply { isPadding = false }
-
-        var ultimoPivotRows: List<UUID> = chart.pivotRows
-        var ultimoPivotColumns: List<UUID> = chart.pivotColumns
-        var ultimoPivotValues: List<UUID> = metricheAttuali.map { it.id }
-
-        fun aggiornaPreview(pivotRows: List<UUID>, pivotColumns: List<UUID>, pivotValues: List<UUID>) {
-            ultimoPivotRows = pivotRows
-            ultimoPivotColumns = pivotColumns
-            ultimoPivotValues = pivotValues
-
-            previewContainer.removeAll()
-            if (pivotRows.isEmpty() || pivotValues.isEmpty()) {
-                previewContainer.add(buildPreviewPlaceholder("Seleziona almeno una dimensione in Righe e una metrica in Valori"))
-                return
-            }
-            val bozza = chart.copy(
-                titolo = titoloField.value?.trim()?.ifBlank { chart.titolo } ?: chart.titolo,
-                orderBy = orderByCombo.value ?: chart.orderBy,
-                maxItems = maxItemsField.value,
-                followsColumns = followsColumnsCheckbox.value,
-                highlightDecline = highlightDeclineCheckbox.value,
-                pivotRows = pivotRows,
-                pivotColumns = pivotColumns
-            )
-            renderPreview(previewContainer, bozza, pivotValues, currentAreaId)
-        }
-
-        val pivotPanel = buildChartPivotPanelWithCallback(currentAreaId) { rows, columns, values ->
-            aggiornaPreview(rows, columns, values)
-        }
-        pivotPanel.restoreState(chart.pivotRows, chart.pivotColumns, metricheAttuali.map { it.id })
-        // restoreState non chiama onChange (per design di PivotPanel):
-        // la preview iniziale va quindi disegnata esplicitamente qui,
-        // con lo stato salvato del grafico.
-        aggiornaPreview(chart.pivotRows, chart.pivotColumns, metricheAttuali.map { it.id })
-
-        titoloField.addValueChangeListener { aggiornaPreview(ultimoPivotRows, ultimoPivotColumns, ultimoPivotValues) }
-        orderByCombo.addValueChangeListener { aggiornaPreview(ultimoPivotRows, ultimoPivotColumns, ultimoPivotValues) }
-        maxItemsField.addValueChangeListener { aggiornaPreview(ultimoPivotRows, ultimoPivotColumns, ultimoPivotValues) }
-        followsColumnsCheckbox.addValueChangeListener { aggiornaPreview(ultimoPivotRows, ultimoPivotColumns, ultimoPivotValues) }
-        highlightDeclineCheckbox.addValueChangeListener { aggiornaPreview(ultimoPivotRows, ultimoPivotColumns, ultimoPivotValues) }
-
-        val cancelButton = Button("Annulla") { closeForm() }
-        val saveButton = Button("Salva") {
-            val titolo = titoloField.value?.trim()
-            if (titolo.isNullOrBlank()) {
-                Notification.show("Il titolo è obbligatorio")
-                return@Button
-            }
-            val (pivotRows, pivotColumns, pivotValues) = pivotPanel.currentState()
-            if (pivotRows.isEmpty()) {
-                Notification.show("Seleziona almeno una dimensione in Righe")
-                return@Button
-            }
-            if (pivotValues.isEmpty()) {
-                Notification.show("Seleziona almeno una metrica in Valori")
-                return@Button
-            }
-            if (followsColumnsCheckbox.value && pivotValues.size > 1) {
-                Notification.show(
-                    "\"Segui le Colonne\" richiede una sola metrica: rimuovine alcune o disattiva l'opzione",
-                    5000, Notification.Position.MIDDLE
-                )
-                return@Button
-            }
-            val updatedChart = chart.copy(
-                titolo = titolo,
-                orderBy = orderByCombo.value ?: chart.orderBy,
-                maxItems = maxItemsField.value,
-                followsColumns = followsColumnsCheckbox.value,
-                highlightDecline = highlightDeclineCheckbox.value,
-                pivotRows = pivotRows,
-                pivotColumns = pivotColumns
-            )
-            try {
-                chartService.update(updatedChart, pivotValues)
-                reload(currentAreaId)
-                closeForm()
-                Notification.show("Grafico aggiornato", 3000, Notification.Position.BOTTOM_END)
-            } catch (e: Exception) {
-                Notification.show("Errore: ${e.message}", 5000, Notification.Position.MIDDLE)
-            }
-        }.apply { addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY) }
-
-        formArea.add(
-            Span("Modifica \"${chart.titolo}\" (${chartTypeLabel(chart.tipo)})").apply { className = "lbi-section-title" },
-            titoloField,
-            Span("Righe, Colonne e Valori (tutti i campi dell'analisi sono selezionabili)")
-                .apply { className = "lbi-wizard-label" },
-            pivotPanel,
-            orderByCombo,
-            maxItemsField,
-            followsColumnsCheckbox,
-            highlightDeclineCheckbox,
-            Span("Anteprima").apply { className = "lbi-section-title" },
-            previewContainer,
-            HorizontalLayout(cancelButton, saveButton).apply { isPadding = false }
-        )
-        formArea.isVisible = true
-    }
-
-    /**
-     * Calcola e disegna la preview del grafico con i dati reali (stessa
-     * ChartService.getChartDataForPreview usata a runtime per grafici non
-     * ancora salvati), usando le selezioni correnti dell'utente per
-     * l'area - se il grafico bozza non è coerente (metriche non più
-     * esistenti), mostra un placeholder invece di un errore.
-     */
-    private fun renderPreview(container: VerticalLayout, bozza: AreaChart, metricaIds: List<UUID>, currentAreaId: UUID) {
-        val campiAmmessiCorrente = campiAmmessi(currentAreaId)
-        val selections = selezioniCorrenti(currentAreaId)
-
-        try {
-            val result = chartService.getChartDataForPreview(bozza, metricaIds, campiAmmessiCorrente, selections)
-            when (result) {
-                is ChartResult.Ready -> {
-                    val chartComponent = EChartComponent()
-                    container.add(chartComponent)
-                    chartComponent.render(result.data)
-                }
-                is ChartResult.Incoherent -> {
-                    container.add(buildPreviewPlaceholder(result.reason))
-                }
-            }
-        } catch (e: Exception) {
-            container.add(buildPreviewPlaceholder("Impossibile calcolare l'anteprima: ${e.message}"))
-        }
-    }
-
-    private fun buildPreviewPlaceholder(message: String): Span =
-        Span(message).apply { className = "lbi-wizard-label" }
-
-    private fun confirmDelete(chart: AreaChart) {
-        val dialog = Dialog().apply {
-            headerTitle = "Eliminare \"${chart.titolo}\"?"
-            width = "440px"
-        }
-        dialog.add(Span("Il grafico sarà rimosso definitivamente."))
-        val cancelButton = Button("Annulla") { dialog.close() }
-        val confirmButton = Button("Elimina") {
-            chartService.delete(chart.id)
-            areaId?.let { reload(it) }
-            closeForm()
-            dialog.close()
-        }
-        dialog.footer.add(cancelButton, confirmButton)
-        dialog.open()
     }
 }

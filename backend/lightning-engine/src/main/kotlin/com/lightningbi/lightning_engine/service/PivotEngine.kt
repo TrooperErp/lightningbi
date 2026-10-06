@@ -65,6 +65,8 @@ object PivotEngine {
         dims: List<UUID>,
         metriche: List<AreaMetrica>,
         labelFor: (UUID, Long) -> String,
+        totali: Map<List<Long>, Map<String, BigDecimal>> = emptyMap(),
+        percorso: List<Long> = emptyList(),
         colonnaFisicaFor: (UUID) -> String? = { null }
     ): List<PivotNode> {
         if (dims.isEmpty()) {
@@ -84,8 +86,12 @@ object PivotEngine {
             .mapNotNull { (valueId, rowsForValue) ->
                 if (valueId == null) return@mapNotNull null
                 val label = labelFor(dimId, valueId)
-                val children = buildHierarchy(rowsForValue, remainingDims, metriche, labelFor, colonnaFisicaFor)
-                val aggregatedValues = sumChildValues(children, metriche)
+                val children = buildHierarchy(
+                    rowsForValue, remainingDims, metriche, labelFor, totali, percorso + valueId, colonnaFisicaFor
+                )
+                // Se il totale del nodo è stato calcolato sui dati originali (per qualunque
+                // aggregazione) si usa quello; altrimenti si sommano i figli.
+                val aggregatedValues = totali[percorso + valueId] ?: sumChildValues(children, metriche)
                 PivotNode(
                     dimId = dimId,
                     valueId = valueId,

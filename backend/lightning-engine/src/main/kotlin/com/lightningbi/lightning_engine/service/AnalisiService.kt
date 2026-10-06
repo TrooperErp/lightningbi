@@ -13,6 +13,7 @@ import com.lightningbi.lightning_engine.repository.RegistryRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
+import java.math.BigDecimal
 
 /** Un'analisi con le sue misure. */
 data class AnalisiCompleta(val vista: PivotView, val misure: List<MisuraAnalisi>)
@@ -107,17 +108,19 @@ class AnalisiService(
         return registryRepository.findDimensioniByArea(areaId).mapNotNull { d ->
             val tabellaId = d.areaTabellaId ?: return@mapNotNull null
             val campo = campi[tabellaId to d.colonnaFisica] ?: return@mapNotNull null
+            // Campi tecnici (chiavi, prefissi della connessione): nascosti, non cambiati.
+            if (campo.tecnico) return@mapNotNull null
             DimensioneAnalisi(d.dimensioneId, campo.nomeOrigine, alias[tabellaId].orEmpty())
         }.sortedWith(compareBy({ it.tabella.lowercase() }, { it.nome.lowercase() }))
     }
-
     /** I campi dei Fatti su cui si può scrivere una misura. */
     fun campiMisurabili(areaId: UUID): List<CampoMisurabile> {
         val modello = modelloCorrente(areaId)
         val fatti = modello.bozza.occorrenze.filter { it.ruolo == RuoloTabella.FATTI }.associate { it.id to it.alias }
         return modello.bozza.campi()
             .filter { !it.escluso && it.occorrenzaId in fatti }
-            .map { CampoMisurabile(it.occorrenzaId, fatti.getValue(it.occorrenzaId), it.colonna, it.nomeOrigine, it.numerico) }
+            // Una chiave non si somma né si media; resta disponibile per il conteggio di distinti.
+            .map { CampoMisurabile(it.occorrenzaId, fatti.getValue(it.occorrenzaId), it.colonna, it.nomeOrigine, it.numerico && !it.tecnico) }
             .sortedWith(compareBy({ it.tabella.lowercase() }, { it.nome.lowercase() }))
     }
 
@@ -221,11 +224,17 @@ class AnalisiService(
         TipoAggregazione.COUNT_DISTINCT -> "Il conteggio distinti"
     }
 
-    // ================= Calcolo =================
-
     /**
      * Calcola la pivot di un'analisi con le selezioni dell'utente. Senza misure restituisce un
      * risultato vuoto: una pivot senza misure non ha niente da calcolare.
+     *
+     * Come in Qlik:
+     * - con delle colonne, la variazione percentuale compare da sola quando il confronto è tra
+     *   ESATTAMENTE due colonne (con più colonne non ha senso e il motore non la genera);
+     * - i totali delle righe cappello e il totale generale NON si ottengono sommando i figli: si
+     *   ricalcolano sui dati originali con una query per livello, quindi sono giusti per ogni
+     *   aggregazione (media, minimo, massimo, conteggio di distinti);
+     * - il totale generale sta in cima alla pivot, come il totale di una tabella Qlik.
      */
     fun calcola(
         vistaId: UUID,
@@ -251,13 +260,34 @@ class AnalisiService(
             order = ordine,
             orderMetricId = ordineMisuraId,
             limit = limite,
-            resolveLabels = true
+            resolveLabels = true,
+            showVariationPercent = vista.pivotColumns.isNotEmpty()
         )
         val risultato = aggregateService.getAggregates(richiesta)
+
+        // Totali dei livelli intermedi: per ogni livello k (le prime k dimensioni delle Righe)
+        // una query, e il valore di ogni nodo si prende da lì.
+        val totali = mutableMapOf<List<Long>, Map<String, BigDecimal>>()
+        for (livello in 1 until vista.pivotRows.size) {
+            val dimensioniLivello = vista.pivotRows.take(livello)
+            val perLivello = aggregateService.getAggregates(richiesta.copy(groupBy = dimensioniLivello, limit = null))
+            perLivello.rows.forEach { riga ->
+                val percorso = dimensioniLivello.map { riga.groupKeys[it] ?: return@forEach }
+                totali[percorso] = riga.values
+            }
+        }
+
         val gerarchia = aggregateService.buildRowHierarchy(
-            vista.areaId, risultato, vista.pivotRows, metriche.map { it.id }, metriche
+            vista.areaId, risultato, vista.pivotRows, metriche.map { it.id }, metriche, totali
         )
-        return RisultatoAnalisi(risultato, gerarchia, metriche)
+
+        // Totale generale: nessuna dimensione nelle Righe, le stesse Colonne.
+        val totaleGenerale = if (gerarchia.isEmpty()) null else
+            aggregateService.getAggregates(richiesta.copy(groupBy = emptyList(), limit = null)).rows.firstOrNull()
+        val conTotale = if (totaleGenerale == null) gerarchia
+        else listOf(PivotEngine.PivotNode(dimId = null, valueId = null, label = "Totale", values = totaleGenerale.values)) + gerarchia
+
+        return RisultatoAnalisi(risultato, conTotale, metriche)
     }
 
     private fun modelloCorrente(areaId: UUID): ModelloDataset =

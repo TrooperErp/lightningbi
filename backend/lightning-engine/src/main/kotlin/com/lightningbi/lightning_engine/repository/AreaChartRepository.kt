@@ -15,6 +15,9 @@ import java.util.UUID
 
 interface AreaChartRepository {
     fun findByArea(areaId: UUID): List<AreaChart>
+
+    /** I grafici di un'analisi, in ordine di posizione. */
+    fun findByView(pivotViewId: UUID): List<AreaChart>
     fun findById(id: UUID): AreaChart?
     fun save(chart: AreaChart): AreaChart
     fun update(chart: AreaChart): AreaChart
@@ -53,6 +56,7 @@ class AreaChartRepositoryImpl(
         AreaChart(
             id = UUID.fromString(rs.getString("id")),
             areaId = UUID.fromString(rs.getString("area_id")),
+            pivotViewId = UUID.fromString(rs.getString("pivot_view_id")),
             titolo = rs.getString("titolo"),
             tipo = ChartType.valueOf(rs.getString("tipo")),
             orderBy = AggregateOrder.valueOf(rs.getString("order_by")),
@@ -72,6 +76,12 @@ class AreaChartRepositoryImpl(
             mapper, areaId
         )
 
+    override fun findByView(pivotViewId: UUID): List<AreaChart> =
+        jdbcTemplate.query(
+            "SELECT * FROM lbi_area_chart WHERE pivot_view_id = ? ORDER BY posizione, created_at",
+            mapper, pivotViewId
+        )
+
     override fun findById(id: UUID): AreaChart? =
         jdbcTemplate.query("SELECT * FROM lbi_area_chart WHERE id = ?", mapper, id).firstOrNull()
 
@@ -79,10 +89,10 @@ class AreaChartRepositoryImpl(
         jdbcTemplate.update(
             """
         INSERT INTO lbi_area_chart
-            (id, area_id, titolo, tipo, order_by, max_items, posizione, created_at, follows_columns, highlight_decline, pivot_rows_json, pivot_columns_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)
+                        (id, area_id, pivot_view_id, titolo, tipo, order_by, max_items, posizione, created_at, follows_columns, highlight_decline, pivot_rows_json, pivot_columns_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)
         """.trimIndent(),
-            chart.id, chart.areaId, chart.titolo, chart.tipo.name,
+            chart.id, chart.areaId, chart.pivotViewId, chart.titolo, chart.tipo.name,
             chart.orderBy.name, chart.maxItems, chart.posizione,
             java.sql.Timestamp.from(chart.createdAt),
             chart.followsColumns, chart.highlightDecline,

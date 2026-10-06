@@ -118,7 +118,8 @@ class AggregateService(
         result: AggregateResult,
         groupBy: List<UUID>,
         metricIds: List<UUID>,
-        misure: List<AreaMetrica> = emptyList()
+        misure: List<AreaMetrica> = emptyList(),
+        totali: Map<List<Long>, Map<String, BigDecimal>> = emptyMap()
     ): List<PivotEngine.PivotNode> {
         if (groupBy.isEmpty() || result.rows.isEmpty()) return emptyList()
 
@@ -137,7 +138,7 @@ class AggregateService(
             return result.rows.firstOrNull { it.groupKeys[dimId] == valueId }?.labels?.get(dimId) ?: "#$valueId"
         }
 
-        val tree = PivotEngine.buildHierarchy(result.rows, groupBy, metriche, ::labelFor) { dimId -> colonnaFisicaByDim[dimId] }
+        val tree = PivotEngine.buildHierarchy(result.rows, groupBy, metriche, ::labelFor, totali) { dimId -> colonnaFisicaByDim[dimId] }
 
         return tree
     }

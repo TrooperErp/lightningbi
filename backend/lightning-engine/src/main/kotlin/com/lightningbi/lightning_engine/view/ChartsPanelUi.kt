@@ -25,7 +25,7 @@ class ChartsPanelUi {
         }
         if (chartsData.isEmpty()) return
 
-        root.add(Span("Grafici").apply { className = "lbi-section-title" })
+        root.add(Span("Grafici").apply { className = "lbi-qv-panel-title" })
 
         val grid = HorizontalLayout().apply {
             className = "lbi-charts-grid"

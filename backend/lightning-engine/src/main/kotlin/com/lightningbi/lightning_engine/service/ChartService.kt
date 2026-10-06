@@ -20,7 +20,9 @@ import java.util.UUID
 class ChartService(
     private val areaChartRepository: AreaChartRepository,
     private val registryRepository: RegistryRepository,
-    private val aggregateService: AggregateService
+    private val aggregateService: AggregateService,
+    private val misuraAnalisiRepository: com.lightningbi.lightning_engine.repository.MisuraAnalisiRepository
+
 ) {
     private val log = LoggerFactory.getLogger(ChartService::class.java)
 
@@ -62,6 +64,27 @@ class ChartService(
         }
     }
 
+    /**
+     * Tutti i grafici di UN'analisi, calcolati sulle LORO righe e colonne. [campiAmmessi] sono le
+     * dimensioni del dataset: un grafico che usa un campo non più presente torna "non coerente"
+     * invece di sparire.
+     */
+    fun getChartsDataDellAnalisi(
+        pivotViewId: UUID,
+        campiAmmessi: Set<UUID>,
+        selections: Map<UUID, Set<Long>>
+    ): List<ChartResult> =
+        areaChartRepository.findByView(pivotViewId).map { chart ->
+            try {
+                getChartData(chart, campiAmmessi, selections)
+            } catch (e: IllegalArgumentException) {
+                ChartResult.Incoherent(chart, e.message ?: "Grafico non coerente con il dataset")
+            } catch (e: Exception) {
+                log.warn("Grafico '{}' ({}) non calcolabile per errore imprevisto", chart.titolo, chart.id, e)
+                ChartResult.Incoherent(chart, "Errore nel calcolo del grafico")
+            }
+        }
+
     /** Dati di un singolo grafico, calcolati sulle sue proprie Righe/Colonne (chart.pivotRows/chart.pivotColumns). */
     fun getChartData(
         chart: AreaChart,
@@ -102,7 +125,8 @@ class ChartService(
             "Nessuna metrica configurata per questo grafico"
         }
 
-        val tutteMetriche = registryRepository.findMetricheByArea(chart.areaId)
+        // Le misure di un grafico sono quelle della SUA analisi (si scrivono nella pivot con "+ Misura").
+        val tutteMetriche = misuraAnalisiRepository.findByView(chart.pivotViewId).map { it.comeMetrica(chart.areaId) }
         val metricheOrdinate = metricaIds.mapNotNull { id -> tutteMetriche.find { it.id == id } }
         require(metricheOrdinate.size == metricaIds.size) {
             "Una o più metriche del grafico non esistono più nell'area"
@@ -129,6 +153,7 @@ class ChartService(
                 groupBy = pivotRows,
                 columnBy = columnsEffettive,
                 metricIds = metricheOrdinate.map { it.id },
+                misure = metricheOrdinate,
                 order = if (columnsEffettive.isEmpty()) ordinePerQuery else AggregateOrder.DIMENSION,
                 orderMetricId = if (columnsEffettive.isEmpty() && ordinePerQuery != AggregateOrder.DIMENSION) metricheOrdinate.first().id else null,
                 limit = limit,
@@ -321,6 +346,8 @@ class ChartService(
 
     fun findByArea(areaId: UUID): List<AreaChart> = areaChartRepository.findByArea(areaId)
 
+    /** I grafici di un'analisi. */
+    fun findByView(pivotViewId: UUID): List<AreaChart> = areaChartRepository.findByView(pivotViewId)
     fun findById(id: UUID): AreaChart? = areaChartRepository.findById(id)
 
     fun getMetricheDelGrafico(chartId: UUID): List<AreaChartMetrica> =
@@ -374,6 +401,7 @@ class ChartService(
      */
     fun create(
         areaId: UUID,
+        pivotViewId: UUID,
         titolo: String,
         tipo: ChartType,
         metricaIds: List<UUID>,
@@ -384,11 +412,12 @@ class ChartService(
         followsColumns: Boolean = false,
         highlightDecline: Boolean = false
     ): AreaChart {
-        validate(areaId, titolo, metricaIds)
+        validate(areaId, pivotViewId, titolo, metricaIds)
         require(pivotRows.isNotEmpty()) { "Il grafico deve avere almeno una dimensione in Righe" }
         val chart = AreaChart(
             id = UUID.randomUUID(),
             areaId = areaId,
+            pivotViewId = pivotViewId,
             titolo = titolo.trim(),
             tipo = tipo,
             orderBy = orderBy,
@@ -408,7 +437,7 @@ class ChartService(
     }
 
     fun update(chart: AreaChart, metricaIds: List<UUID>): AreaChart {
-        validate(chart.areaId, chart.titolo, metricaIds)
+        validate(chart.areaId, chart.pivotViewId, chart.titolo, metricaIds)
         require(chart.pivotRows.isNotEmpty()) { "Il grafico deve avere almeno una dimensione in Righe" }
         areaChartRepository.update(chart)
         areaChartRepository.replaceMetriche(
@@ -433,11 +462,11 @@ class ChartService(
         }
     }
 
-    private fun validate(areaId: UUID, titolo: String, metricaIds: List<UUID>) {
+    private fun validate(areaId: UUID, pivotViewId: UUID, titolo: String, metricaIds: List<UUID>) {
         require(titolo.isNotBlank()) { "Il titolo del grafico è obbligatorio" }
-        require(registryRepository.findAreaById(areaId) != null) { "Analisi $areaId inesistente" }
-        require(metricaIds.isNotEmpty()) { "Il grafico deve avere almeno una metrica" }
-        val metricheArea = registryRepository.findMetricheByArea(areaId).map { it.id }.toSet()
-        require(metricaIds.all { it in metricheArea }) { "Una o più metriche non appartengono a questa Analisi" }
+        require(registryRepository.findAreaById(areaId) != null) { "Dataset $areaId inesistente" }
+        require(metricaIds.isNotEmpty()) { "Il grafico deve avere almeno una misura: aggiungila nell'analisi con + Misura" }
+        val misureAnalisi = misuraAnalisiRepository.findByView(pivotViewId).map { it.id }.toSet()
+        require(metricaIds.all { it in misureAnalisi }) { "Una o più misure non appartengono all'analisi del grafico" }
     }
 }

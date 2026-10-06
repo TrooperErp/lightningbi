@@ -1185,15 +1185,253 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
 }
 
 
-/* Pulsanti terziari nelle pagine Dataset e Analisi: testo scuro (il tema li rende bianchi) */
-.lbi-qv-page vaadin-button[theme~="tertiary"] {
-    color: var(--lbi-text) !important;
+
+/* ============================================
+   Interfaccia Dataset e Analisi: bordi arrotondati, pulsanti leggibili, pivot compatta
+   Da aggiungere IN FONDO a themes/associa/styles.css.
+   Sostituisce il blocco "Pulsanti terziari nelle pagine Dataset e Analisi" se l'avevi aggiunto: toglilo.
+   ============================================ */
+
+:root {
+    --lbi-qv-radius: 8px;
 }
 
-.lbi-qv-page vaadin-button[theme~="tertiary"][theme~="error"] {
+/* ---- bordi arrotondati ---- */
+
+.lbi-qv-panel {
+    border-radius: var(--lbi-qv-radius);
+    overflow: hidden;
+}
+
+.lbi-qv-title {
+    border-radius: var(--lbi-qv-radius);
+}
+
+.lbi-qv-chip {
+    border-radius: 4px;
+}
+
+.lbi-qv-list {
+    border-radius: 0 0 var(--lbi-qv-radius) var(--lbi-qv-radius);
+    overflow: hidden;
+}
+
+.lbi-qv-top vaadin-button,
+.lbi-qv-page vaadin-button {
+    border-radius: var(--lbi-qv-radius);
+}
+
+.lbi-qv-page vaadin-text-field::part(input-field),
+.lbi-qv-page vaadin-combo-box::part(input-field) {
+    border-radius: var(--lbi-qv-radius);
+}
+
+/* ---- pulsanti piccoli dentro pannelli, schede e selezioni: sempre leggibili ---- */
+
+.lbi-qv-panel vaadin-button,
+.lbi-qv-tabs vaadin-button,
+.lbi-qv-sel-row vaadin-button {
+    color: var(--lbi-text) !important;
+    background: var(--lbi-surface) !important;
+    border: 1px solid var(--lbi-qv-border) !important;
+    border-radius: var(--lbi-qv-radius) !important;
+    min-width: 0;
+    height: 22px;
+    padding: 0 8px;
+    margin: 1px 2px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.lbi-qv-panel vaadin-button:hover,
+.lbi-qv-tabs vaadin-button:hover,
+.lbi-qv-sel-row vaadin-button:hover {
+    background: var(--lbi-surface-2) !important;
+}
+
+.lbi-qv-panel vaadin-button[theme~="error"],
+.lbi-qv-tabs vaadin-button[theme~="error"] {
     color: var(--lumo-error-text-color) !important;
 }
 
-.lbi-qv-field-selected vaadin-button[theme~="tertiary"] {
-    color: #ffffff !important;
+.lbi-qv-panel vaadin-button[disabled],
+.lbi-qv-tabs vaadin-button[disabled] {
+    opacity: 0.45;
+}
+
+/* ---- pivot compatta: non a tutta pagina ---- */
+
+.lbi-qv-risultato {
+    max-width: 920px;
+    border: 1px solid var(--lbi-qv-border);
+    border-radius: var(--lbi-qv-radius);
+    overflow: hidden;
+}
+
+
+/* Il pannello Misure è più largo: le voci portano nome e aggregazione */
+.lbi-qv-zones .lbi-qv-zone-panel:last-child {
+    flex: 2 1 340px;
+}
+
+/* ============================================
+   Pagina Grafici (stesso linguaggio delle pagine Dataset e Analisi)
+   Da aggiungere IN FONDO a themes/associa/styles.css, dopo gli altri blocchi
+   ============================================ */
+
+.lbi-qv-tipi {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px;
+}
+
+.lbi-qv-tipo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: 96px;
+    height: 78px;
+    padding: 4px;
+    box-sizing: border-box;
+    background: var(--lbi-surface);
+    border: 1px solid var(--lbi-qv-border);
+    border-radius: var(--lbi-qv-radius);
+    cursor: pointer;
+    user-select: none;
+}
+
+.lbi-qv-tipo:hover {
+    background: var(--lbi-surface-2);
+}
+
+.lbi-qv-tipo svg {
+    width: 44px;
+    height: 32px;
+}
+
+.lbi-qv-tipo-nome {
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.1;
+}
+
+.lbi-qv-tipo-selezionato {
+    border-width: 2px;
+    background: var(--lbi-surface-2);
+    box-shadow: 0 0 0 2px var(--lbi-qv-border) inset;
+}
+
+.lbi-qv-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.lbi-qv-left-panel {
+    width: 300px;
+    flex: 0 0 300px;
+    align-self: flex-start;
+}
+
+.lbi-qv-opzioni {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 8px;
+}
+
+.lbi-qv-anteprima {
+    min-height: 120px;
+    padding: 6px;
+}
+
+.lbi-qv-form-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+/* ============================================
+   Pagina Grafici (stesso linguaggio delle pagine Dataset e Analisi)
+   Da aggiungere IN FONDO a themes/associa/styles.css, dopo gli altri blocchi
+   ============================================ */
+
+.lbi-qv-tipi {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px;
+}
+
+.lbi-qv-tipo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: 96px;
+    height: 78px;
+    padding: 4px;
+    box-sizing: border-box;
+    background: var(--lbi-surface);
+    border: 1px solid var(--lbi-qv-border);
+    border-radius: var(--lbi-qv-radius);
+    cursor: pointer;
+    user-select: none;
+}
+
+.lbi-qv-tipo:hover {
+    background: var(--lbi-surface-2);
+}
+
+.lbi-qv-tipo svg {
+    width: 44px;
+    height: 32px;
+}
+
+.lbi-qv-tipo-nome {
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.1;
+}
+
+.lbi-qv-tipo-selezionato {
+    border-width: 2px;
+    background: var(--lbi-surface-2);
+    box-shadow: 0 0 0 2px var(--lbi-qv-border) inset;
+}
+
+.lbi-qv-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.lbi-qv-left-panel {
+    width: 300px;
+    flex: 0 0 300px;
+    align-self: flex-start;
+}
+
+.lbi-qv-opzioni {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 8px;
+}
+
+.lbi-qv-anteprima {
+    min-height: 120px;
+    padding: 6px;
+}
+
+.lbi-qv-form-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
 }

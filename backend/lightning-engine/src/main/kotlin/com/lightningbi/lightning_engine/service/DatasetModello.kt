@@ -35,7 +35,10 @@ data class OccorrenzaBozza(
     val alias: String,
     val ruolo: RuoloTabella,
     val colonne: List<ImportedColumn>,
-    val eccezioni: Map<String, EccezioneCampo> = emptyMap()
+    val eccezioni: Map<String, EccezioneCampo> = emptyMap(),
+    /** Prefissi dei campi tecnici (chiavi) della connessione della tabella, ad esempio "_KEY". */
+    val prefissiTecnici: List<String> = emptyList()
+
 )
 
 data class MetricaBozza(
@@ -65,7 +68,14 @@ data class CampoEffettivo(
     /** Campo derivato da una data (calendario): nome della colonna data di origine; null per gli altri. */
     val derivataDa: String? = null,
     /** Componente del calendario (anno, mese, giorno...); presente solo con [derivataDa]. */
-    val componente: String? = null
+    /** Componente del calendario (anno, mese, giorno...); presente solo con [derivataDa]. */
+    val componente: String? = null,
+    /**
+     * Campo TECNICO: marcato come chiave, oppure con un nome che inizia con un prefisso tecnico
+     * della connessione. Lega le tabelle ma non è informativo per l'utente: Dataset, Analisi e
+     * Grafici non lo mostrano; resta nel Modello dati e nel conteggio distinti.
+     */
+    val tecnico: Boolean = false
 ) {
     val numerico: Boolean get() = ColumnProposal.isNumerico(tipo)
 }
@@ -149,7 +159,9 @@ data class DatasetBozza(
                     nomeCampo = nome,
                     escluso = ecc?.escluso == true,
                     derivataDa = c.derivataDa,
-                    componente = c.componente
+                    componente = c.componente,
+                    tecnico = c.isChiave || o.prefissiTecnici.any { c.nome.startsWith(it, ignoreCase = true) }
+
 
                 )
             }
@@ -167,7 +179,11 @@ data class DatasetBozza(
      * dal nome logico e, se già usato, diventa nome_2, nome_3... Propone anche
      * le dimensioni e, per i Fatti, le metriche di default.
      */
-    fun aggiungiTabella(tabella: ImportedTable, colonne: List<ImportedColumn>): DatasetBozza {
+    fun aggiungiTabella(
+        tabella: ImportedTable,
+        colonne: List<ImportedColumn>,
+        prefissiTecnici: List<String> = emptyList()
+    ): DatasetBozza {
         val usati = occorrenze.map { it.alias.lowercase() }.toSet()
         var alias = tabella.nomeLogico
         var n = 2
@@ -181,7 +197,9 @@ data class DatasetBozza(
             nomeLogico = tabella.nomeLogico,
             alias = alias.take(AreaTabella.MAX_ALIAS),
             ruolo = tabella.ruolo,
-            colonne = colonne
+            colonne = colonne,
+            prefissiTecnici = prefissiTecnici
+
         )
         return copy(occorrenze = occorrenze + occ).conProposte(occ.id)
     }

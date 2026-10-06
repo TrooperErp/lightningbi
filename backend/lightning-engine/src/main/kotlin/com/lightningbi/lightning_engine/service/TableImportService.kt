@@ -103,6 +103,24 @@ class TableImportService(
         colonne: List<ColonnaImport>
     ): ImportedTable {
         adminGuard.requireAdmin()
+        return aggiungiSenzaControllo(connectionId, schema, nomeOrigine, nomeLogico, ruolo, colonnaChiave, colonne)
+    }
+
+    /**
+     * Come [aggiungi], senza il controllo admin: per l'importazione in blocco, che lo fa una volta
+     * all'inizio nel thread della pagina (il controllo legge la sessione del browser, che un thread
+     * in background non ha).
+     */
+    @Transactional("postgresTransactionManager")
+    fun aggiungiSenzaControllo(
+        connectionId: UUID,
+        schema: String?,
+        nomeOrigine: String,
+        nomeLogico: String,
+        ruolo: RuoloTabella,
+        colonnaChiave: String?,
+        colonne: List<ColonnaImport>
+    ): ImportedTable {
         val connessione = connectionOrchestrator.findById(connectionId)
             ?: throw IllegalArgumentException("Connessione non trovata")
 
@@ -131,9 +149,16 @@ class TableImportService(
         require(collisioni.isEmpty()) { ColumnProposal.messaggioCollisioni(nome, collisioni) }
 
         if (ruolo == RuoloTabella.DIMENSIONE) {
-            require(colonnaChiave != null) { "Una Dimensione ha bisogno della colonna chiave" }
-            require(colonne.any { it.nome.equals(colonnaChiave, ignoreCase = true) && it.isChiave }) {
-                "La colonna chiave '$colonnaChiave' deve essere tra le colonne scelte e segnata come chiave"
+            // Se la tabella ha colonne chiave, una è la chiave della Dimensione. Se non ne ha
+            // (molte anagrafiche non hanno una colonna tecnica), non serve: i collegamenti li
+            // fanno i campi con lo stesso nome, come in Qlik.
+            if (colonne.any { it.isChiave }) {
+                require(colonnaChiave != null) { "Una Dimensione con colonne chiave ha bisogno della colonna chiave" }
+                require(colonne.any { it.nome.equals(colonnaChiave, ignoreCase = true) && it.isChiave }) {
+                    "La colonna chiave '$colonnaChiave' deve essere tra le colonne scelte e segnata come chiave"
+                }
+            } else {
+                require(colonnaChiave == null) { "Hai indicato una colonna chiave ma nessuna colonna è segnata come chiave" }
             }
         } else {
             require(colonnaChiave == null) { "Una tabella Fatti non ha una colonna chiave unica" }
@@ -160,41 +185,6 @@ class TableImportService(
         return tabella
     }
 
-    /**
-     * Elimina una tabella importata. Bloccata se un dataset la usa. Toglie il
-     * registry (colonne e configurazione di sincronizzazione vanno in cascata)
-     * e poi la tabella ClickHouse: se il drop fallisce resta una tabella
-     * orfana, segnalata nel log, e non si annulla il registry.
-     */
-    fun elimina(id: UUID) {
-        adminGuard.requireAdmin()
-        val tabella = importedTableRepository.findById(id)
-            ?: throw IllegalArgumentException("Tabella importata non trovata")
-
-        val nomiAree = registryRepository.findAllAree().associate { it.id to it.nome }
-        val usata = importedTableRepository.findAreaIdsUsing(id).mapNotNull { nomiAree[it] }.sorted()
-        if (usata.isNotEmpty()) {
-            throw IllegalStateException(
-                "La tabella '${tabella.nomeLogico}' è usata dai dataset: ${usata.joinToString(", ")}. " +
-                        "Toglila prima dai dataset."
-            )
-        }
-
-        try {
-            importedTableRepository.deleteById(id)
-        } catch (e: DataIntegrityViolationException) {
-            throw IllegalStateException(
-                "La tabella '${tabella.nomeLogico}' è ancora referenziata (metriche o dimensioni di un dataset)", e
-            )
-        }
-
-        try {
-            symbolTableService.dropTable(tabella.tabellaFisica)
-        } catch (e: Exception) {
-            log.warn("Tabella importata '{}' eliminata dal registry ma la tabella ClickHouse '{}' non si è potuta eliminare: resta orfana",
-                tabella.nomeLogico, tabella.tabellaFisica, e)
-        }
-    }
     /**
      * Le colonne derivate dal calendario per le colonne data di una tabella:
      * una per ogni componente configurato (anno, mese, giorno...). Salta quelle
@@ -232,5 +222,41 @@ class TableImportService(
         val nuove = colonneCalendario(importedTableId, colonne)
         if (nuove.isNotEmpty()) importedTableRepository.saveColumns(nuove)
         return nuove.size
+    }
+
+    /**
+     * Elimina una tabella importata. Bloccata se un dataset la usa. Toglie il
+     * registry (colonne e configurazione di sincronizzazione vanno in cascata)
+     * e poi la tabella ClickHouse: se il drop fallisce resta una tabella
+     * orfana, segnalata nel log, e non si annulla il registry.
+     */
+    fun elimina(id: UUID) {
+        adminGuard.requireAdmin()
+        val tabella = importedTableRepository.findById(id)
+            ?: throw IllegalArgumentException("Tabella importata non trovata")
+
+        val nomiAree = registryRepository.findAllAree().associate { it.id to it.nome }
+        val usata = importedTableRepository.findAreaIdsUsing(id).mapNotNull { nomiAree[it] }.sorted()
+        if (usata.isNotEmpty()) {
+            throw IllegalStateException(
+                "La tabella '${tabella.nomeLogico}' è usata dai dataset: ${usata.joinToString(", ")}. " +
+                        "Toglila prima dai dataset."
+            )
+        }
+
+        try {
+            importedTableRepository.deleteById(id)
+        } catch (e: DataIntegrityViolationException) {
+            throw IllegalStateException(
+                "La tabella '${tabella.nomeLogico}' è ancora referenziata (metriche o dimensioni di un dataset)", e
+            )
+        }
+
+        try {
+            symbolTableService.dropTable(tabella.tabellaFisica)
+        } catch (e: Exception) {
+            log.warn("Tabella importata '{}' eliminata dal registry ma la tabella ClickHouse '{}' non si è potuta eliminare: resta orfana",
+                tabella.nomeLogico, tabella.tabellaFisica, e)
+        }
     }
 }

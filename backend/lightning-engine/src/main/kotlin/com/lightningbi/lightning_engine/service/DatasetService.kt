@@ -62,7 +62,21 @@ class DatasetService(
     fun aggiungiTabella(bozza: DatasetBozza, importedTableId: UUID): DatasetBozza {
         val tabella = importedTableRepository.findById(importedTableId)
             ?: throw IllegalArgumentException("Tabella importata non trovata")
-        return bozza.aggiungiTabella(tabella, importedTableRepository.findColumnsByTable(tabella.id))
+        return bozza.aggiungiTabella(
+            tabella,
+            importedTableRepository.findColumnsByTable(tabella.id),
+            prefissiTecniciDi(tabella)
+        )
+    }
+
+    /**
+     * I prefissi dei campi TECNICI (chiavi) dalle proprietà della connessione della tabella,
+     * ad esempio "_KEY". Un campo con questo prefisso lega le tabelle ma non si mostra
+     * all'utente (Dataset, Analisi, Grafici).
+     */
+    private fun prefissiTecniciDi(tabella: ImportedTable): List<String> {
+        val connessione = tabella.connectionId?.let { sourceConnectionRepository.findById(it) } ?: return emptyList()
+        return ColumnProposal.lista(connessione.parametri, ColumnProposal.PREFISSI_COLONNA_CHIAVE)
     }
 
     /**
@@ -84,7 +98,8 @@ class DatasetService(
                 alias = at.alias,
                 ruolo = tabella.ruolo,
                 colonne = importedTableRepository.findColumnsByTable(tabella.id),
-                eccezioni = eccezioni
+                eccezioni = eccezioni,
+                prefissiTecnici = prefissiTecniciDi(tabella)
             )
         }
 

@@ -19,7 +19,10 @@ import com.lightningbi.lightning_engine.service.DimensionSortOrders
  * costruito con HeaderRow.join(). Nessuna logica di raggruppamento vive
  * qui: riceve la gerarchia già pronta e si limita a disegnarla.
  */
-class ResultsGridUi {
+class ResultsGridUi(
+    /** Formatta le etichette per mostrarle (le date da 2025-01-16 a 16/01/2025); il motore ordina sul valore grezzo. */
+    private val formatta: (String) -> String = { it }
+) {
 
     val resultsGrid = TreeGrid<PivotEngine.PivotNode>().apply {
         className = "lbi-results-grid"
@@ -63,70 +66,95 @@ class ResultsGridUi {
         addNodesRecursively(treeData, null, rowHierarchy)
         resultsGrid.setDataProvider(TreeDataProvider(treeData))
 
+        // ---- chiavi delle colonne ----
+        // Una chiave è "misura|valore1|valore2...". La variazione percentuale è
+        // "misura|...|2025→2026|Variaz.%": qui diventa una colonna IN CODA al suo gruppo, con
+        // lo stesso numero di livelli delle altre e ultimo livello "Var. %".
+        val chiaviGrezze = collectAllValueKeys(rowHierarchy)
+
+        fun parti(chiave: String): List<String> {
+            val p = chiave.split("|")
+            return if (p.size >= 3 && p.last() == VARIAZIONE) p.dropLast(2) + ETICHETTA_VARIAZIONE else p
+        }
+
+        val livelli = chiaviGrezze.maxOfOrNull { parti(it).size - 1 } ?: 0
+        val misure = chiaviGrezze.map { parti(it)[0] }.distinct()
+        val unaMisura = misure.size == 1
+
+        // Ordine: per livello dal più esterno al più interno; la variazione sempre dopo i valori
+        // del suo gruppo; poi per nome di misura. I gruppi di colonne con lo stesso valore di
+        // livello superiore devono essere adiacenti, altrimenti HeaderRow.join() fallisce.
+        fun confronta(a: String, b: String): Int = when {
+            a == ETICHETTA_VARIAZIONE && b == ETICHETTA_VARIAZIONE -> 0
+            a == ETICHETTA_VARIAZIONE -> 1
+            b == ETICHETTA_VARIAZIONE -> -1
+            else -> DimensionSortOrders.confrontoNaturale(a, b)
+        }
+        val confrontoHeader = Comparator<String> { ka, kb ->
+            val pa = parti(ka)
+            val pb = parti(kb)
+            for (livello in 1..livelli) {
+                val c = confronta(pa.getOrNull(livello) ?: "", pb.getOrNull(livello) ?: "")
+                if (c != 0) return@Comparator c
+            }
+            DimensionSortOrders.confrontoNaturale(pa[0], pb[0])
+        }
+        val chiavi = chiaviGrezze.sortedWith(confrontoHeader)
+
+        // ---- colonna delle righe ----
+        // Con una sola misura e delle colonne, il suo nome non compare sopra ogni colonna: sta qui.
         val rowHeader = rows.mapNotNull { dimensionNames[it] }.joinToString(" / ").ifEmpty { "Righe" }
-        val hierarchyColumn = resultsGrid.addHierarchyColumn { node -> node.label }
-            .setHeader(rowHeader)
+        val intestazioneRighe = if (livelli > 0 && unaMisura) "$rowHeader · ${misure.first()}" else rowHeader
+        val hierarchyColumn = resultsGrid.addHierarchyColumn { node -> formatta(node.label) }
+            .setHeader(intestazioneRighe)
             .setWidth("220px")
             .setFlexGrow(0)
 
-        val allValueKeysRaw = collectAllValueKeys(rowHierarchy)
-
-        // Ordino esplicitamente per livello (dal più esterno Anno al più
-        // interno Mese, poi nome metrica) PRIMA di creare le colonne:
-        // l'algoritmo di raggruppamento header sotto assume che le
-        // colonne con lo stesso valore di livello superiore siano
-        // adiacenti, ma l'ordine naturale di collectAllValueKeys non lo
-        // garantisce quando ci sono più metriche - può produrre gruppi
-        // di una sola colonna e far fallire HeaderRow.join() con
-        // "Cannot join less than 2 cells".
-        val columnLevelsRaw = allValueKeysRaw.maxOfOrNull { it.split("|").size - 1 } ?: 0
-        fun parte(key: String, livello: Int): String = key.split("|").getOrNull(livello) ?: ""
-
-        val confrontoHeader = Comparator<String> { a, b ->
-            for (level in 1..columnLevelsRaw) {
-                val c = DimensionSortOrders.confrontoNaturale(parte(a, level), parte(b, level))
-                if (c != 0) return@Comparator c
+        // ---- colonne dei valori ----
+        // Il titolo dell'ultima riga è il valore più interno (una sola misura) oppure il nome della misura.
+        val colonne = chiavi.map { chiave ->
+            val p = parti(chiave)
+            val titoloUltimaRiga = when {
+                livelli == 0 -> chiave
+                unaMisura -> formatta(p.last())
+                else -> p[0]
             }
-            DimensionSortOrders.confrontoNaturale(parte(a, 0), parte(b, 0))
-        }
-        val allValueKeys = allValueKeysRaw.sortedWith(confrontoHeader)
-
-        val dataColumns = allValueKeys.map { key ->
-            val parts = key.split("|")
-            val headerText = if (parts.size > 1) parts.drop(1).joinToString(" · ") else key
-            resultsGrid.addColumn { node -> formatMetricValue(node.values[key]) }
-                .setHeader(headerText)
-                .setTooltipGenerator { key.replace("|", " · ") }
+            val variazione = chiave.endsWith("|$VARIAZIONE")
+            resultsGrid.addColumn { node ->
+                val valore = formatMetricValue(node.values[chiave])
+                if (variazione && valore.isNotEmpty()) "$valore %" else valore
+            }
+                .setHeader(titoloUltimaRiga)
+                .setTooltipGenerator { p.joinToString(" · ") { formatta(it) } }
                 .setWidth("120px")
                 .setFlexGrow(0)
         }
 
-        // Un livello di header aggiuntivo per ogni dimensione in Colonne,
-        // sopra il livello "nome metrica · valori" già impostato con
-        // .setHeader() sulle colonne dati.
-        val columnLevels = allValueKeys.maxOfOrNull { it.split("|").size - 1 } ?: 0
+        // Una riga di titolo in più per ogni livello di Colonne che non sta già nell'ultima riga.
+        val righeIntestazione = when {
+            livelli == 0 -> 0
+            unaMisura -> livelli - 1
+            else -> livelli
+        }
+        for (livello in righeIntestazione downTo 1) {
+            val valoriLivello = chiavi.map { parti(it).getOrNull(livello) ?: "" }
+            val riga = resultsGrid.prependHeaderRow()
+            pivotHeaderRows.add(riga)
 
-        if (columnLevels > 0) {
-            for (level in (columnLevels - 1) downTo 0) {
-                val levelValues = allValueKeys.map { it.split("|").getOrNull(level + 1) ?: "" }
-                val headerRow = resultsGrid.prependHeaderRow()
-                pivotHeaderRows.add(headerRow)
-
-                var i = 0
-                while (i < dataColumns.size) {
-                    val value = levelValues[i]
-                    var j = i
-                    while (j + 1 < dataColumns.size) {
-                        val partsJ = allValueKeys[j + 1].split("|")
-                        val partsI = allValueKeys[i].split("|")
-                        val samePrefix = (0 until level).all { l -> partsI.getOrNull(l + 1) == partsJ.getOrNull(l + 1) }
-                        if (samePrefix && levelValues[j + 1] == value) j++ else break
-                    }
-                    val group = dataColumns.subList(i, j + 1).toTypedArray()
-                    val cell = if (group.size > 1) headerRow.join(*group) else headerRow.getCell(group[0])
-                    cell.text = value
-                    i = j + 1
+            var i = 0
+            while (i < colonne.size) {
+                val valore = valoriLivello[i]
+                var j = i
+                while (j + 1 < colonne.size) {
+                    val pi = parti(chiavi[i])
+                    val pj = parti(chiavi[j + 1])
+                    val stessoPrefisso = (1 until livello).all { l -> pi.getOrNull(l) == pj.getOrNull(l) }
+                    if (stessoPrefisso && valoriLivello[j + 1] == valore) j++ else break
                 }
+                val gruppo = colonne.subList(i, j + 1).toTypedArray()
+                val cella = if (gruppo.size > 1) riga.join(*gruppo) else riga.getCell(gruppo[0])
+                cella.text = formatta(valore)
+                i = j + 1
             }
         }
 
@@ -135,7 +163,7 @@ class ResultsGridUi {
         // spostando la colonna gerarchica lontano dalla prima posizione.
         resultsGrid.setColumnOrder(buildList {
             add(hierarchyColumn)
-            addAll(dataColumns)
+            addAll(colonne)
         })
 
         if (result.truncated) {
@@ -177,6 +205,12 @@ class ResultsGridUi {
         }
         visit(nodes)
         return keys.toList()
+    }
+
+    private companion object {
+        /** Ultimo pezzo della chiave di una colonna di variazione percentuale, come lo scrive AggregateService. */
+        const val VARIAZIONE = "Variaz.%"
+        const val ETICHETTA_VARIAZIONE = "Var. %"
     }
 
     private fun formatMetricValue(value: Any?): String = when (value) {

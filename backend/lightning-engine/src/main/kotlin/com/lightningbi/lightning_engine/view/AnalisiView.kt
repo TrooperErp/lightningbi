@@ -10,6 +10,7 @@ import com.lightningbi.lightning_engine.repository.UserPivotStateRepository
 import com.lightningbi.lightning_engine.service.AdminGuard
 import com.lightningbi.lightning_engine.service.AnalisiService
 import com.lightningbi.lightning_engine.service.AuthService
+import com.lightningbi.lightning_engine.service.CalendarioService
 import com.lightningbi.lightning_engine.service.CampoMisurabile
 import com.lightningbi.lightning_engine.service.DimensioneAnalisi
 import com.lightningbi.lightning_engine.service.FiltriService
@@ -61,8 +62,10 @@ class AnalisiView(
     private val pivotViewService: PivotViewService,
     private val userPivotStateRepository: UserPivotStateRepository,
     private val filtriService: FiltriService,
+    private val calendarioService: CalendarioService,
     private val adminGuard: AdminGuard,
-    private val authService: AuthService
+    private val authService: AuthService,
+    private val chartService: com.lightningbi.lightning_engine.service.ChartService,
 ) : VerticalLayout(), HasUrlParameter<String>, AfterNavigationObserver {
 
     private val log = LoggerFactory.getLogger(AnalisiView::class.java)
@@ -82,10 +85,12 @@ class AnalisiView(
 
     private val nomiDimensioni: Map<UUID, String> get() = dimensioni.associate { it.dimensioneId to it.nome }
 
-    private val risultato = ResultsGridUi().apply {
+    private val risultato = ResultsGridUi { calendarioService.formatta(it) }.apply {
         resultsGrid.height = "440px"
         root.height = "440px"
     }
+
+    private val grafici = ChartsPanelUi()
     private val messaggio = Span().apply { className = "lbi-qv-empty" }
     private val contenitoreRighe = Div().apply { className = "lbi-qv-zone" }
     private val contenitoreColonne = Div().apply { className = "lbi-qv-zone" }
@@ -99,6 +104,12 @@ class AnalisiView(
         valueChangeTimeout = 200
         setWidthFull()
         addClassName("lbi-qv-search")
+    }
+
+    /** La libreria che disegna i grafici si carica quando la pagina è attaccata al browser. */
+    override fun onAttach(attachEvent: com.vaadin.flow.component.AttachEvent) {
+        super.onAttach(attachEvent)
+        attachEvent.ui.page.addJavaScript("js/echarts.min.js")
     }
 
     override fun setParameter(event: BeforeEvent, @OptionalParameter parameter: String?) {
@@ -175,7 +186,8 @@ class AnalisiView(
                 pannelloMisure()
             ).apply { className = "lbi-qv-zones" },
             messaggio,
-            risultato.root
+            risultato.root,
+            grafici.root
         ).apply { className = "lbi-qv-boxes lbi-qv-analisi-centro" }
 
         val corpo = Div(sinistra, centro).apply { className = "lbi-qv-body" }
@@ -368,16 +380,16 @@ class AnalisiView(
 
     /** Una voce di zona: nome e pulsanti sposta su, sposta giù, togli (e modifica per le misure). */
     private fun pillola(testo: String, su: () -> Unit, giu: () -> Unit, togli: () -> Unit, modifica: (() -> Unit)?): Component {
-        fun piccolo(icona: VaadinIcon, titolo: String, azione: () -> Unit) = Button(Icon(icona)) { azione() }.apply {
+        fun piccolo(simbolo: String, titolo: String, azione: () -> Unit) = Button(simbolo) { azione() }.apply {
             addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL)
             element.setAttribute("title", titolo)
         }
         val pulsanti = Div().apply { className = "lbi-qv-pill-buttons" }
-        if (modifica != null) pulsanti.add(piccolo(VaadinIcon.EDIT, "Modifica") { modifica() })
+        if (modifica != null) pulsanti.add(piccolo("✎", "Modifica") { modifica() })
         pulsanti.add(
-            piccolo(VaadinIcon.ARROW_UP, "Sposta su") { su() },
-            piccolo(VaadinIcon.ARROW_DOWN, "Sposta giù") { giu() },
-            piccolo(VaadinIcon.CLOSE_SMALL, "Togli") { togli() }
+            piccolo("▲", "Sposta su") { su() },
+            piccolo("▼", "Sposta giù") { giu() },
+            piccolo("✕", "Togli") { togli() }
         )
         return Div(Span(testo).apply { className = "lbi-qv-pill-text" }, pulsanti).apply { className = "lbi-qv-pill" }
     }
@@ -564,7 +576,7 @@ class AnalisiView(
                 emptyList()
             }
             val testo = etichette.joinToString(", ") + if (valori.size > MAX_ETICHETTE) " … (${valori.size})" else ""
-            val togli = Button(Icon(VaadinIcon.CLOSE_SMALL)) { togliSelezione(dimId) }.apply {
+            val togli = Button("✕") { togliSelezione(dimId) }.apply {
                 addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL)
                 element.setAttribute("title", "Togli la selezione di questo campo")
             }
@@ -584,6 +596,7 @@ class AnalisiView(
     private fun ricalcola() {
         val v = vista ?: return
         messaggio.text = ""
+        aggiornaGrafici(v)
         if (ordineMisure.isEmpty()) {
             risultato.clearAll()
             messaggio.text = "Aggiungi almeno una misura per vedere la pivot."
@@ -593,10 +606,26 @@ class AnalisiView(
             val esito = analisiService.calcola(v.id, selezioni.toMap())
             risultato.render(esito.risultato, esito.gerarchia, righe.toList(), nomiDimensioni)
             if (righe.isEmpty() && colonne.isEmpty()) messaggio.text = "Totali sul dataset: aggiungi un campo alle Righe per scomporli."
+        } catch (e: IllegalArgumentException) {
+            // Una regola del motore spiegata all'utente (ad esempio troppi valori in Colonne): non è un guasto.
+            log.info("Analisi {}: {}", v.id, e.message)
+            risultato.clearAll()
+            messaggio.text = e.message ?: "La disposizione scelta non si può calcolare."
         } catch (e: Exception) {
             log.warn("Calcolo dell'analisi {} fallito", v.id, e)
             risultato.clearAll()
             messaggio.text = "Impossibile calcolare: ${e.message ?: e::class.simpleName}. Se il dataset non è stato sincronizzato, premi Sincronizza."
+        }
+    }
+
+    /** I grafici salvati di questa analisi, calcolati con le selezioni correnti dell'utente. */
+    private fun aggiornaGrafici(v: PivotView) {
+        try {
+            val dati = chartService.getChartsDataDellAnalisi(v.id, dimensioni.map { it.dimensioneId }.toSet(), selezioni.toMap())
+            grafici.render(dati, dimensioni.map { it.dimensioneId })
+        } catch (e: Exception) {
+            log.warn("Calcolo dei grafici dell'analisi {} fallito", v.id, e)
+            grafici.clearAll()
         }
     }
 
