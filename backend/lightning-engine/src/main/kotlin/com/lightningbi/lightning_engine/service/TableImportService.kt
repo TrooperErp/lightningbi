@@ -39,6 +39,10 @@ data class TabellaImportataInfo(
  *
  * Qui si scrive solo il registry: le tabelle ClickHouse le crea l'ETL alla
  * prima sincronizzazione.
+ *
+ * Ogni colonna ha un NOME CAMPO (come l'AS dello script di Qlik): decide il nome
+ * della colonna fisica e della symbol table, quindi con quali altre tabelle si
+ * associa. Si decide una volta per tutti, qui, e vale per ogni dataset.
  */
 @Service
 class TableImportService(
@@ -69,7 +73,7 @@ class TableImportService(
         }.sortedBy { it.tabella.nomeLogico.lowercase() }
     }
 
-    /** Colonne importate di una tabella (per scegliere le colonne dell'unità di sincronizzazione). */
+    /** Colonne importate di una tabella (per scegliere le colonne dell'unità di sincronizzazione e i nomi dei campi). */
     fun colonne(importedTableId: UUID): List<ImportedColumn> {
         adminGuard.requireAdmin()
         return importedTableRepository.findColumnsByTable(importedTableId)
@@ -177,7 +181,10 @@ class TableImportService(
             nomeOrigine = nomeOrigine
         )
         importedTableRepository.save(tabella)
-        val colonneTabella = colonne.map { ImportedColumn(UUID.randomUUID(), tabella.id, it.nome, it.tipo, it.isChiave) }
+        // All'importazione il nome del campo è il nome della colonna: si cambia dopo, dalla finestra Campi.
+        val colonneTabella = colonne.map {
+            ImportedColumn(UUID.randomUUID(), tabella.id, it.nome, it.tipo, it.isChiave, nomeCampo = it.nome)
+        }
         // Come i campi derivati di Qlik: per ogni colonna data, anno, mese, giorno... (calendario comune).
         importedTableRepository.saveColumns(colonneTabella + colonneCalendario(tabella.id, colonneTabella))
         // Ogni tabella parte con la sua configurazione di sincronizzazione (completa).
@@ -186,23 +193,116 @@ class TableImportService(
     }
 
     /**
+     * Cambia il nome del campo di alcune colonne di una tabella: [rinomine] ha per chiave l'id della
+     * colonna e per valore il nuovo nome del campo. È l'AS dello script di Qlik: due colonne con lo
+     * stesso nome campo, in tabelle diverse, sono lo stesso campo (stessa symbol table, stessi id).
+     *
+     * - Solo se la tabella non è in nessun dataset: i dataset salvano le colonne per nome fisico.
+     * - Due colonne della stessa tabella non possono avere lo stesso nome fisico.
+     * - I campi derivati dal calendario non si rinominano da soli: seguono il nome della colonna data.
+     * - Il nome della colonna sulla sorgente non cambia: da lì si continua a leggere.
+     * - Dopo la rinomina lo schema fisico non coincide più col registry: la prossima sincronizzazione
+     *   fa da sola il ricarico completo.
+     *
+     * @return quante colonne hanno cambiato nome campo (compresi i derivati)
+     */
+    @Transactional("postgresTransactionManager")
+    fun rinominaCampi(importedTableId: UUID, rinomine: Map<UUID, String>): Int {
+        adminGuard.requireAdmin()
+        val tabella = importedTableRepository.findById(importedTableId)
+            ?: throw IllegalArgumentException("Tabella importata non trovata")
+
+        val nomiAree = registryRepository.findAllAree().associate { it.id to it.nome }
+        val usata = importedTableRepository.findAreaIdsUsing(importedTableId).mapNotNull { nomiAree[it] }.sorted()
+        if (usata.isNotEmpty()) {
+            throw IllegalStateException(
+                "La tabella '${tabella.nomeLogico}' è usata dai dataset: ${usata.joinToString(", ")}. " +
+                        "Toglila prima dai dataset per cambiare i nomi dei campi."
+            )
+        }
+
+        val colonne = importedTableRepository.findColumnsByTable(importedTableId)
+        val perId = colonne.associateBy { it.id }
+
+        // Solo i cambi veri.
+        val nuoviNomi = rinomine.mapValues { (_, nuovo) -> nuovo.trim() }
+            .filter { (id, nuovo) -> perId[id]?.nomeCampo != nuovo }
+        if (nuoviNomi.isEmpty()) return 0
+
+        nuoviNomi.forEach { (id, nuovo) ->
+            val colonna = perId[id]
+                ?: throw IllegalArgumentException("Colonna non trovata nella tabella '${tabella.nomeLogico}'")
+            require(!colonna.derivata) {
+                "'${colonna.nome}' è un campo derivato dalla data: segue il nome della colonna data"
+            }
+            require(nuovo.isNotEmpty()) { "Il nome del campo di '${colonna.nome}' non può essere vuoto" }
+            try {
+                Naming.column(nuovo)
+            } catch (e: Exception) {
+                throw IllegalArgumentException("Nome campo non utilizzabile ('$nuovo'): ${e.message}", e)
+            }
+        }
+
+        // Nome campo finale di ogni colonna. I derivati del calendario seguono la loro colonna data.
+        val finali = colonne.map { c ->
+            val nuovo = when {
+                c.id in nuoviNomi -> nuoviNomi.getValue(c.id)
+                c.derivata -> {
+                    val padre = colonne.firstOrNull { !it.derivata && it.nome == c.derivataDa }
+                    val componente = c.componente?.let { ComponenteCalendario.daCodice(it) }
+                    if (padre != null && componente != null && padre.id in nuoviNomi) {
+                        calendarioService.nomeLogico(nuoviNomi.getValue(padre.id), componente)
+                    } else {
+                        c.nomeCampo
+                    }
+                }
+                else -> c.nomeCampo
+            }
+            c to nuovo
+        }
+
+        val collisioni = finali
+            .groupBy({ Naming.column(it.second) }, { it.second })
+            .filterValues { it.size > 1 }
+        require(collisioni.isEmpty()) {
+            "In ${tabella.nomeLogico} due campi avrebbero lo stesso nome: " +
+                    collisioni.entries.joinToString("; ") { (fisico, nomi) ->
+                        nomi.joinToString(" e ") { "'$it'" } + " diventano entrambi '$fisico'"
+                    }
+        }
+
+        val cambiate = finali.filter { (c, nuovo) -> c.nomeCampo != nuovo }
+        cambiate.forEach { (c, nuovo) -> importedTableRepository.updateNomeCampo(c.id, nuovo) }
+        log.info(
+            "Tabella '{}': {} nomi campo cambiati ({}); la prossima sincronizzazione ricarica tutta la tabella",
+            tabella.nomeLogico, cambiate.size,
+            cambiate.joinToString(", ") { (c, nuovo) -> "${c.nomeCampo} -> $nuovo" }
+        )
+        return cambiate.size
+    }
+
+    /**
      * Le colonne derivate dal calendario per le colonne data di una tabella:
      * una per ogni componente configurato (anno, mese, giorno...). Salta quelle
      * che esistono già e quelle il cui nome fisico coinciderebbe con una colonna vera.
+     * Il nome campo del derivato segue il nome campo della colonna data.
      */
     private fun colonneCalendario(tabellaId: UUID, colonne: List<ImportedColumn>): List<ImportedColumn> {
-        val fisiche = colonne.map { Naming.column(it.nome) }.toMutableSet()
+        val fisiche = colonne.map { Naming.column(it.nomeCampo) }.toMutableSet()
         val nuove = mutableListOf<ImportedColumn>()
         colonne.filter { !it.derivata && calendarioService.isData(it.tipo) }.forEach { data ->
             calendarioService.componenti().forEach { componente ->
                 val esiste = colonne.any { it.derivataDa == data.nome && it.componente == componente.codice }
                 if (esiste) return@forEach
                 val nome = calendarioService.nomeLogico(data.nome, componente)
-                if (!fisiche.add(Naming.column(nome))) {
-                    log.warn("Campo derivato '{}' non creato: esiste già una colonna con lo stesso nome fisico", nome)
+                val nomeCampo = calendarioService.nomeLogico(data.nomeCampo, componente)
+                if (!fisiche.add(Naming.column(nomeCampo))) {
+                    log.warn("Campo derivato '{}' non creato: esiste già una colonna con lo stesso nome fisico", nomeCampo)
                     return@forEach
                 }
-                nuove += ImportedColumn(UUID.randomUUID(), tabellaId, nome, "calendario", false, data.nome, componente.codice)
+                nuove += ImportedColumn(
+                    UUID.randomUUID(), tabellaId, nome, "calendario", false, data.nome, componente.codice, nomeCampo
+                )
             }
         }
         return nuove

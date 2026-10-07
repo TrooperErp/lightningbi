@@ -61,7 +61,9 @@ class ImportedTableRepositoryImpl(
                     rs.getString("tipo"),
                     rs.getBoolean("is_chiave"),
                     rs.getString("derivata_da"),
-                    rs.getString("componente")
+                    rs.getString("componente"),
+                    rs.getString("nome_campo")
+
 
                 )
             },
@@ -72,8 +74,8 @@ class ImportedTableRepositoryImpl(
         if (columns.isEmpty()) return
         jdbcTemplate.batchUpdate(
             """INSERT INTO lbi_imported_column
-               (id, imported_table_id, nome, tipo, is_chiave, derivata_da, componente)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (id, imported_table_id, nome, tipo, is_chiave, derivata_da, componente, nome_campo)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             columns,
             columns.size
         ) { ps, c ->
@@ -84,11 +86,16 @@ class ImportedTableRepositoryImpl(
             ps.setBoolean(5, c.isChiave)
             ps.setString(6, c.derivataDa)
             ps.setString(7, c.componente)
+            ps.setString(8, c.nomeCampo)
         }
     }
 
     override fun deleteColumnsByTable(importedTableId: UUID): Int =
         jdbcTemplate.update("DELETE FROM lbi_imported_column WHERE imported_table_id = ?", importedTableId)
+
+    override fun updateNomeCampo(columnId: UUID, nomeCampo: String) {
+        jdbcTemplate.update("UPDATE lbi_imported_column SET nome_campo = ? WHERE id = ?", nomeCampo, columnId)
+    }
 
     // ---- Ponte dataset <-> tabelle importate (lbi_area_imported_table) ----
 

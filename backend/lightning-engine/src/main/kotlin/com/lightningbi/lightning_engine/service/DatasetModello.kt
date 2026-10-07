@@ -144,10 +144,10 @@ data class DatasetBozza(
         return occorrenze.flatMap { o ->
             val qualificata = !viste.add(o.importedTableId)
             o.colonne.map { c ->
-                val fisica = Naming.column(c.nome)
+                val fisica = Naming.column(c.nomeCampo)
                 val ecc = o.eccezioni[fisica]
                 val nome = ecc?.nomeCampo
-                    ?: if (qualificata) Naming.column("${o.alias} ${c.nome}") else fisica
+                    ?: if (qualificata) Naming.column("${o.alias} ${c.nomeCampo}") else fisica
                 CampoEffettivo(
                     occorrenzaId = o.id,
                     alias = o.alias,

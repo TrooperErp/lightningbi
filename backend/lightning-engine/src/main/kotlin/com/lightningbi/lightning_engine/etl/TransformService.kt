@@ -87,7 +87,7 @@ class TransformService(
         val campi = colonne.map { c ->
             Campo(
                 origine = c.nome.lowercase(),
-                fisica = Naming.column(c.nome),
+                fisica = Naming.column(c.nomeCampo),
                 isChiave = c.isChiave,
                 numerica = !c.derivata && !c.isChiave && ColumnProposal.isNumerico(c.tipo),
                 derivataDa = c.derivataDa?.lowercase(),

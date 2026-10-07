@@ -97,8 +97,19 @@ class ImportazioneMultiplaService(
             }
 
             try {
-                val colonneSorgente = connectionOrchestrator.listColumns(connectionId, schema, richiesta.nomeOrigine)
-                require(colonneSorgente.isNotEmpty()) { "La sorgente non restituisce nessuna colonna" }
+                val colonneLette = connectionOrchestrator.listColumns(connectionId, schema, richiesta.nomeOrigine)
+                require(colonneLette.isNotEmpty()) { "La sorgente non restituisce nessuna colonna" }
+
+// Colonne con lo stesso nome fisico dopo la normalizzazione (es. "X" e "_X"): se ne tiene una sola,
+// prima una colonna chiave, poi quella senza underscore iniziale. Le altre finiscono nel rapporto.
+                val ignorate = mutableListOf<String>()
+                colonneLette.groupBy { Naming.column(it.name) }.values.filter { it.size > 1 }.forEach { gruppo ->
+                    val tenuta = gruppo.firstOrNull { c -> prefissiChiave.any { c.name.startsWith(it, ignoreCase = true) } }
+                        ?: gruppo.firstOrNull { !it.name.startsWith("_") }
+                        ?: gruppo.first()
+                    ignorate += gruppo.filter { it !== tenuta }.map { it.name }
+                }
+                val colonneSorgente = colonneLette.filter { it.name !in ignorate }
 
                 val nomiChiave = colonneSorgente.map { it.name }
                     .filter { nome -> prefissiChiave.any { nome.startsWith(it, ignoreCase = true) } }
@@ -125,7 +136,10 @@ class ImportazioneMultiplaService(
                 )
                 nomiUsati += nomeLogico.lowercase()
                 fisiciUsati += tableImportService.nomeFisico(connessione, schema, nomeLogico)
-                risultati += RisultatoImport(richiesta.nomeOrigine, nomeLogico, EsitoImport.IMPORTATA)
+                risultati += RisultatoImport(
+                    richiesta.nomeOrigine, nomeLogico, EsitoImport.IMPORTATA,
+                    if (ignorate.isEmpty()) null else "Colonne ignorate: ${ignorate.joinToString(", ")}"
+                )
             } catch (e: Exception) {
                 log.warn("Importazione di '{}' fallita", richiesta.nomeOrigine, e)
                 risultati += RisultatoImport(

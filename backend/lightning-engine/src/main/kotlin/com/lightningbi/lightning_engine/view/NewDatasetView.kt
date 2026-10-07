@@ -349,8 +349,7 @@ class NewDatasetView(
                 MenuBar().apply {
                     addThemeVariants(MenuBarVariant.LUMO_TERTIARY_INLINE)
                     val radice = addItem(Icon(VaadinIcon.ELLIPSIS_DOTS_V).apply { color = "black" })
-                    radice.subMenu.addItem("Rinomina") { apriRinominaCampo(campo) }
-                    radice.subMenu.addItem("Associa a...") { apriAssociaCampo(campo) }
+
                     if (campo.escluso) {
                         radice.subMenu.addItem("Ripristina") {
                             modifica { it.ripristinaCampo(campo.occorrenzaId, campo.colonna) }
@@ -423,7 +422,7 @@ class NewDatasetView(
                     )
                 }
             }.setHeader("Confidenza").setAutoWidth(true)
-            addColumn { if (it.perValore) "per valore" else "" }.setHeader("").setAutoWidth(true)
+
         }
 
         return VerticalLayout(
@@ -555,37 +554,7 @@ class NewDatasetView(
         }
     }
 
-    private fun apriRinominaCampo(c: CampoEffettivo) {
-        val campo = TextField("Nome del campo nel dataset").apply { setWidthFull(); value = c.nomeCampo }
-        finestra("Rinomina campo", campo, "Rinomina") {
-            modifica { it.rinominaCampo(c.occorrenzaId, c.colonna, campo.value.orEmpty()) }
-        }
-    }
 
-    /**
-     * "Associa a...": il campo scelto prende il nome del campo di un'altra
-     * tabella. Se le colonne hanno nomi diversi l'associazione è per valore.
-     */
-    private fun apriAssociaCampo(c: CampoEffettivo) {
-        val altri = bozza.campi().filter { !it.escluso && it.occorrenzaId != c.occorrenzaId }
-        if (altri.isEmpty()) {
-            Notification.show("Non ci sono campi di altre tabelle", 4000, Notification.Position.MIDDLE)
-            return
-        }
-        val combo = ComboBox<CampoEffettivo>("Associa «${c.nomeCampo}» al campo").apply {
-            setWidthFull()
-            setItems(altri)
-            setItemLabelGenerator { "${it.alias} · ${it.nomeOrigine}" }
-        }
-        finestra("Associa campo", combo, "Associa") {
-            val scelto = combo.value
-            if (scelto == null) {
-                Notification.show("Scegli il campo", 3000, Notification.Position.MIDDLE)
-            } else {
-                modifica { it.associa(scelto.occorrenzaId, scelto.colonna, c.occorrenzaId, c.colonna) }
-            }
-        }
-    }
 
     private fun confermaRimuoviTabella(o: OccorrenzaBozza) {
         val testo = Span("La tabella \"${o.alias}\" esce dal dataset, con le sue metriche e dimensioni. " +

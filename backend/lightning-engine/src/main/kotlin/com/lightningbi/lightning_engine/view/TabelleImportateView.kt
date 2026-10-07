@@ -11,6 +11,7 @@ import com.lightningbi.lightning_engine.model.SourceConnection
 import com.lightningbi.lightning_engine.service.AdminGuard
 import com.lightningbi.lightning_engine.service.AuthService
 import com.lightningbi.lightning_engine.service.ColumnProposal
+import com.lightningbi.lightning_engine.service.ImportazioneMultiplaService
 import com.lightningbi.lightning_engine.service.TabellaImportataInfo
 import com.lightningbi.lightning_engine.service.TableImportService
 import com.lightningbi.lightning_engine.service.TableSyncService
@@ -43,10 +44,12 @@ import java.time.format.DateTimeFormatter
  * da cui arrivano. Riservata all'admin (MANAGE_USERS): la guardia sta in
  * [beforeEnter] e ogni azione è controllata di nuovo dai servizi.
  *
- * La creazione e la modifica stanno in tre finestre: [ConnectionDialog],
- * [AddTableDialog] e [TableSyncDialog]. "Sincronizza" gira in un thread a
- * parte e mostra l'avanzamento in una finestra; "Ricarico completo" forza la
- * ricreazione e il ricarico di tutta la tabella.
+ * La creazione e la modifica stanno in quattro finestre: [ConnectionDialog],
+ * [AddTableDialog], [ImportaPiuTabelleDialog] e [TableSyncDialog]. "Sincronizza"
+ * gira in un thread a parte e mostra l'avanzamento in una finestra; "Ricarico
+ * completo" forza la ricreazione e il ricarico di tutta la tabella;
+ * "Sincronizza tutto" lancia una dopo l'altra tutte le tabelle (Dimensioni
+ * prima, Fatti dopo, in ordine alfabetico).
  */
 @Route("tabelle-importate")
 @Uses(Icon::class)
@@ -55,6 +58,7 @@ class TabelleImportateView(
     private val tableSyncService: TableSyncService,
     private val etlOrchestrator: EtlOrchestrator,
     private val connectionOrchestrator: ConnectionOrchestrator,
+    private val importazioneMultiplaService: ImportazioneMultiplaService,
     private val adminGuard: AdminGuard,
     private val authService: AuthService
 ) : VerticalLayout(), BeforeEnterObserver {
@@ -67,6 +71,9 @@ class TabelleImportateView(
     private val inCorso = mutableSetOf<java.util.UUID>()
 
     private val formatoData = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
+
+    /** Una riga del rapporto di "Sincronizza tutto". */
+    private class RigaRapporto(val nome: String, val ruolo: String, val esito: String, val dettaglio: String)
 
     override fun beforeEnter(event: BeforeEnterEvent) {
         if (!adminGuard.isAdmin()) {
@@ -140,6 +147,9 @@ class TabelleImportateView(
 
         val aggiungi = Button("Aggiungi tabella", Icon(VaadinIcon.PLUS)) { apriAggiungiTabella() }
             .apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
+        val importaPiu = Button("Importa più tabelle", Icon(VaadinIcon.DOWNLOAD)) { apriImportaPiu() }
+        val sincronizzaTutto = Button("Sincronizza tutto", Icon(VaadinIcon.REFRESH)) { confermaSincronizzaTutto() }
+        val barra = HorizontalLayout(aggiungi, importaPiu, sincronizzaTutto).apply { isPadding = false }
 
         tabelleGrid.apply {
             setSizeFull()
@@ -157,17 +167,19 @@ class TabelleImportateView(
                     addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_PRIMARY)
                 }
                 val altro = MenuBar().apply {
+                    addClassName("lbi-menu-righe")
                     addThemeVariants(MenuBarVariant.LUMO_TERTIARY_INLINE)
                     val radice = addItem(Icon(VaadinIcon.ELLIPSIS_DOTS_V))
                     radice.subMenu.addItem("Ricarico completo") { confermaRicaricoCompleto(info) }
                     radice.subMenu.addItem("Configura sincronizzazione") { apriSincronizzazione(info) }
+                    radice.subMenu.addItem("Campi") { apriCampi(info) }
                     radice.subMenu.addItem("Elimina") { confermaEliminaTabella(info) }
                 }
                 HorizontalLayout(sincronizza, altro).apply { isPadding = false }
             }.setHeader("")
         }
 
-        layout.add(aggiungi, tabelleGrid)
+        layout.add(barra, tabelleGrid)
         layout.setFlexGrow(1.0, tabelleGrid)
         return layout
     }
@@ -195,8 +207,20 @@ class TabelleImportateView(
         AddTableDialog(connectionOrchestrator, tableImportService) { ricarica() }.open()
     }
 
+    private fun apriImportaPiu() {
+        if (connectionOrchestrator.findAll().isEmpty()) {
+            Notification.show("Crea prima una connessione, dalla scheda Connessioni", 5000, Notification.Position.MIDDLE)
+            return
+        }
+        ImportaPiuTabelleDialog(connectionOrchestrator, importazioneMultiplaService, adminGuard) { ricarica() }.open()
+    }
+
     private fun apriSincronizzazione(info: TabellaImportataInfo) {
         TableSyncDialog(tableSyncService, tableImportService, info.tabella) { ricarica() }.open()
+    }
+
+    private fun apriCampi(info: TabellaImportataInfo) {
+        CampiTabellaDialog(tableImportService, info.tabella, info.dataset.isNotEmpty()) { ricarica() }.open()
     }
 
     private fun confermaRicaricoCompleto(info: TabellaImportataInfo) {
@@ -270,6 +294,107 @@ class TabelleImportateView(
         thread.isDaemon = true
         thread.name = "sync-${info.tabella.nomeLogico}"
         thread.start()
+    }
+
+    // ---------- Sincronizza tutto ----------
+
+    /** Le tabelle da sincronizzare: Dimensioni prima, Fatti dopo, in ordine alfabetico; salta quelle già in corso. */
+    private fun tabelleDaSincronizzare(): List<ImportedTable> =
+        tableImportService.elenco()
+            .map { it.tabella }
+            .filter { it.id !in inCorso }
+            .sortedWith(
+                compareBy<ImportedTable>({ if (it.ruolo == RuoloTabella.FATTI) 1 else 0 }, { it.nomeLogico.lowercase() })
+            )
+
+    private fun confermaSincronizzaTutto() {
+        val n = tabelleDaSincronizzare().size
+        if (n == 0) {
+            Notification.show("Nessuna tabella da sincronizzare")
+            return
+        }
+        conferma(
+            titolo = "Sincronizzare tutte le tabelle ($n)?",
+            messaggio = "Una dopo l'altra: prima le Dimensioni, poi i Fatti, in ordine alfabetico. " +
+                    "Può richiedere molto tempo. Una tabella in errore non ferma le altre.",
+            etichetta = "Sincronizza tutto",
+            pericolo = false
+        ) { avviaSincronizzaTutto() }
+    }
+
+    private fun avviaSincronizzaTutto() {
+        try {
+            adminGuard.requireAdmin()
+        } catch (e: SecurityException) {
+            Notification.show(e.message ?: "Operazione non consentita")
+            return
+        }
+        val tabelle = tabelleDaSincronizzare()
+        if (tabelle.isEmpty()) return
+        val ui = UI.getCurrent() ?: return
+        inCorso.addAll(tabelle.map { it.id })
+
+        val avanzamento = Span("Avvio...")
+        val barra = ProgressBar().apply { min = 0.0; max = tabelle.size.toDouble(); value = 0.0 }
+        val corpo = VerticalLayout(barra, avanzamento).apply { isPadding = false }
+        val chiudi = Button("Chiudi").apply { isEnabled = false }
+        val dialog = Dialog().apply {
+            headerTitle = "Sincronizza tutto"
+            width = "760px"
+            isCloseOnOutsideClick = false
+            isCloseOnEsc = false
+            add(corpo)
+            footer.add(chiudi)
+        }
+        chiudi.addClickListener { dialog.close() }
+        dialog.open()
+
+        val thread = Thread {
+            val rapporto = mutableListOf<RigaRapporto>()
+            tabelle.forEachIndexed { i, tabella ->
+                val ruolo = if (tabella.ruolo == RuoloTabella.FATTI) "Fatti" else "Dimensione"
+                val prefisso = "${i + 1} di ${tabelle.size} · ${tabella.nomeLogico}"
+                aggiornaUi(ui) { avanzamento.text = prefisso }
+                try {
+                    val esito = etlOrchestrator.syncTabella(tabella.id, false) { fase ->
+                        aggiornaUi(ui) { avanzamento.text = "$prefisso · $fase" }
+                    }
+                    rapporto += RigaRapporto(tabella.nomeLogico, ruolo, "OK", descriviEsito(esito))
+                } catch (e: Exception) {
+                    rapporto += RigaRapporto(tabella.nomeLogico, ruolo, "Errore", e.message ?: e::class.simpleName.orEmpty())
+                }
+                aggiornaUi(ui) {
+                    inCorso.remove(tabella.id)
+                    barra.value = (i + 1).toDouble()
+                }
+            }
+            aggiornaUi(ui) {
+                inCorso.removeAll(tabelle.map { it.id }.toSet())
+                mostraRapportoSincronizzazione(corpo, rapporto)
+                chiudi.isEnabled = true
+                dialog.isCloseOnEsc = true
+                ricarica()
+            }
+        }
+        thread.isDaemon = true
+        thread.name = "sync-tutto"
+        thread.start()
+    }
+
+    private fun mostraRapportoSincronizzazione(corpo: VerticalLayout, rapporto: List<RigaRapporto>) {
+        val ok = rapporto.count { it.esito == "OK" }
+        val errori = rapporto.count { it.esito == "Errore" }
+        val griglia = Grid<RigaRapporto>().apply {
+            setWidthFull()
+            height = "380px"
+            addColumn { it.nome }.setHeader("Tabella").setAutoWidth(true)
+            addColumn { it.ruolo }.setHeader("Ruolo").setAutoWidth(true)
+            addColumn { it.esito }.setHeader("Esito").setAutoWidth(true)
+            addColumn { it.dettaglio }.setHeader("Dettaglio").setAutoWidth(true).setFlexGrow(1)
+            setItems(rapporto)
+        }
+        corpo.removeAll()
+        corpo.add(Span("Sincronizzate: $ok · Errori: $errori"), griglia)
     }
 
     /** Aggiorna la UI dal thread di sincronizzazione; se la pagina è stata chiusa non fa niente. */

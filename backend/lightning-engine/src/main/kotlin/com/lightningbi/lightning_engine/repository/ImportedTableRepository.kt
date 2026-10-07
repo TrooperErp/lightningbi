@@ -13,6 +13,9 @@ interface ImportedTableRepository {
 
     fun findColumnsByTable(importedTableId: UUID): List<ImportedColumn>
     fun saveColumns(columns: List<ImportedColumn>)
+
+    /** Cambia il nome del campo di una colonna importata. Le regole (collisioni, tabella non in un dataset) le controlla chi chiama. */
+    fun updateNomeCampo(columnId: UUID, nomeCampo: String)
     fun deleteColumnsByTable(importedTableId: UUID): Int
 
     // ---- Ponte dataset <-> tabelle importate (lbi_area_imported_table) ----

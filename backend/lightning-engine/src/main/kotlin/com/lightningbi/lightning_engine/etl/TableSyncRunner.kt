@@ -42,6 +42,11 @@ data class EsitoSync(
  * le unità cambiate). Non conosce i dataset: chi la chiama si occupa di
  * ricostruire gli indici di quelli che usano la tabella.
  *
+ * NOMI: verso la SORGENTE si usa il nome della colonna ([ImportedColumn.nome]);
+ * verso CLICKHOUSE (colonne fisiche, symbol table, cancellazioni) il nome del
+ * campo ([ImportedColumn.nomeCampo]). Le colonne dell'unità, che l'admin sceglie
+ * tra i nomi delle colonne, si traducono con [campoDi].
+ *
  * Schemi, come in Qlik: le unità cambiate si riconoscono con una query scritta
  * dall'admin (datastamp), le righe vecchie di una unità si tolgono per chiave
  * e si reinseriscono quelle rilette, le unità sparite dalla sorgente si
@@ -212,15 +217,17 @@ class TableSyncRunner(
         // datastamp posteriore e al giro dopo risulterà cambiata.
         val inizio = connectionOrchestrator.sourceNow(connectionId)
 
-        val fisiche = colonne.map { Naming.column(it.nome) }
-        val numeriche = colonne.filter { !it.isChiave && ColumnProposal.isNumerico(it.tipo) }.map { it.nome }
+        // Lato ClickHouse si usa il NOME CAMPO: colonne fisiche, copie numeriche, symbol table.
+        val fisiche = colonne.map { Naming.column(it.nomeCampo) }
+        val numeriche = colonne.filter { !it.isChiave && ColumnProposal.isNumerico(it.tipo) }.map { it.nomeCampo }
         val colonneCaricate = fisiche + numeriche.map { Naming.numericColumn(it) }
         // ORDER BY: chiavi di JOIN e colonne dell'unità (le cancellazioni le usano).
-        val ordinamento = (colonne.filter { it.isChiave }.map { it.nome } + config.colonneUnita)
+        val ordinamento = (colonne.filter { it.isChiave }.map { it.nomeCampo } +
+                config.colonneUnita.mapNotNull { campoDi(colonne, it) })
             .filter { Naming.column(it) in fisiche }
             .distinctBy { Naming.column(it) }
 
-        colonne.forEach { symbolTableService.createSymbolTable(it.nome) }
+        colonne.forEach { symbolTableService.createSymbolTable(it.nomeCampo) }
 
         val completa = forzaCompleta ||
                 config.modalita == ModalitaSync.COMPLETA ||
@@ -237,6 +244,13 @@ class TableSyncRunner(
         tableSyncRepository.updateUltimaSync(tabella.id, inizio)
         return esito
     }
+
+    /**
+     * Il nome campo (quindi la colonna fisica su ClickHouse) della colonna con quel nome sulla sorgente,
+     * confrontati come identificatori. Null se la colonna non è tra quelle importate.
+     */
+    private fun campoDi(colonne: List<ImportedColumn>, nomeColonna: String): String? =
+        colonne.firstOrNull { Naming.column(it.nome) == Naming.column(nomeColonna) }?.nomeCampo
 
     /** Ogni colonna importata deve esistere ancora sulla sorgente. Le nuove non si segnalano (le ignorate non sono registrate). */
     private fun controllaColonne(
@@ -280,7 +294,7 @@ class TableSyncRunner(
         symbolTableService.dropTable(tabella.tabellaFisica)
         symbolTableService.createImportedTable(
             tabellaFisica = tabella.tabellaFisica,
-            colonneId = colonne.map { it.nome },
+            colonneId = colonne.map { it.nomeCampo },
             colonneNumeriche = numeriche,
             colonneOrdinamento = ordinamento
         )
@@ -327,7 +341,14 @@ class TableSyncRunner(
         }
         val ultima = config.ultimaSyncInizio!!
         val riferimento = ultima.minusSeconds(config.margineSecondi.toLong())
+
+        // Colonne dell'unità: nomi sulla SORGENTE (query delle chiavi, estrazione) e,
+        // tradotti, nomi campo su CLICKHOUSE (symbol table, cancellazioni, confronto chiavi).
         val colonneUnita = config.colonneUnita
+        val campiUnita = colonneUnita.map { nome ->
+            campoDi(colonne, nome)
+                ?: error("La colonna dell'unità '$nome' non è tra le colonne importate di '${tabella.nomeLogico}'")
+        }
 
         // 1) Unità da rileggere: cambiate più quelle da rileggere sempre. Senza
         //    doppioni: la chiave si confronta nella forma normalizzata.
@@ -372,8 +393,8 @@ class TableSyncRunner(
             progresso("${tabella.nomeLogico}: sostituisco ${daRileggere.size} unità")
             rinnova()
             var prossimoRid = loaderService.prossimoRid(tabella.tabellaFisica)
-            val esistenti = chiaviComeId(colonneUnita, daRileggere.keys.toList())
-            loaderService.deleteUnits(tabella.tabellaFisica, colonneUnita, esistenti)
+            val esistenti = chiaviComeId(campiUnita, daRileggere.keys.toList())
+            loaderService.deleteUnits(tabella.tabellaFisica, campiUnita, esistenti)
 
             connectionOrchestrator.extractUnits(
                 connectionId, schema, nomeOrigine, colonneUnita, daRileggere.values.toList()
@@ -396,7 +417,7 @@ class TableSyncRunner(
         if (config.confrontaCancellazioni) {
             progresso("${tabella.nomeLogico}: cerco le unità sparite dalla sorgente")
             rinnova()
-            eliminate = eliminaSparite(tabella, colonneUnita, connectionId, schema, nomeOrigine, rinnova)
+            eliminate = eliminaSparite(tabella, colonneUnita, campiUnita, connectionId, schema, nomeOrigine, rinnova)
         }
 
         return EsitoSync(ModalitaSync.INCREMENTALE, caricate, scartate, daRileggere.size.toLong(), eliminate.toLong())
@@ -407,16 +428,20 @@ class TableSyncRunner(
      * controlli bloccanti, mai silenziosi: una sorgente che restituisce zero
      * chiavi (vista vuota per un problema) o una cancellazione di massa
      * cancellerebbero i dati. In quel caso si lancia il ricarico completo a mano.
+     *
+     * [colonneUnita] sono i nomi sulla sorgente (per leggere le chiavi), [campiUnita] i nomi
+     * campo corrispondenti (per ClickHouse), nello stesso ordine.
      */
     private fun eliminaSparite(
         tabella: ImportedTable,
         colonneUnita: List<String>,
+        campiUnita: List<String>,
         connectionId: UUID,
         schema: String?,
         nomeOrigine: String,
         rinnova: () -> Unit
     ): Int {
-        val inClickHouse = loaderService.distinctKeyIds(tabella.tabellaFisica, colonneUnita)
+        val inClickHouse = loaderService.distinctKeyIds(tabella.tabellaFisica, campiUnita)
         val inSorgente = HashSet<List<Long>>()
 
         connectionOrchestrator.extractKeys(connectionId, schema, nomeOrigine, colonneUnita) { chiavi ->
@@ -426,7 +451,7 @@ class TableSyncRunner(
                     val n = chiave.map { transformService.normalizza(it) }
                     if (n.any { it == null }) null else n.map { it!! }
                 }
-                inSorgente.addAll(chiaviComeId(colonneUnita, normalizzate))
+                inSorgente.addAll(chiaviComeId(campiUnita, normalizzate))
             }
         }
 
@@ -443,18 +468,18 @@ class TableSyncRunner(
                     "oltre il $maxDeletePercent%. La sincronizzazione si ferma: alza lbi.sync.max-delete-percent " +
                     "oppure lancia il ricarico completo a mano"
         }
-        return loaderService.deleteUnits(tabella.tabellaFisica, colonneUnita, sparite.toList())
+        return loaderService.deleteUnits(tabella.tabellaFisica, campiUnita, sparite.toList())
     }
 
     /**
-     * Le chiavi (già normalizzate, nell'ordine delle colonne dell'unità) come
+     * Le chiavi (già normalizzate, nell'ordine dei campi dell'unità) come
      * id delle symbol table dei rispettivi campi. Solo lettura: una chiave con
      * un valore senza id non compare nel risultato.
      */
-    private fun chiaviComeId(colonneUnita: List<String>, chiavi: List<List<String>>): List<List<Long>> {
+    private fun chiaviComeId(campiUnita: List<String>, chiavi: List<List<String>>): List<List<Long>> {
         if (chiavi.isEmpty()) return emptyList()
-        val ids: List<Map<String, Long>> = colonneUnita.indices.map { j ->
-            symbolLookupService.findIds(colonneUnita[j], chiavi.mapTo(HashSet()) { it[j] })
+        val ids: List<Map<String, Long>> = campiUnita.indices.map { j ->
+            symbolLookupService.findIds(campiUnita[j], chiavi.mapTo(HashSet()) { it[j] })
         }
         val risultato = ArrayList<List<Long>>(chiavi.size)
         for (chiave in chiavi) {

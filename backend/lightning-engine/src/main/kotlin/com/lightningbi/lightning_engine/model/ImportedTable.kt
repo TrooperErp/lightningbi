@@ -73,7 +73,14 @@ data class ImportedColumn(
      */
     val derivataDa: String? = null,
     /** Componente del calendario (anno, mese, giorno...); presente solo con [derivataDa]. */
-    val componente: String? = null
+    /** Componente del calendario (anno, mese, giorno...); presente solo con [derivataDa]. */
+    val componente: String? = null,
+    /**
+     * Nome del CAMPO: decide il nome della colonna fisica e della symbol table (Naming.column), quindi
+     * l'associazione tra tabelle. Si decide una volta per tutti, come l'AS dello script di Qlik; all'inizio
+     * coincide con [nome], che resta il nome della colonna sulla sorgente (da cui si legge).
+     */
+    val nomeCampo: String = nome
 ) {
     init {
         require((derivataDa == null) == (componente == null)) {

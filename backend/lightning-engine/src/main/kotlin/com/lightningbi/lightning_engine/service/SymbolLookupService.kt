@@ -261,9 +261,35 @@ class SymbolLookupService(
         }
     }
 
+    /** Limite di byte per una query con la lista dei valori: ClickHouse rifiuta oltre 256 KiB (max_query_size). */
+    private val maxByteQuery = 100_000
+
+    /**
+     * Divide i valori in blocchi per numero (al massimo [chunkSize]) E per dimensione: i valori finiscono
+     * nel testo della query, e con testi lunghi 5.000 valori superano il limite di ClickHouse.
+     * Per ogni valore si contano il doppio dei caratteri (apici e backslash raddoppiati) più virgole e apici.
+     */
+    private fun blocchiPerDimensione(values: Collection<String>): List<List<String>> {
+        val blocchi = mutableListOf<List<String>>()
+        var corrente = mutableListOf<String>()
+        var byte = 0
+        for (v in values) {
+            val costo = v.toByteArray(Charsets.UTF_8).size * 2 + 3
+            if (corrente.isNotEmpty() && (corrente.size >= chunkSize || byte + costo > maxByteQuery)) {
+                blocchi += corrente
+                corrente = mutableListOf()
+                byte = 0
+            }
+            corrente += v
+            byte += costo
+        }
+        if (corrente.isNotEmpty()) blocchi += corrente
+        return blocchi
+    }
+
     private fun fetchExisting(table: String, values: Set<String>): Map<String, Long> {
         val result = mutableMapOf<String, Long>()
-        values.chunked(chunkSize).forEach { chunk ->
+        blocchiPerDimensione(values).forEach { chunk ->
             val placeholders = chunk.joinToString(",") { "?" }
             jdbcTemplate.query(
                 "SELECT value_string, value_id FROM $table WHERE value_string IN ($placeholders)",

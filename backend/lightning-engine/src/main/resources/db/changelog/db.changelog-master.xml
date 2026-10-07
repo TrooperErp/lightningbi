@@ -33,4 +33,5 @@
 <include file="db/changelog/031-calendario.xml"/>
 <include file="db/changelog/032-pivot-misura.xml"/>
 <include file="db/changelog/033-chart-analisi.xml"/>
+<include file="db/changelog/034-nome-campo.xml"/>
 </databaseChangeLog>
