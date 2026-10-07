@@ -26,7 +26,8 @@ class UserRepositoryImpl(
             recoveryCodesHash = rs.getString("recovery_codes_hash"),
             active = rs.getBoolean("active"),
             createdAt = rs.getTimestamp("created_at").toLocalDateTime(),
-            updatedAt = rs.getTimestamp("updated_at").toLocalDateTime()
+            updatedAt = rs.getTimestamp("updated_at").toLocalDateTime(),
+            codiceDittaAssegnata = (rs.getObject("codice_ditta_assegnata") as Number?)?.toInt()
         )
     }
 
@@ -39,10 +40,10 @@ class UserRepositoryImpl(
     override fun save(user: User): User {
         jdbcTemplate.update(
             """INSERT INTO pg_lbi_system_users 
-               (id, username, email, password_hash, mfa_enabled, active, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, username, email, password_hash, mfa_enabled, active, created_at, updated_at, codice_ditta_assegnata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             user.id, user.username, user.email, user.passwordHash,
-            user.mfaEnabled, user.active, user.createdAt, user.updatedAt
+            user.mfaEnabled, user.active, user.createdAt, user.updatedAt, user.codiceDittaAssegnata
         )
         return user
     }
@@ -52,11 +53,11 @@ class UserRepositoryImpl(
             """UPDATE pg_lbi_system_users SET
                email = ?, password_hash = ?, last_login = ?,
                failed_attempts = ?, locked_until = ?, mfa_enabled = ?,
-               mfa_secret = ?, active = ?, updated_at = ?
+               mfa_secret = ?, active = ?, updated_at = ?, codice_ditta_assegnata = ?
                WHERE id = ?""",
             user.email, user.passwordHash, user.lastLogin,
             user.failedAttempts, user.lockedUntil, user.mfaEnabled,
-            user.mfaSecret, user.active, user.updatedAt, user.id
+            user.mfaSecret, user.active, user.updatedAt, user.codiceDittaAssegnata, user.id
         )
         return user
     }

@@ -68,6 +68,7 @@ class LbiAppShell(
                 val request = com.vaadin.flow.server.VaadinServletRequest.getCurrent().httpServletRequest
                 authService.logout(currentUser.sessionId, currentUser.userId, request.remoteAddr)
                 CurrentUserHolder.clear()
+                SessioneCookie.cancella()
             }
             com.vaadin.flow.component.UI.getCurrent().navigate(LoginView::class.java)
         }.apply { className = "lbi-theme-toggle" }

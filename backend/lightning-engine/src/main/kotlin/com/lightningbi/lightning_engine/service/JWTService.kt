@@ -11,7 +11,8 @@ import javax.crypto.SecretKey
 
 @Service
 class JwtService(
-    @Value("\${lightningbi.security.jwt-secret}") secret: String
+    @Value("\${lightningbi.security.jwt-secret}") secret: String,
+    @Value("\${lightningbi.security.session-hours:4}") private val ore: Long
 ) {
 
     private val key: SecretKey = Keys.hmacShaKeyFor(secret.toByteArray())
@@ -22,7 +23,7 @@ class JwtService(
             .claim("sessionId", sessionId)
             .claim("role", roleName)
             .issuedAt(Date())
-            .expiration(Date(System.currentTimeMillis() + 8 * 3600 * 1000))
+            .expiration(Date(System.currentTimeMillis() + ore * 3600 * 1000))
             .signWith(key)
             .compact()
 

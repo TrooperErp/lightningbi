@@ -1,9 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
     <changeSet id="034-nome-campo" author="lightningbi">
-        <!-- Nome del CAMPO di una colonna importata, deciso una volta per tutti (come l'AS dello script di Qlik):
-             la colonna fisica e la symbol table prendono questo nome. All'inizio coincide con il nome della colonna. -->
+        <!-- Nome del CAMPO di una colonna importata, deciso una volta per tutti:
+             la colonna fisica e la symbol table prendono questo nome.
+             All'inizio coincide con il nome della colonna. -->
         <addColumn tableName="lbi_imported_column">
             <column name="nome_campo" type="varchar(255)"/>
         </addColumn>
         <sql>UPDATE lbi_imported_column SET nome_campo = nome</sql>
         <addNotNullConstraint tableName="lbi_imported_column" columnName="nome_campo" columnDataType="varchar(255)"/>
     </changeSet>
+
+</databaseChangeLog>

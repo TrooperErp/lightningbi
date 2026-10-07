@@ -3,6 +3,7 @@ package com.lightningbi.lightning_engine.view
 import com.lightningbi.lightning_engine.repository.UserRepository
 import com.lightningbi.lightning_engine.service.AuthService
 import com.lightningbi.lightning_engine.service.JwtService
+import com.lightningbi.lightning_engine.service.SessionService
 import com.vaadin.flow.component.Key
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant
@@ -28,7 +29,8 @@ import com.vaadin.flow.server.VaadinServletRequest
 class LoginView(
     private val authService: AuthService,
     private val jwtService: JwtService,
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    private val sessionService: SessionService
 ) : VerticalLayout() {
 
     init {
@@ -118,7 +120,7 @@ class LoginView(
                 codiceDittaAssegnata = user.codiceDittaAssegnata
             )
         )
-
+        SessioneCookie.imposta(sessionId, sessionService.durataSecondi)
         ui.ifPresent { it.navigate(DatasetFiltriView::class.java) }
     }
 }

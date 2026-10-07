@@ -11,6 +11,12 @@ import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.stereotype.Component
 import org.springframework.web.filter.OncePerRequestFilter
 
+/**
+ * Autenticazione per le chiamate HTTP con "Authorization: Bearer ...".
+ * L'interfaccia Vaadin non lo usa (ha la sua sessione e il suo cookie): serve
+ * per eventuali API. Un token non valido, scaduto, o senza sessione di lavoro
+ * valida viene ignorato: la richiesta resta non autenticata.
+ */
 @Component
 class JwtAuthFilter(
     private val jwtService: JwtService,
@@ -23,18 +29,18 @@ class JwtAuthFilter(
         filterChain: FilterChain
     ) {
         val header = request.getHeader("Authorization")
-        if (header != null && header.startsWith("Bearer ")) {
-            val token = header.removePrefix("Bearer ")
-            val claims = jwtService.validate(token)
-            if (claims != null) {
-                val sessionId = claims["sessionId"] as String
-                val session = sessionService.validate(sessionId)
-                if (session != null) {
-                    val role = claims["role"] as String
-                    val authorities = listOf(SimpleGrantedAuthority("ROLE_$role"))
-                    val auth = UsernamePasswordAuthenticationToken(claims.subject, null, authorities)
-                    SecurityContextHolder.getContext().authentication = auth
-                }
+        if (header != null && header.startsWith("Bearer ") &&
+            SecurityContextHolder.getContext().authentication == null
+        ) {
+            val claims = jwtService.validate(header.removePrefix("Bearer ").trim())
+            val sessionId = claims?.get("sessionId", String::class.java)
+            val ruolo = claims?.get("role", String::class.java)
+            if (claims != null && sessionId != null && ruolo != null &&
+                sessionService.validate(sessionId) != null
+            ) {
+                val autorizzazioni = listOf(SimpleGrantedAuthority("ROLE_$ruolo"))
+                SecurityContextHolder.getContext().authentication =
+                    UsernamePasswordAuthenticationToken(claims.subject, null, autorizzazioni)
             }
         }
         filterChain.doFilter(request, response)
