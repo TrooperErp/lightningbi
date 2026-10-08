@@ -417,13 +417,20 @@ class AnalisiView(
 
     private fun impostaSelezione(dimId: UUID, valori: Set<Long>) {
         if (valori.isEmpty()) selezioni.remove(dimId) else selezioni[dimId] = valori
-        salvaSelezioni()
-        aggiornaSelezioniCorrenti()
-        aggiornaCampi()
-        aggiornaDialoghi()
-        ricalcola()
+        misura("salva selezioni") { salvaSelezioni() }
+        misura("selezioni correnti") { aggiornaSelezioniCorrenti() }
+        misura("campi e contatori") { aggiornaCampi() }
+        misura("popup valori") { aggiornaDialoghi() }
+        misura("ricalcolo pivot e grafici") { ricalcola() }
     }
-
+    private fun <T> misura(nome: String, blocco: () -> T): T {
+        val inizio = System.nanoTime()
+        try {
+            return blocco()
+        } finally {
+            log.info("[tempi] {}: {} ms", nome, (System.nanoTime() - inizio) / 1_000_000)
+        }
+    }
     private fun pannelloSelezioni(): Component {
         val testata = Div(Span("Campi"), Span("Valori")).apply { className = "lbi-qv-sel-head" }
         val corpo = Div(testata, corpoSelezioni).apply { className = "lbi-qv-panel-body" }

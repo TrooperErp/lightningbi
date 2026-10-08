@@ -83,6 +83,18 @@ class EtlOrchestrator(
         ricostruisciIndice(area, progresso)
     }
 
+    /**
+     * Ricostruisce solo l'indice del dataset, senza ricaricare i dati: serve dopo una
+     * modifica al modello o ai campi. Richiede che tutte le sue tabelle siano già state caricate.
+     */
+    fun aggiornaIndice(areaId: UUID, progresso: (String) -> Unit = {}) {
+        val area = registryRepository.findAreaById(areaId) ?: error("Area $areaId non trovata")
+        require(tutteSincronizzate(areaId)) {
+            "Il dataset '${area.nome}' ha tabelle non ancora caricate: sincronizzale prima"
+        }
+        ricostruisciIndice(area, progresso)
+    }
+
     // ================= Una tabella =================
 
     /**

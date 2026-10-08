@@ -166,17 +166,20 @@ class TabelleImportateView(
                 val sincronizza = Button("Sincronizza") { sincronizza(info, forzaCompleta = false) }.apply {
                     addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_PRIMARY)
                 }
+                val campi = Button("Campi") { apriCampi(info) }.apply {
+                    addThemeVariants(ButtonVariant.LUMO_SMALL)
+                }
                 val altro = MenuBar().apply {
                     addClassName("lbi-menu-righe")
                     addThemeVariants(MenuBarVariant.LUMO_TERTIARY_INLINE)
-                    val radice = addItem(Icon(VaadinIcon.ELLIPSIS_DOTS_V))
+                    val radice = addItem(Icon(VaadinIcon.ELLIPSIS_DOTS_V).apply { style.set("color", "var(--lbi-text)") })
                     radice.subMenu.addItem("Ricarico completo") { confermaRicaricoCompleto(info) }
                     radice.subMenu.addItem("Configura sincronizzazione") { apriSincronizzazione(info) }
                     radice.subMenu.addItem("Campi") { apriCampi(info) }
                     radice.subMenu.addItem("Elimina") { confermaEliminaTabella(info) }
                 }
-                HorizontalLayout(sincronizza, altro).apply { isPadding = false }
-            }.setHeader("")
+                HorizontalLayout(sincronizza, campi, altro).apply { isPadding = false }
+            }.setHeader("").setFrozenToEnd(true).setAutoWidth(true).setFlexGrow(0)
         }
 
         layout.add(barra, tabelleGrid)

@@ -188,7 +188,9 @@ class DatasetFiltriView(
         // Come il Reload di Qlik: solo chi costruisce il modello (admin) ricarica i dati.
         if (adminGuard.isAdmin()) {
             barra.add(
-                Button("Sincronizza", Icon(VaadinIcon.REFRESH)) { sincronizza(area) }
+                Button("Aggiorna indice", Icon(VaadinIcon.REFRESH)) { aggiornaIndice(area) }
+                    .apply { addClassName("lbi-qv-clear") },
+                Button("Sincronizza dati", Icon(VaadinIcon.DOWNLOAD)) { sincronizza(area) }
                     .apply { addClassName("lbi-qv-clear") }
             )
         }
@@ -529,6 +531,48 @@ class DatasetFiltriView(
         }.start()
     }
 
+    /**
+     * Ricostruisce solo l'indice del dataset, senza ricaricare i dati: dopo una modifica al
+     * modello o a un campo. Gira in un thread a parte, con una finestra di avanzamento. Solo admin.
+     */
+    private fun aggiornaIndice(area: Area) {
+        if (!adminGuard.isAdmin()) return
+        val ui = getUI().orElse(null) ?: return
+
+        val avanzamento = Span("Avvio...")
+        val dialog = Dialog().apply {
+            headerTitle = "Aggiorna indice di ${area.nome}"
+            width = "480px"
+            isCloseOnEsc = false
+            isCloseOnOutsideClick = false
+        }
+        dialog.add(VerticalLayout(ProgressBar().apply { isIndeterminate = true }, avanzamento).apply { isPadding = false })
+        dialog.open()
+
+        val inizio = System.currentTimeMillis()
+        Thread {
+            try {
+                etlOrchestrator.aggiornaIndice(area.id) { frase -> ui.access { avanzamento.text = frase } }
+                val secondi = (System.currentTimeMillis() - inizio) / 1000
+                ui.access {
+                    dialog.close()
+                    Notification.show("Indice aggiornato in $secondi s", 5000, Notification.Position.BOTTOM_END)
+                    if (areaCorrente?.id == area.id) aggiornaTutto()
+                }
+            } catch (e: Exception) {
+                ui.access {
+                    dialog.close()
+                    Notification.show(
+                        "Aggiornamento dell'indice fallito: ${e.message ?: e::class.simpleName}",
+                        8000, Notification.Position.MIDDLE
+                    )
+                }
+            }
+        }.apply {
+            isDaemon = true
+            name = "indice-dataset-${area.id}"
+        }.start()
+    }
     // ================= Menu =================
 
     private fun menu(area: Area?, aree: List<Area>, analisi: List<PivotView>): List<LbiSidebarMenu.MenuGroup> {
@@ -591,7 +635,10 @@ class DatasetFiltriView(
                         LbiSidebarMenu.MenuEntry("Modello dati", enabled = areaId != null, icon = VaadinIcon.TABLE) {
                             areaId?.let { id -> getUI().ifPresent { it.navigate(NewDatasetView::class.java, id.toString()) } }
                         },
-                        LbiSidebarMenu.MenuEntry("Sincronizza dataset", enabled = area != null, icon = VaadinIcon.REFRESH) {
+                        LbiSidebarMenu.MenuEntry("Aggiorna indice", enabled = area != null, icon = VaadinIcon.REFRESH) {
+                            area?.let { aggiornaIndice(it) }
+                        },
+                        LbiSidebarMenu.MenuEntry("Sincronizza dati", enabled = area != null, icon = VaadinIcon.DOWNLOAD) {
                             area?.let { sincronizza(it) }
                         },
                         LbiSidebarMenu.MenuEntry("Gestione utenti", icon = VaadinIcon.USERS) {

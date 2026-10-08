@@ -135,7 +135,7 @@ class FiltriService(
             FROM ($stato) AS st
             LEFT JOIN $simboli AS s ON toUInt32(st.valore_id) = s.value_id
             ${filtroRicerca(ricerca)}
-            ORDER BY sel DESC, verde DESC, s.value_number ASC, s.value_string ASC
+            ORDER BY s.value_number ASC, s.value_string ASC, st.valore_id ASC
             LIMIT $limite OFFSET $offset
         """.trimIndent()
 
