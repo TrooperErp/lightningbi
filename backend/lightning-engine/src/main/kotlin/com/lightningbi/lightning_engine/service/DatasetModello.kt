@@ -37,9 +37,12 @@ data class OccorrenzaBozza(
     val colonne: List<ImportedColumn>,
     val eccezioni: Map<String, EccezioneCampo> = emptyMap(),
     /** Prefissi dei campi tecnici (chiavi) della connessione della tabella, ad esempio "_KEY". */
-    val prefissiTecnici: List<String> = emptyList()
-
+    val prefissiTecnici: List<String> = emptyList(),
+    /** Disconnessa logicamente a mano (come Qlik): le selezioni non entrano né escono da questa tabella. */
+    val disconnessa: Boolean = false
 )
+
+
 
 data class MetricaBozza(
     val id: UUID,
@@ -114,6 +117,11 @@ data class Problema(
 data class EsitoValidazione(val errori: List<Problema>, val avvisi: List<Problema>) {
     val valido: Boolean get() = errori.isEmpty()
 }
+/** Esito della ricerca dei loop: le tabelle disconnesse (a mano e automatiche) e, per ogni automatica, il ciclo che rompe. */
+private class RisoluzioneLoop(
+    val disconnesse: Set<UUID>,
+    val automatiche: List<Pair<UUID, List<UUID>>>
+)
 
 data class DatasetBozza(
     /** Null finché il dataset non è salvato. */
@@ -348,8 +356,95 @@ data class DatasetBozza(
      * Le chiavi composte del modello: gruppi di due o più campi condivisi
      * dalle stesse tabelle. Sono anche le chiavi sintetiche segnalate da [valida].
      */
+    /** Cambia il flag "disconnessa" di una tabella. */
+    fun impostaDisconnessa(occorrenzaId: UUID, disconnessa: Boolean): DatasetBozza =
+        copy(occorrenze = occorrenze.map { if (it.id == occorrenzaId) it.copy(disconnessa = disconnessa) else it })
+
+    /**
+     * Le tabelle disconnesse logicamente: quelle scelte a mano più quelle che il sistema disconnette
+     * da solo per rompere i loop (come Qlik), una per loop.
+     */
+    fun disconnesse(): Set<UUID> = risolviLoop().disconnesse
+
+    /** Le associazioni che contano per la propagazione: senza le tabelle disconnesse. */
+    fun associazioniAttive(): List<Associazione> = associazioniSenza(disconnesse())
+
+    private fun associazioniSenza(disc: Set<UUID>): List<Associazione> =
+        associazioni().mapNotNull { a ->
+            val occ = a.occorrenze.filter { it !in disc }
+            if (occ.size < 2) null else a.copy(occorrenze = occ)
+        }
+
+    private fun risolviLoop(): RisoluzioneLoop {
+        val disc = occorrenze.filter { it.disconnessa }.map { it.id }.toMutableSet()
+        val automatiche = mutableListOf<Pair<UUID, List<UUID>>>()
+        while (true) {
+            val ciclo = primoLoop(disc) ?: break
+            // Si disconnette la tabella non-Fatti più recente del ciclo; se sono tutti Fatti, l'ultimo.
+            val scelta = ciclo.lastOrNull { occorrenza(it).ruolo != RuoloTabella.FATTI } ?: ciclo.last()
+            disc += scelta
+            automatiche += scelta to ciclo
+        }
+        return RisoluzioneLoop(disc, automatiche)
+    }
+
+    /** Le tabelle (nell'ordine del dataset) del primo ciclo del grafo senza le tabelle [disc], o null se non ci sono loop. */
+    private fun primoLoop(disc: Set<UUID>): List<UUID>? {
+        val attive = occorrenze.filter { it.id !in disc }
+        if (attive.size < 2) return null
+        val indice = attive.mapIndexed { i, o -> o.id to i }.toMap()
+        val n = attive.size
+        val chiavi = associazioniSenza(disc).groupBy { it.occorrenze.toSet() }.toList()
+        val totale = n + chiavi.size
+        val adiacenti = Array(totale) { mutableListOf<Int>() }
+        val archi = mutableListOf<Pair<Int, Int>>()
+        chiavi.forEachIndexed { j, (tabelle, _) ->
+            tabelle.forEach { id ->
+                val t = indice.getValue(id)
+                adiacenti[t] += n + j
+                adiacenti[n + j] += t
+                archi += t to (n + j)
+            }
+        }
+        val padre = IntArray(totale) { -1 }
+        val profondita = IntArray(totale)
+        val visitato = BooleanArray(totale)
+        for (inizio in 0 until totale) {
+            if (visitato[inizio]) continue
+            visitato[inizio] = true
+            val coda = ArrayDeque<Int>().apply { add(inizio) }
+            while (coda.isNotEmpty()) {
+                val u = coda.removeFirst()
+                for (v in adiacenti[u]) {
+                    if (!visitato[v]) {
+                        visitato[v] = true
+                        padre[v] = u
+                        profondita[v] = profondita[u] + 1
+                        coda.add(v)
+                    }
+                }
+            }
+        }
+        for ((a, b) in archi) {
+            if (padre[b] == a || padre[a] == b) continue
+            var x = a
+            var y = b
+            val nodi = mutableSetOf(x, y)
+            while (x != y) {
+                if (profondita[x] >= profondita[y]) { x = padre[x]; nodi += x } else { y = padre[y]; nodi += y }
+            }
+            return nodi.filter { it < n }.sorted().map { attive[it].id }
+        }
+        return null
+    }
+
+    /**
+     * Le chiavi composte del modello: gruppi di due o più campi condivisi
+     * dalle stesse tabelle (senza quelle disconnesse). Sono anche le chiavi
+     * sintetiche segnalate da [valida].
+     */
     fun chiaviComposte(): List<ChiaveComposta> =
-        associazioni()
+        associazioniAttive()
             .groupBy { it.occorrenze.toSet() }
             .filter { it.value.size > 1 }
             .map { (occorrenze, assoc) ->
@@ -482,24 +577,15 @@ data class DatasetBozza(
             }
         }
 
-        // Loop: ogni arco fuori dalla foresta chiude un ciclo.
-        var trovati = 0
-        for ((a, b) in archi) {
-            if (padre[b] == a || padre[a] == b) continue
-            if (trovati >= MAX_LOOP_SEGNALATI) break
-            var x = a
-            var y = b
-            val nodi = mutableSetOf(x, y)
-            while (x != y) {
-                if (profondita[x] >= profondita[y]) { x = padre[x]; nodi += x } else { y = padre[y]; nodi += y }
-            }
-            val alias = nodi.filter { it < n }.map { occorrenze[it].alias }
-            val campi = nodi.filter { it >= n }.flatMap { chiavi[it - n].second.map { a2 -> a2.nomeCampo } }
-            errori += Problema(
-                "Loop tra le tabelle ${alias.joinToString(", ")}: rinomina o escludi uno di questi campi: ${campi.joinToString(", ")}",
-                campi = campi, tabelle = alias
+        // Loop: come in Qlik non sono un errore. Una tabella per ciclo viene disconnessa
+        // logicamente (le selezioni non passano da lei); l'utente può sceglierla a mano.
+        risolviLoop().automatiche.forEach { (scelta, ciclo) ->
+            val alias = ciclo.map { occorrenza(it).alias }
+            avvisi += Problema(
+                "Loop tra le tabelle ${alias.joinToString(", ")}: '${occorrenza(scelta).alias}' è stata disconnessa " +
+                        "logicamente (le selezioni non passano da lei). Puoi scegliere tu quale disconnettere.",
+                tabelle = alias
             )
-            trovati++
         }
 
         // Chiavi sintetiche (avvisi, come Qlik).

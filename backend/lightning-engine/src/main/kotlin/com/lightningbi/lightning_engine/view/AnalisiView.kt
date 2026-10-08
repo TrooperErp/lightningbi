@@ -40,6 +40,12 @@ import com.vaadin.flow.router.Route
 import org.slf4j.LoggerFactory
 import java.util.UUID
 import com.lightningbi.lightning_engine.service.AccessoDatasetService
+import com.lightningbi.lightning_engine.service.ContatoreCampo
+import com.lightningbi.lightning_engine.service.StatoValore
+import com.lightningbi.lightning_engine.service.ValoreFiltro
+import com.vaadin.flow.component.menubar.MenuBar
+import com.vaadin.flow.component.menubar.MenuBarVariant
+
 
 /**
  * Pagina "Analisi": come un foglio di Qlik con una pivot. Un dataset ha molte
@@ -83,12 +89,13 @@ class AnalisiView(
     private val colonne = mutableListOf<UUID>()
     private val ordineMisure = mutableListOf<UUID>()
     private val selezioni = mutableMapOf<UUID, Set<Long>>()
+    private val dialoghiValori = mutableMapOf<UUID, Pair<Dialog, ListaValoriUi>>()
 
     private val nomiDimensioni: Map<UUID, String> get() = dimensioni.associate { it.dimensioneId to it.nome }
 
     private val risultato = ResultsGridUi { calendarioService.formatta(it) }.apply {
-        resultsGrid.height = "440px"
-        root.height = "440px"
+        resultsGrid.setSizeFull()
+        root.setSizeFull()
     }
 
     private val grafici = ChartsPanelUi()
@@ -133,6 +140,8 @@ class AnalisiView(
 
     private fun costruisci(areaScelta: Area?, aree: List<Area>, vistaRichiesta: UUID?) {
         removeAll()
+        dialoghiValori.values.toList().forEach { it.first.close() }
+        dialoghiValori.clear()
         area = areaScelta
         righe.clear(); colonne.clear(); ordineMisure.clear(); selezioni.clear()
 
@@ -180,24 +189,26 @@ class AnalisiView(
 
     private fun pagina(areaScelta: Area, scelta: PivotView): Component {
         val sinistra = Div(pannelloCampi(), pannelloSelezioni()).apply { className = "lbi-qv-left" }
-        val centro = Div(
-            Div(
-                pannelloZona("Righe", contenitoreRighe),
-                pannelloZona("Colonne", contenitoreColonne),
-                pannelloMisure()
-            ).apply { className = "lbi-qv-zones" },
-            messaggio,
-            risultato.root,
-            grafici.root
-        ).apply { className = "lbi-qv-boxes lbi-qv-analisi-centro" }
+        val areaLavoro = Div(
+            Div(messaggio, risultato.root).apply { className = "lbi-qv-pivot-box" },
+            Div(grafici.root).apply { className = "lbi-qv-grafici-box" }
+        ).apply { className = "lbi-qv-area-lavoro" }
+
+        val zone = Div(
+            pannelloZona("Righe", contenitoreRighe),
+            pannelloZona("Colonne", contenitoreColonne),
+            pannelloMisure()
+        ).apply { className = "lbi-qv-zones" }
+
+        val centro = Div(areaLavoro).apply { className = "lbi-qv-boxes lbi-qv-analisi-centro" }
 
         val corpo = Div(sinistra, centro).apply { className = "lbi-qv-body" }
-        return Div(barraAlta(areaScelta, scelta), schede(scelta), corpo).apply { className = "lbi-qv-page" }
+        return Div(barraAlta(areaScelta, scelta, zone), schede(scelta), corpo).apply { className = "lbi-qv-page lbi-qv-page-analisi" }
     }
 
     // ---------- barra in alto e schede ----------
 
-    private fun barraAlta(areaScelta: Area, scelta: PivotView): Component {
+    private fun barraAlta(areaScelta: Area, scelta: PivotView, zone: Component): Component {
         val titolo = Div(
             Span("ANALISI").apply { className = "lbi-qv-title-text" },
             Span("${areaScelta.nome} · ${scelta.nome}").apply { className = "lbi-qv-title-sub" }
@@ -215,7 +226,7 @@ class AnalisiView(
                 addClassName("lbi-qv-clear")
                 addThemeVariants(ButtonVariant.LUMO_ERROR)
             }
-        return Div(titolo, cancella, rinomina, elimina).apply { className = "lbi-qv-top" }
+        return Div(titolo, cancella, rinomina, elimina, zone).apply { className = "lbi-qv-top" }
     }
 
     /** Le analisi del dataset come schede, come i fogli di Qlik. */
@@ -285,6 +296,7 @@ class AnalisiView(
     }
 
     /** I campi del dataset raggruppati per tabella, con i pulsanti per metterli in Righe o in Colonne. */
+    /** I campi del dataset per tabella: stato e contatore, clic per i valori, menu per Righe e Colonne. */
     private fun aggiornaCampi() {
         elencoCampi.removeAll()
         val filtro = ricercaCampi.value.orEmpty().trim().lowercase()
@@ -293,25 +305,123 @@ class AnalisiView(
             elencoCampi.add(Span("Nessun campo").apply { className = "lbi-qv-empty" })
             return
         }
+        val contatori = contatoriCampi(visibili.map { it.dimensioneId })
         visibili.groupBy { it.tabella }.forEach { (tabella, campi) ->
             elencoCampi.add(Div(Span(tabella)).apply { className = "lbi-qv-group-title" })
             campi.forEach { campo ->
                 val inUso = campo.dimensioneId in righe || campo.dimensioneId in colonne
-                val aRighe = Button("Righe") { aggiungiDimensione(campo.dimensioneId, true) }
-                    .apply { addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL) }
-                val aColonne = Button("Colonne") { aggiungiDimensione(campo.dimensioneId, false) }
-                    .apply { addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL) }
+                val c = contatori[campo.dimensioneId]
+                val possibili = c?.possibili ?: 0L
+                val totali = c?.totali ?: 0L
+                val principale = Div(
+                    Span(campo.nome).apply { className = "lbi-qv-field-name" },
+                    Span("($possibili/$totali)").apply { className = "lbi-qv-field-count" }
+                ).apply {
+                    className = "lbi-qv-field-main"
+                    addClickListener { apriValori(campo) }
+                    element.setAttribute("title", "Clic per vedere e selezionare i valori")
+                }
+                val menu = MenuBar().apply {
+                    addThemeVariants(MenuBarVariant.LUMO_TERTIARY_INLINE)
+                    val radice = addItem(Icon(VaadinIcon.ELLIPSIS_DOTS_V).apply { style.set("color", "var(--lbi-text)") })
+                    radice.subMenu.addItem("Metti nelle Righe") { aggiungiDimensione(campo.dimensioneId, true) }
+                    radice.subMenu.addItem("Metti nelle Colonne") { aggiungiDimensione(campo.dimensioneId, false) }
+                }
                 elencoCampi.add(
-                    Div(
-                        Span(campo.nome).apply { className = "lbi-qv-field-name" },
-                        aRighe, aColonne
-                    ).apply {
+                    Div(principale, menu).apply {
                         className = "lbi-qv-field-row lbi-qv-field-add"
-                        classNames.set("lbi-qv-field-selected", inUso)
+                        classNames.set("lbi-qv-field-inuso", inUso)
+                        classNames.set("lbi-qv-field-selected", (c?.selezionati ?: 0L) > 0)
+                        classNames.set("lbi-qv-field-excluded", totali > 0 && possibili == 0L)
                     }
                 )
             }
         }
+    }
+
+    private fun contatoriCampi(ids: List<UUID>): Map<UUID, ContatoreCampo> {
+        val a = area ?: return emptyMap()
+        return try {
+            filtriService.contatori(a.id, selezioni, ids)
+        } catch (e: Exception) {
+            log.warn("Calcolo dei contatori fallito per il dataset {}", a.id, e)
+            emptyMap()
+        }
+    }
+
+    /** Finestra con i valori del campo (non modale: resta aperta mentre il pivot si aggiorna). */
+    private fun apriValori(campo: DimensioneAnalisi) {
+        val a = area ?: return
+        dialoghiValori[campo.dimensioneId]?.let { (finestra, lista) ->
+            finestra.open()
+            lista.aggiorna()
+            lista.ridimensiona()
+
+            return
+        }
+        val lista = ListaValoriUi(
+            filtriService, a.id, campo.dimensioneId,
+            { selezioni },
+            { valore, _ -> alClic(campo.dimensioneId, valore) }
+        )
+        val finestra = Dialog().apply {
+            headerTitle = campo.nome
+            isModal = false
+            isDraggable = true
+            isResizable = true
+            width = "240px"
+            top = "140px"
+            left = "280px"
+            header.add(
+                Button(Icon(VaadinIcon.CLOSE)) { close() }.apply {
+                    addThemeVariants(ButtonVariant.LUMO_TERTIARY_INLINE)
+                    element.setAttribute("title", "Chiudi")
+                }
+            )
+            add(lista)
+        }
+        dialoghiValori[campo.dimensioneId] = finestra to lista
+        finestra.open()
+        lista.ridimensiona()
+    }
+
+    private fun aggiornaDialoghi() {
+        dialoghiValori.values.toList().forEach { (_, lista) ->
+            try {
+                lista.aggiorna()
+            } catch (e: Exception) {
+                log.warn("Aggiornamento dell'elenco dei valori fallito", e)
+            }
+        }
+    }
+
+    /** Come nella pagina Dataset: un clic aggiunge o toglie il valore; un valore grigio toglie le selezioni in conflitto. */
+    private fun alClic(dimId: UUID, valore: ValoreFiltro) {
+        val attuali = selezioni[dimId].orEmpty()
+        if (valore.id in attuali) {
+            impostaSelezione(dimId, attuali - valore.id)
+            return
+        }
+        if (valore.stato == StatoValore.ESCLUSO) {
+            val a = area ?: return
+            val daTogliere = try {
+                filtriService.conflitti(a.id, selezioni, dimId, valore.id)
+            } catch (e: Exception) {
+                log.warn("Calcolo dei conflitti fallito per la dimensione {}", dimId, e)
+                emptySet()
+            }
+            daTogliere.forEach { selezioni.remove(it) }
+        }
+        impostaSelezione(dimId, attuali + valore.id)
+    }
+
+    private fun impostaSelezione(dimId: UUID, valori: Set<Long>) {
+        if (valori.isEmpty()) selezioni.remove(dimId) else selezioni[dimId] = valori
+        salvaSelezioni()
+        aggiornaSelezioniCorrenti()
+        aggiornaCampi()
+        aggiornaDialoghi()
+        ricalcola()
     }
 
     private fun pannelloSelezioni(): Component {
@@ -548,16 +658,15 @@ class AnalisiView(
     }
 
     private fun togliSelezione(dimId: UUID) {
-        selezioni.remove(dimId)
-        salvaSelezioni()
-        aggiornaSelezioniCorrenti()
-        ricalcola()
+        impostaSelezione(dimId, emptySet())
     }
 
     private fun cancellaSelezioni() {
         selezioni.clear()
         salvaSelezioni()
         aggiornaSelezioniCorrenti()
+        aggiornaCampi()
+        aggiornaDialoghi()
         ricalcola()
         Notification.show("Selezioni cancellate", 2500, Notification.Position.BOTTOM_START)
     }

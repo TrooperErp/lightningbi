@@ -180,7 +180,7 @@ class ChartService(
         val series = if (columnsEffettive.isEmpty()) {
             buildSeriesPerMetrica(rows, metricheOrdinate)
         } else {
-            buildSeriesPerColonna(rows, metricheOrdinate, chart.highlightDecline)
+            buildSeriesPerColonna(rows, metricheOrdinate, chart.highlightDecline, result.colonne)
         }
 
         return ChartResult.Ready(
@@ -228,17 +228,21 @@ class ChartService(
     private fun buildSeriesPerColonna(
         rows: List<com.lightningbi.lightning_engine.model.AggregateRow>,
         metricheOrdinate: List<AreaMetrica>,
-        highlightDecline: Boolean
+        highlightDecline: Boolean,
+        ordineColonne: List<String>
+
     ): List<ChartSeries> {
         val metrica = metricheOrdinate.first()
         val prefix = "${metrica.nome}|"
 
-        val nomiColonna = rows
+        val presenti = rows
             .flatMap { it.values.keys }
             .filter { it.startsWith(prefix) }
             .map { it.removePrefix(prefix) }
             .distinct()
-            .sortedWith { a, b -> DimensionSortOrders.confrontoNaturale(a, b) }
+        // L'ordine è quello deciso dal motore (mesi Gen…Dic); ciò che manca si mette in coda.
+        val nomiColonna = ordineColonne.filter { it in presenti } +
+                (presenti - ordineColonne.toSet()).sortedWith { a, b -> DimensionSortOrders.confrontoNaturale(a, b) }
 
         if (nomiColonna.isEmpty()) return emptyList()
 

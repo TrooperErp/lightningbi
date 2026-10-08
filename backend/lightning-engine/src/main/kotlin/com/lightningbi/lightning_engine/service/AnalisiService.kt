@@ -229,8 +229,7 @@ class AnalisiService(
      * risultato vuoto: una pivot senza misure non ha niente da calcolare.
      *
      * Come in Qlik:
-     * - con delle colonne, la variazione percentuale compare da sola quando il confronto è tra
-     *   ESATTAMENTE due colonne (con più colonne non ha senso e il motore non la genera);
+     *
      * - i totali delle righe cappello e il totale generale NON si ottengono sommando i figli: si
      *   ricalcolano sui dati originali con una query per livello, quindi sono giusti per ogni
      *   aggregazione (media, minimo, massimo, conteggio di distinti);
@@ -261,7 +260,7 @@ class AnalisiService(
             orderMetricId = ordineMisuraId,
             limit = limite,
             resolveLabels = true,
-            showVariationPercent = vista.pivotColumns.isNotEmpty()
+            showVariationPercent = false
         )
         val risultato = aggregateService.getAggregates(richiesta)
 

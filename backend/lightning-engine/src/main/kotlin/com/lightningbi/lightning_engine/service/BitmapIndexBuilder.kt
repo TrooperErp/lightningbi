@@ -70,7 +70,7 @@ class BitmapIndexBuilder(
             .filter { RiferimentoCampo(it.occorrenzaId, it.colonna) in bozza.dimensioni }
             .map { it.nomeCampo }
             .toSet()
-        val associazioni = bozza.associazioni()
+        val associazioni = bozza.associazioniAttive()
 
         val indicizzati = nomiDimensione + associazioni.map { it.nomeCampo }
         val composte = bozza.chiaviComposte()

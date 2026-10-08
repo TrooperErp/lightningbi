@@ -1435,3 +1435,351 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     gap: 8px;
     justify-content: flex-end;
 }
+
+/* ============================================
+   TEMA QLIK SENSE
+   Da aggiungere IN FONDO a themes/associa/styles.css, dopo tutti gli altri blocchi.
+   Per tornare al tema precedente basta togliere questo blocco.
+   ============================================ */
+
+:root {
+    --lbi-font: "Source Sans Pro", "Source Sans 3", "Segoe UI", "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+
+    --lbi-bg: #f2f2f2;
+    --lbi-surface: #ffffff;
+    --lbi-surface-2: #f7f7f7;
+    --lbi-border: #d9d9d9;
+    --lbi-text: #404040;
+    --lbi-text-muted: #6e6e6e;
+
+    --lbi-header-bg: #ffffff;
+    --lbi-header-fg: #404040;
+
+    --lbi-sidebar-bg: #f7f7f7;
+    --lbi-sidebar-bg-hover: #e6e6e6;
+    --lbi-sidebar-fg: #404040;
+    --lbi-sidebar-fg-muted: #6e6e6e;
+    --lbi-sidebar-border: #d9d9d9;
+
+    --lbi-accent: #009845;
+    --lbi-accent-hover: #007a38;
+    --lbi-accent-disabled: #8ccca7;
+
+    --lbi-radius: 4px;
+
+    /* Stati dei valori, come in Sense: verde selezionato, bianco possibile, grigio scuro escluso. */
+    --lbi-state-selected: #009845;
+    --lbi-state-selected-bg-soft: #e6f4ec;
+    --lbi-excluded-bg: #a9a9a9;
+    --lbi-excluded-text: #ffffff;
+
+    --lbi-qv-bg: #f2f2f2;
+    --lbi-qv-border: #d9d9d9;
+    --lbi-qv-title-bg: #ffffff;
+    --lbi-qv-bar: #e6e6e6;
+    --lbi-qv-radius: 4px;
+}
+
+[theme~="dark"] {
+    --lbi-bg: #1f1f1f;
+    --lbi-surface: #2b2b2b;
+    --lbi-surface-2: #242424;
+    --lbi-border: #454545;
+    --lbi-text: #f2f2f2;
+    --lbi-text-muted: #bdbdbd;
+
+    --lbi-header-bg: #262626;
+    --lbi-header-fg: #f2f2f2;
+
+    --lbi-sidebar-bg: #262626;
+    --lbi-sidebar-bg-hover: #3a3a3a;
+    --lbi-sidebar-fg: #f2f2f2;
+    --lbi-sidebar-fg-muted: #bdbdbd;
+    --lbi-sidebar-border: #454545;
+
+    --lbi-state-selected-bg-soft: #12301f;
+    --lbi-excluded-bg: #5a5a5a;
+    --lbi-excluded-text: #e0e0e0;
+
+    --lbi-qv-bg: #1f1f1f;
+    --lbi-qv-border: #454545;
+    --lbi-qv-title-bg: #2b2b2b;
+    --lbi-qv-bar: #454545;
+}
+
+/* ---- barra in alto e menu laterale chiari ---- */
+
+.lbi-topmenu {
+    border-bottom: 1px solid var(--lbi-border);
+}
+
+.lbi-sidebar-item:hover,
+.flyout-item:hover,
+.flyout-item-active {
+    border-left: 3px solid var(--lbi-accent);
+}
+
+.flyout-submenu {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+vaadin-menu-bar-button:hover {
+    background: rgba(0, 0, 0, 0.06) !important;
+}
+
+[theme~="dark"] vaadin-menu-bar-button:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* ---- pulsanti: neutri, verdi solo i principali ---- */
+
+vaadin-button {
+    background: var(--lbi-surface) !important;
+    color: var(--lbi-text) !important;
+    border: 1px solid #bfbfbf !important;
+    border-radius: var(--lbi-radius) !important;
+    --vaadin-icon-color: var(--lbi-text);
+}
+
+vaadin-button:hover {
+    background: var(--lbi-surface-2) !important;
+    border-color: #8c8c8c !important;
+}
+
+vaadin-button[theme~="primary"] {
+    background: var(--lbi-accent) !important;
+    border-color: var(--lbi-accent) !important;
+    color: #ffffff !important;
+    --vaadin-icon-color: #ffffff;
+}
+
+vaadin-button[theme~="primary"]:hover {
+    background: var(--lbi-accent-hover) !important;
+    border-color: var(--lbi-accent-hover) !important;
+}
+
+vaadin-button[disabled] {
+    background: var(--lbi-surface-2) !important;
+    color: #a6a6a6 !important;
+    border-color: var(--lbi-border) !important;
+}
+
+vaadin-button[theme~="icon"] {
+    background: var(--lbi-surface) !important;
+    --vaadin-icon-color: var(--lbi-text);
+}
+
+vaadin-button[theme~="icon"]:hover {
+    background: var(--lbi-surface-2) !important;
+}
+
+vaadin-confirm-dialog-overlay::part(confirm-button) {
+    background: var(--lbi-accent) !important;
+    border: 1px solid var(--lbi-accent) !important;
+    color: #ffffff !important;
+}
+
+vaadin-confirm-dialog-overlay::part(cancel-button),
+vaadin-confirm-dialog-overlay::part(reject-button) {
+    background: var(--lbi-surface) !important;
+    border: 1px solid #bfbfbf !important;
+    color: var(--lbi-text) !important;
+}
+
+/* ---- card e pannelli ---- */
+
+.lbi-qv-panel {
+    border-radius: var(--lbi-qv-radius);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.lbi-qv-panel-title {
+    font-weight: 600;
+    font-size: 13px;
+    padding: 6px 10px;
+}
+
+.lbi-qv-title {
+    background: var(--lbi-surface);
+    color: var(--lbi-text);
+    border-left: 4px solid var(--lbi-accent);
+}
+
+.lbi-qv-title-sub {
+    color: var(--lbi-text-muted);
+}
+
+.lbi-filter-card,
+.lbi-pivot-panel,
+.lbi-chart-placeholder,
+.lbi-wizard-dialog::part(overlay) {
+    border-radius: var(--lbi-qv-radius);
+}
+
+vaadin-notification-card {
+    border-radius: var(--lbi-qv-radius);
+}
+
+/* ---- stati dei valori in verde Qlik ---- */
+
+.lbi-qv-chip-selezionato,
+.lbi-qv-field-selected,
+vaadin-grid.lbi-qv-grid::part(lbi-qv-val-selezionato),
+vaadin-grid.lbi-qv-grid::part(lbi-qv-val-selezionato-cell) {
+    background: var(--lbi-state-selected);
+    color: #ffffff;
+}
+
+.lbi-qv-sel-dot {
+    color: var(--lbi-state-selected);
+}
+
+.lbi-qv-chip-possibile,
+vaadin-grid.lbi-qv-grid::part(lbi-qv-val-possibile),
+vaadin-grid.lbi-qv-grid::part(lbi-qv-val-possibile-cell) {
+    background: var(--lbi-surface);
+    color: var(--lbi-text);
+}
+
+.lbi-qv-chip-escluso,
+.lbi-qv-field-excluded,
+vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso),
+vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
+    background: var(--lbi-excluded-bg);
+    color: var(--lbi-excluded-text);
+}
+
+/* ---- griglia dei risultati ---- */
+
+.lbi-results-grid {
+    border: 1px solid var(--lbi-border);
+    border-radius: var(--lbi-qv-radius);
+}
+
+.lbi-results-grid::part(row):hover::part(cell) {
+    background: var(--lbi-state-selected-bg-soft) !important;
+}
+
+[theme~="dark"] .lbi-results-grid,
+[theme~="dark"] .lbi-results-grid::part(cell) {
+    background: var(--lbi-surface) !important;
+    color: var(--lbi-text) !important;
+}
+
+[theme~="dark"] .lbi-results-grid::part(header-cell) {
+    background: var(--lbi-surface-2) !important;
+    color: var(--lbi-text) !important;
+}
+
+/* ---- pivot: zone e chip più sobrie ---- */
+
+.lbi-pivot-zone {
+    background: var(--lbi-surface-2);
+    border-color: var(--lbi-border);
+}
+
+/* ============================================
+   Pagina Analisi: tutto nell'altezza della finestra, pivot e grafici affiancati.
+   Solo layout: l'aspetto resta quello dei blocchi sopra.
+   ============================================ */
+
+.lbi-qv-page-analisi {
+    overflow: hidden;
+}
+
+.lbi-qv-page-analisi .lbi-qv-body {
+    flex: 1 1 0;
+    min-height: 0;
+    align-items: stretch;
+}
+
+/* colonna sinistra: i Campi riempiono lo spazio e scorrono dentro, le Selezioni correnti stanno in basso */
+.lbi-qv-page-analisi .lbi-qv-left {
+    min-height: 0;
+}
+
+.lbi-qv-page-analisi .lbi-qv-left > .lbi-qv-panel:first-child {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.lbi-qv-page-analisi .lbi-qv-left > .lbi-qv-panel:first-child .lbi-qv-panel-body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
+}
+
+.lbi-qv-page-analisi .lbi-qv-left > .lbi-qv-panel:last-child {
+    flex: 0 0 auto;
+}
+
+.lbi-qv-page-analisi .lbi-qv-left > .lbi-qv-panel:last-child .lbi-qv-panel-body {
+    max-height: 190px;
+    overflow: auto;
+}
+
+/* centro: zone in alto, sotto pivot e grafici affiancati */
+.lbi-qv-page-analisi .lbi-qv-analisi-centro {
+    min-height: 0;
+    align-items: stretch;
+}
+
+.lbi-qv-page-analisi .lbi-qv-zones {
+    flex: 0 0 auto;
+}
+
+.lbi-qv-area-lavoro {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    gap: 12px;
+}
+
+.lbi-qv-pivot-box {
+    flex: 1 1 55%;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.lbi-qv-pivot-box > :last-child {
+    flex: 1 1 0;
+    min-height: 0;
+    height: auto !important;
+}
+
+.lbi-qv-grafici-box {
+    flex: 1 1 45%;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+}
+
+.lbi-qv-grafici-box .lbi-charts-grid {
+    flex-direction: column;
+    flex-wrap: nowrap;
+}
+
+.lbi-qv-grafici-box .lbi-charts-grid > * {
+    width: 100% !important;
+    min-height: 300px;
+}
+
+.lbi-qv-field-row { display: flex; align-items: center; gap: 4px; }
+.lbi-qv-field-main { flex: 1 1 auto; display: flex; justify-content: space-between; gap: 8px; cursor: pointer; padding: 2px 6px; border-radius: 3px; border: 1px solid transparent; background: #fff; }
+.lbi-qv-field-main:hover { border-color: var(--lbi-accent); }
+.lbi-qv-field-count { font-size: 11px; color: #777; white-space: nowrap; }
+.lbi-qv-field-selected .lbi-qv-field-main { background: #009845; color: #fff; }
+.lbi-qv-field-selected .lbi-qv-field-count { color: #fff; }
+.lbi-qv-field-excluded .lbi-qv-field-main { background: #ccc; color: #666; }
+.lbi-qv-field-inuso .lbi-qv-field-name { font-weight: 600; }
+.lbi-qv-field-row vaadin-menu-bar { flex: 0 0 auto; }
+.lbi-qv-top { align-items: flex-start; }
+.lbi-qv-top .lbi-qv-zones { flex: 1 1 0; min-width: 0; display: flex; gap: 8px; }
+.lbi-qv-top .lbi-qv-zones > * { flex: 1 1 0; min-width: 0; }
+.lbi-qv-top .lbi-qv-zones .lbi-qv-panel-body { max-height: 76px; overflow: auto; }
+.lbi-qv-list { max-height: none; }
+.lbi-qv-pivot-box > :first-child:empty { display: none; }

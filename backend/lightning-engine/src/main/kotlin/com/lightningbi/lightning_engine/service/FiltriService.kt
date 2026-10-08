@@ -35,7 +35,9 @@ class FiltriService(
     private val registryRepository: com.lightningbi.lightning_engine.repository.RegistryRepository,
     private val modelloDatasetCache: ModelloDatasetCache,
     private val versionService: VersionService,
-    private val calendarioService: CalendarioService
+    private val calendarioService: CalendarioService,
+    private val sezioneAccessoService: SezioneAccessoService
+
 ) {
     private val log = LoggerFactory.getLogger(FiltriService::class.java)
 
@@ -45,8 +47,12 @@ class FiltriService(
         val campi: Map<UUID, String>,
         /** Dimensione -> colonna fisica che ne dà le etichette (symbol table). */
         val colonne: Map<UUID, String>,
-        /** Selezioni per nome di campo. */
-        val selezioni: Map<String, Set<Long>>
+        /** Selezioni per nome di campo (compresa quella forzata dell'azienda). */
+        val selezioni: Map<String, Set<Long>>,
+        /** Selezioni permanenti (section access): riducono l'universo dei campi. Vuoto per l'admin. */
+        val universo: Map<String, Set<Long>>,
+        /** Campo azienda forzato: l'utente non può togliere né cambiare la sua selezione. */
+        val forzato: String?
     )
 
     private fun contesto(areaId: UUID, selections: Map<UUID, Set<Long>>): Contesto {
@@ -61,10 +67,19 @@ class FiltriService(
             nomi[d.dimensioneId]?.takeIf { modello.grafo.tabelleCon(it).isNotEmpty() }?.let { d.dimensioneId to it }
         }.toMap()
         val colonne = dims.filter { it.dimensioneId in campi }.associate { it.dimensioneId to it.colonnaFisica }
-        val selezioni = selections.filterValues { it.isNotEmpty() }
+
+        // Section access: per un non-admin la selezione sull'azienda è forzata, qualunque cosa arrivi dalla vista.
+        val vincolo = sezioneAccessoService.vincolo(areaId)
+        val forzato = vincolo?.let { v ->
+            campi[v.dimensioneId] ?: throw SecurityException("Il campo azienda non è nell'indice del dataset")
+        }
+        val effettive = if (vincolo == null) selections else selections + (vincolo.dimensioneId to vincolo.ids)
+
+        val selezioni = effettive.filterValues { it.isNotEmpty() }
             .mapNotNull { (id, valori) -> campi[id]?.let { it to valori } }
             .toMap()
-        return Contesto(modello, campi, colonne, selezioni)
+        val universo = if (vincolo == null || forzato == null) emptyMap() else mapOf(forzato to vincolo.ids)
+        return Contesto(modello, campi, colonne, selezioni, universo, forzato)
     }
 
     /**
@@ -88,7 +103,7 @@ class FiltriService(
             val selezionati = if (scelti.isEmpty()) "toUInt64(0)"
             else "countIf(valore_id IN (${scelti.joinToString(",")}))"
             "SELECT '$campo' AS campo, count() AS totali, countIf(verde = 1) AS possibili, $selezionati AS selezionati " +
-                    "FROM (${c.modello.grafo.sqlStatoCampo(campo, c.selezioni, omesso)})"
+                    "FROM (${c.modello.grafo.sqlStatoCampo(campo, c.selezioni, omesso, c.universo)})"
         }
 
         val perCampo = mutableMapOf<String, ContatoreCampo>()
@@ -182,11 +197,11 @@ class FiltriService(
     fun conflitti(areaId: UUID, selections: Map<UUID, Set<Long>>, dimensioneId: UUID, valoreId: Long): Set<UUID> {
         val c = contesto(areaId, selections)
         val campo = c.campi[dimensioneId] ?: return emptySet()
-        val altri = c.selezioni.keys.filter { it != campo }.sorted()
+        val altri = c.selezioni.keys.filter { it != campo && it != c.forzato }.sorted()
         if (altri.isEmpty()) return emptySet()
 
         fun possibile(sel: Map<String, Set<Long>>): Boolean {
-            val sql = "SELECT max(verde) FROM (${c.modello.grafo.sqlStatoCampo(campo, sel, campo)}) WHERE valore_id = $valoreId"
+            val sql = "SELECT max(verde) FROM (${c.modello.grafo.sqlStatoCampo(campo, sel, campo, c.universo)}) WHERE valore_id = $valoreId"
             return (jdbcTemplate.queryForObject(sql, Number::class.java)?.toInt() ?: 0) == 1
         }
         val dimensionePerCampo = c.campi.entries.associate { it.value to it.key }
@@ -218,7 +233,7 @@ class FiltriService(
     private fun parti(c: Contesto, dimensioneId: UUID, campo: String): Parti {
         val scelti = c.selezioni[campo].orEmpty()
         val omesso = if (scelti.isNotEmpty()) campo else null
-        val stato = c.modello.grafo.sqlStatoCampo(campo, c.selezioni, omesso)
+        val stato = c.modello.grafo.sqlStatoCampo(campo, c.selezioni, omesso, c.universo)
         val colonna = c.colonne.getValue(dimensioneId)
         return Parti(stato, Naming.symbolTable(colonna), scelti)
     }

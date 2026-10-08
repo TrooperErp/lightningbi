@@ -63,7 +63,7 @@ class GrafoDataset private constructor(
             val perTabella = inclusi.groupBy { it.occorrenzaId }
                 .mapValues { (_, v) -> v.map { it.nomeCampo }.toSet() }
 
-            val collegamenti = bozza.associazioni()
+            val collegamenti = bozza.associazioniAttive()
                 .groupBy { it.occorrenze.toSet() }
                 .map { (occorrenze, assoc) ->
                     val nomi = assoc.map { it.nomeCampo }.sorted()
@@ -172,21 +172,42 @@ class GrafoDataset private constructor(
      * Query che restituisce (valore_id, verde) per ogni valore del dominio del
      * campo. [omesso] è di solito il campo stesso, se ha una selezione.
      */
-    fun sqlStatoCampo(campo: String, selezioni: Map<String, Set<Long>>, omesso: String?): String {
+    /**
+     * Query che restituisce (valore_id, verde) per ogni valore del dominio del
+     * campo. [omesso] è di solito il campo stesso, se ha una selezione.
+     *
+     * [universo] sono le selezioni permanenti (section access): il dominio del
+     * campo si riduce ai valori che compaiono nelle righe permesse, quindi i
+     * valori che esistono solo fuori dall'universo non compaiono nemmeno come
+     * esclusi. Vuoto = nessuna riduzione.
+     */
+    fun sqlStatoCampo(
+        campo: String,
+        selezioni: Map<String, Set<Long>>,
+        omesso: String?,
+        universo: Map<String, Set<Long>> = emptyMap()
+    ): String {
         val semplice = collegamentoSemplice(campo)
         if (semplice != null) {
             val insiemi = semplice.occorrenze.mapNotNull { t -> insiemeDi(semplice, t, selezioni, omesso, 0) }
             val condizione = if (insiemi.isEmpty()) "1" else insiemi.joinToString(" AND ") { "valore_id IN ($it)" }
+            val inUniverso = if (universo.isEmpty()) "" else {
+                val perTabella = semplice.occorrenze.map { t -> insiemeDi(semplice, t, universo, null, 0) }
+                if (perTabella.any { it == null }) ""
+                else " AND (" + perTabella.joinToString(" OR ") { "valore_id IN ($it)" } + ")"
+            }
             return "SELECT DISTINCT valore_id, toUInt8($condizione) AS verde FROM $INDICE " +
-                    "WHERE area_id = $area AND campo = '${nome(campo)}'"
+                    "WHERE area_id = $area AND campo = '${nome(campo)}'$inUniverso"
         }
 
         val riferimento = tabelleCon(campo).firstOrNull()
             ?: error("Il campo '$campo' non è in nessuna tabella del dataset")
         val viva = righeVive(riferimento, selezioni, omesso)
         val condizione = if (viva == null) "1" else "bitmapAndCardinality(righe, $viva) > 0"
+        val vivaUniverso = if (universo.isEmpty()) null else righeVive(riferimento, universo)
+        val inUniverso = if (vivaUniverso == null) "" else " AND bitmapAndCardinality(righe, $vivaUniverso) > 0"
         return "SELECT valore_id, toUInt8($condizione) AS verde FROM $INDICE " +
-                "WHERE area_id = $area AND tabella_id = ${uuid(riferimento)} AND campo = '${nome(campo)}'"
+                "WHERE area_id = $area AND tabella_id = ${uuid(riferimento)} AND campo = '${nome(campo)}'$inUniverso"
     }
 
     // ---------- utilità ----------

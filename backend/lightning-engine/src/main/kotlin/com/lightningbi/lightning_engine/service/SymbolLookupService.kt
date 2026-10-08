@@ -223,6 +223,26 @@ class SymbolLookupService(
     }
 
     /**
+     * Il valore numerico (value_number) dei valori dati: serve a ordinare come Qlik, i numeri
+     * per valore e il resto per testo. Gli id senza numero non compaiono nella mappa.
+     */
+    fun resolveNumeri(colonna: String, ids: Set<Long>): Map<Long, BigDecimal> {
+        val reali = ids.filterTo(mutableSetOf()) { it != nullValueId }
+        if (reali.isEmpty()) return emptyMap()
+        val table = Naming.symbolTable(colonna)
+        val result = mutableMapOf<Long, BigDecimal>()
+        reali.chunked(chunkSize).forEach { chunk ->
+            val placeholders = chunk.joinToString(",") { "?" }
+            jdbcTemplate.query(
+                "SELECT value_id, value_number FROM $table WHERE value_id IN ($placeholders) AND value_number IS NOT NULL",
+                { rs, _ -> rs.getLong("value_id") to rs.getBigDecimal("value_number") },
+                *chunk.map { it as Any }.toTypedArray()
+            ).forEach { (id, n) -> result[id] = n }
+        }
+        return result
+    }
+
+    /**
      * Etichetta di un singolo id, con fallback leggibile.
      *
      * Da usare nella UI al posto di una lookup diretta sulla mappa: mostrare

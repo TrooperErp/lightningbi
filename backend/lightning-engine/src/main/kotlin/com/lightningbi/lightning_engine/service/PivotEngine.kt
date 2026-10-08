@@ -67,6 +67,8 @@ object PivotEngine {
         labelFor: (UUID, Long) -> String,
         totali: Map<List<Long>, Map<String, BigDecimal>> = emptyMap(),
         percorso: List<Long> = emptyList(),
+        ordineFor: (UUID, Long) -> BigDecimal? = { _, _ -> null },
+
         colonnaFisicaFor: (UUID) -> String? = { null }
     ): List<PivotNode> {
         if (dims.isEmpty()) {
@@ -87,7 +89,7 @@ object PivotEngine {
                 if (valueId == null) return@mapNotNull null
                 val label = labelFor(dimId, valueId)
                 val children = buildHierarchy(
-                    rowsForValue, remainingDims, metriche, labelFor, totali, percorso + valueId, colonnaFisicaFor
+                    rowsForValue, remainingDims, metriche, labelFor, totali, percorso + valueId, ordineFor, colonnaFisicaFor
                 )
                 // Se il totale del nodo è stato calcolato sui dati originali (per qualunque
                 // aggregazione) si usa quello; altrimenti si sommano i figli.
@@ -101,11 +103,12 @@ object PivotEngine {
                 )
             }
 
-        return if (naturalOrder) {
-            nodes.sortedBy { it.valueId }
-        } else {
-            nodes.sortedBy { it.label }
-        }
+        // Come Qlik: i valori con numero si ordinano per numero, gli altri per testo (dopo i numeri).
+        return OrdinamentoValori.ordina(
+            nodes,
+            { n -> n.valueId?.let { ordineFor(dimId, it) } },
+            { n -> n.label }
+        )
     }
 
     /**

@@ -99,7 +99,8 @@ class DatasetService(
                 ruolo = tabella.ruolo,
                 colonne = importedTableRepository.findColumnsByTable(tabella.id),
                 eccezioni = eccezioni,
-                prefissiTecnici = prefissiTecniciDi(tabella)
+                prefissiTecnici = prefissiTecniciDi(tabella),
+                disconnessa = at.disconnessa
             )
         }
 
@@ -227,9 +228,11 @@ class DatasetService(
         val daRinominare = bozza.occorrenze.filter { o -> esistenti[o.id]?.let { it.alias != o.alias } == true }
         daRinominare.forEach { areaTabellaRepository.updateAlias(it.id, "tmp_${it.id}") }
         daRinominare.forEach { areaTabellaRepository.updateAlias(it.id, it.alias) }
-
+        bozza.occorrenze
+            .filter { o -> esistenti[o.id]?.let { it.disconnessa != o.disconnessa } == true }
+            .forEach { areaTabellaRepository.updateDisconnessa(it.id, it.disconnessa) }
         bozza.occorrenze.filter { it.id !in esistenti }.forEach {
-            areaTabellaRepository.save(AreaTabella(it.id, areaId, it.importedTableId, it.alias))
+            areaTabellaRepository.save(AreaTabella(it.id, areaId, it.importedTableId, it.alias, it.disconnessa))
         }
     }
 

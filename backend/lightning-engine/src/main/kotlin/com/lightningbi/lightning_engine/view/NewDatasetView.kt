@@ -309,6 +309,16 @@ class NewDatasetView(
             addColumn { o ->
                 bozza.campi().count { it.occorrenzaId == o.id && !it.escluso }
             }.setHeader("Campi").setAutoWidth(true)
+
+            addComponentColumn { o ->
+                Checkbox(o.disconnessa).apply {
+                    element.setAttribute("title", "Scollega logicamente dal resto del modello (risolve i loop)")
+                    addValueChangeListener { ev ->
+                        if (ev.isFromClient) modifica { b -> b.impostaDisconnessa(o.id, ev.value) }
+                    }
+                }
+            }.setHeader("Scollegata").setAutoWidth(true).setFlexGrow(0)
+
             addComponentColumn { o ->
                 HorizontalLayout(
                     Button(Icon(VaadinIcon.EDIT)) { apriRinominaAlias(o) }.apply {

@@ -74,4 +74,9 @@ class ListaValoriUi(
     fun aggiorna() {
         griglia.dataProvider.refreshAll()
     }
+
+    /** Fa rimisurare la griglia (dopo l'apertura in una finestra: l'altezza va ricalcolata). */
+    fun ridimensiona() {
+        griglia.element.executeJs("setTimeout(() => { this.notifyResize(); }, 300)")
+    }
 }

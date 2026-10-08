@@ -32,4 +32,5 @@ interface AreaTabellaRepository {
 
     /** Toglie tutte le occorrenze di un dataset. Restituisce quante ne ha tolte. */
     fun deleteByArea(areaId: UUID): Int
+    fun updateDisconnessa(id: UUID, disconnessa: Boolean)
 }

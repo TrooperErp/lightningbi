@@ -1,6 +1,7 @@
 package com.lightningbi.lightning_engine.view
 
 import com.lightningbi.lightning_engine.model.AggregateResult
+import com.lightningbi.lightning_engine.service.DimensionSortOrders
 import com.lightningbi.lightning_engine.service.PivotEngine
 import com.vaadin.flow.component.grid.HeaderRow
 import com.vaadin.flow.component.notification.Notification
@@ -8,16 +9,22 @@ import com.vaadin.flow.component.orderedlayout.Scroller
 import com.vaadin.flow.component.treegrid.TreeGrid
 import com.vaadin.flow.data.provider.hierarchy.TreeData
 import com.vaadin.flow.data.provider.hierarchy.TreeDataProvider
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.text.NumberFormat
 import java.util.Locale
 import java.util.UUID
-import com.lightningbi.lightning_engine.service.DimensionSortOrders
+
 /**
  * Griglia risultati (TreeGrid) dell'Analisi: disegna la gerarchia di
  * Righe già costruita da AggregateService.buildRowHierarchy, con header
  * a più livelli per le dimensioni in Colonne (es. Anno sopra Mese),
- * costruito con HeaderRow.join(). Nessuna logica di raggruppamento vive
- * qui: riceve la gerarchia già pronta e si limita a disegnarla.
+ * costruito con HeaderRow.join().
+ *
+ * Le colonne seguono l'ordine deciso dal motore (AggregateResult.colonne: numeri per valore,
+ * testo per etichetta). Con delle Colonne, ogni colonna tranne la prima di un gruppo è seguita
+ * da una colonna "Var. %": la variazione rispetto alla colonna precedente dello stesso gruppo
+ * (stessa misura, stessi livelli esterni), calcolata su ogni riga, anche sui totali.
  */
 class ResultsGridUi(
     /** Formatta le etichette per mostrarle (le date da 2025-01-16 a 16/01/2025); il motore ordina sul valore grezzo. */
@@ -43,6 +50,9 @@ class ResultsGridUi(
         maximumFractionDigits = 2
     }
 
+    /** Una colonna: i valori di [chiave], oppure (se [precedente] c'è) la variazione % di [chiave] rispetto a [precedente]. */
+    private class Colonna(val chiave: String, val precedente: String?, val parti: List<String>)
+
     fun render(
         result: AggregateResult,
         rowHierarchy: List<PivotEngine.PivotNode>,
@@ -67,39 +77,50 @@ class ResultsGridUi(
         resultsGrid.setDataProvider(TreeDataProvider(treeData))
 
         // ---- chiavi delle colonne ----
-        // Una chiave è "misura|valore1|valore2...". La variazione percentuale è
-        // "misura|...|2025→2026|Variaz.%": qui diventa una colonna IN CODA al suo gruppo, con
-        // lo stesso numero di livelli delle altre e ultimo livello "Var. %".
-        val chiaviGrezze = collectAllValueKeys(rowHierarchy)
+        // Una chiave è "misura|valore1|valore2...". Le variazioni non arrivano dal motore: si calcolano qui.
+        val chiaviGrezze = collectAllValueKeys(rowHierarchy).filter { !it.endsWith("|$VARIAZIONE") }
 
-        fun parti(chiave: String): List<String> {
-            val p = chiave.split("|")
-            return if (p.size >= 3 && p.last() == VARIAZIONE) p.dropLast(2) + ETICHETTA_VARIAZIONE else p
-        }
+        fun parti(chiave: String): List<String> = chiave.split("|")
+        fun suffisso(chiave: String): String = parti(chiave).drop(1).joinToString("|")
 
         val livelli = chiaviGrezze.maxOfOrNull { parti(it).size - 1 } ?: 0
         val misure = chiaviGrezze.map { parti(it)[0] }.distinct()
         val unaMisura = misure.size == 1
 
-        // Ordine: per livello dal più esterno al più interno; la variazione sempre dopo i valori
-        // del suo gruppo; poi per nome di misura. I gruppi di colonne con lo stesso valore di
-        // livello superiore devono essere adiacenti, altrimenti HeaderRow.join() fallisce.
-        fun confronta(a: String, b: String): Int = when {
-            a == ETICHETTA_VARIAZIONE && b == ETICHETTA_VARIAZIONE -> 0
-            a == ETICHETTA_VARIAZIONE -> 1
-            b == ETICHETTA_VARIAZIONE -> -1
-            else -> DimensionSortOrders.confrontoNaturale(a, b)
+        // Ordine: quello del motore (mesi Gen…Dic); se manca, confronto naturale delle etichette.
+        // A parità di colonna, nell'ordine delle misure. I gruppi con lo stesso livello superiore
+        // restano adiacenti, come richiede HeaderRow.join().
+        val rango = result.colonne.withIndex().associate { (i, c) -> c to i }
+        val confronto = Comparator<String> { a, b ->
+            val c = (rango[suffisso(a)] ?: Int.MAX_VALUE).compareTo(rango[suffisso(b)] ?: Int.MAX_VALUE)
+            if (c != 0) return@Comparator c
+            val d = DimensionSortOrders.confrontoNaturale(suffisso(a), suffisso(b))
+            if (d != 0) return@Comparator d
+            misure.indexOf(parti(a)[0]).compareTo(misure.indexOf(parti(b)[0]))
         }
-        val confrontoHeader = Comparator<String> { ka, kb ->
-            val pa = parti(ka)
-            val pb = parti(kb)
-            for (livello in 1..livelli) {
-                val c = confronta(pa.getOrNull(livello) ?: "", pb.getOrNull(livello) ?: "")
-                if (c != 0) return@Comparator c
+        val chiavi = chiaviGrezze.sortedWith(confronto)
+
+        // ---- elenco colonne, con le variazioni ----
+        val definizioni = mutableListOf<Colonna>()
+        val ultimaDelGruppo = mutableMapOf<String, String>()
+        var i = 0
+        while (i < chiavi.size) {
+            val suff = suffisso(chiavi[i])
+            var j = i
+            while (j < chiavi.size && suffisso(chiavi[j]) == suff) j++
+            val blocco = chiavi.subList(i, j)
+            blocco.forEach { definizioni += Colonna(it, null, parti(it)) }
+            if (livelli > 0) {
+                blocco.forEach { k ->
+                    val p = parti(k)
+                    val gruppo = p[0] + "|" + p.drop(1).dropLast(1).joinToString("|")
+                    val precedente = ultimaDelGruppo[gruppo]
+                    if (precedente != null) definizioni += Colonna(k, precedente, p.dropLast(1) + ETICHETTA_VARIAZIONE)
+                    ultimaDelGruppo[gruppo] = k
+                }
             }
-            DimensionSortOrders.confrontoNaturale(pa[0], pb[0])
+            i = j
         }
-        val chiavi = chiaviGrezze.sortedWith(confrontoHeader)
 
         // ---- colonna delle righe ----
         // Con una sola misura e delle colonne, il suo nome non compare sopra ogni colonna: sta qui.
@@ -112,17 +133,17 @@ class ResultsGridUi(
 
         // ---- colonne dei valori ----
         // Il titolo dell'ultima riga è il valore più interno (una sola misura) oppure il nome della misura.
-        val colonne = chiavi.map { chiave ->
-            val p = parti(chiave)
+        val colonne = definizioni.map { def ->
+            val p = def.parti
             val titoloUltimaRiga = when {
-                livelli == 0 -> chiave
+                livelli == 0 -> def.chiave
                 unaMisura -> formatta(p.last())
                 else -> p[0]
             }
-            val variazione = chiave.endsWith("|$VARIAZIONE")
+            val precedente = def.precedente
             resultsGrid.addColumn { node ->
-                val valore = formatMetricValue(node.values[chiave])
-                if (variazione && valore.isNotEmpty()) "$valore %" else valore
+                if (precedente == null) formatMetricValue(node.values[def.chiave])
+                else formatVariazione(node.values[precedente], node.values[def.chiave])
             }
                 .setHeader(titoloUltimaRiga)
                 .setTooltipGenerator { p.joinToString(" · ") { formatta(it) } }
@@ -137,24 +158,24 @@ class ResultsGridUi(
             else -> livelli
         }
         for (livello in righeIntestazione downTo 1) {
-            val valoriLivello = chiavi.map { parti(it).getOrNull(livello) ?: "" }
+            val valoriLivello = definizioni.map { it.parti.getOrNull(livello) ?: "" }
             val riga = resultsGrid.prependHeaderRow()
             pivotHeaderRows.add(riga)
 
-            var i = 0
-            while (i < colonne.size) {
-                val valore = valoriLivello[i]
-                var j = i
-                while (j + 1 < colonne.size) {
-                    val pi = parti(chiavi[i])
-                    val pj = parti(chiavi[j + 1])
-                    val stessoPrefisso = (1 until livello).all { l -> pi.getOrNull(l) == pj.getOrNull(l) }
-                    if (stessoPrefisso && valoriLivello[j + 1] == valore) j++ else break
+            var a = 0
+            while (a < colonne.size) {
+                val valore = valoriLivello[a]
+                var b = a
+                while (b + 1 < colonne.size) {
+                    val pa = definizioni[a].parti
+                    val pb = definizioni[b + 1].parti
+                    val stessoPrefisso = (1 until livello).all { l -> pa.getOrNull(l) == pb.getOrNull(l) }
+                    if (stessoPrefisso && valoriLivello[b + 1] == valore) b++ else break
                 }
-                val gruppo = colonne.subList(i, j + 1).toTypedArray()
+                val gruppo = colonne.subList(a, b + 1).toTypedArray()
                 val cella = if (gruppo.size > 1) riga.join(*gruppo) else riga.getCell(gruppo[0])
                 cella.text = formatta(valore)
-                i = j + 1
+                a = b + 1
             }
         }
 
@@ -208,9 +229,18 @@ class ResultsGridUi(
     }
 
     private companion object {
-        /** Ultimo pezzo della chiave di una colonna di variazione percentuale, come lo scrive AggregateService. */
+        /** Ultimo pezzo della chiave di una variazione generata dal motore: qui si ignora. */
         const val VARIAZIONE = "Variaz.%"
         const val ETICHETTA_VARIAZIONE = "Var. %"
+    }
+
+    /** (corrente - precedente) / |precedente| in percentuale; vuoto se manca un valore o il precedente è zero. */
+    private fun formatVariazione(precedente: BigDecimal?, corrente: BigDecimal?): String {
+        if (precedente == null || corrente == null || precedente.signum() == 0) return ""
+        val v = corrente.subtract(precedente)
+            .divide(precedente.abs(), 6, RoundingMode.HALF_UP)
+            .multiply(BigDecimal(100))
+        return itNumberFormat.format(v) + " %"
     }
 
     private fun formatMetricValue(value: Any?): String = when (value) {

@@ -115,5 +115,7 @@ data class AggregateRow(
 
 data class AggregateResult(
     val rows: List<AggregateRow>,
-    val truncated: Boolean
+    val truncated: Boolean,
+    /** Con le Colonne: i percorsi delle colonne ("2025|Gen") nell'ordine in cui vanno mostrate. */
+    val colonne: List<String> = emptyList()
 )

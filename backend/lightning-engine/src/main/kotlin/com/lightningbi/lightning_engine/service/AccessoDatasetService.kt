@@ -25,7 +25,8 @@ class AccessoDatasetService(
     private val userRoleRepository: UserRoleRepository,
     private val roleRepository: RoleRepository,
     private val userRepository: UserRepository,
-    private val adminGuard: AdminGuard
+    private val adminGuard: AdminGuard,
+    private val sezioneAccessoService: SezioneAccessoService
 ) {
     /** I dataset che l'utente corrente può aprire. Senza utente: nessuno. */
     fun areeVisibili(): List<Area> {
@@ -34,7 +35,7 @@ class AccessoDatasetService(
         if (adminGuard.isAdmin()) return tutte
         val ruoloId = userRoleRepository.findRoleIdByUserId(utente.userId)
         val consentite = areaAccessoRepository.areeVisibili(utente.userId, ruoloId)
-        return tutte.filter { it.id in consentite }
+        return tutte.filter { it.id in consentite && sezioneAccessoService.haCampoAzienda(it.id) }
     }
 
     /** @throws SecurityException se l'utente corrente non può aprire il dataset */

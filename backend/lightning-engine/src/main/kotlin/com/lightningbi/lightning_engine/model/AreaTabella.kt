@@ -24,7 +24,9 @@ data class AreaTabella(
     val id: UUID,
     val areaId: UUID,
     val importedTableId: UUID,
-    val alias: String
+    val alias: String,
+    /** Disconnessa logicamente (come Qlik): le selezioni non entrano né escono da questa tabella. */
+    val disconnessa: Boolean = false
 ) {
     init {
         require(alias.isNotBlank()) { "L'alias della tabella non può essere vuoto" }

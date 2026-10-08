@@ -31,7 +31,8 @@ class AggregateService(
     private val objectMapper: ObjectMapper,
     private val symbolLookupService: SymbolLookupService,
     private val starQueryBuilder: StarQueryBuilder,
-    private val modelloDatasetCache: ModelloDatasetCache
+    private val modelloDatasetCache: ModelloDatasetCache,
+    private val sezioneAccessoService: SezioneAccessoService
 ) {
 
     private val log = LoggerFactory.getLogger(AggregateService::class.java)
@@ -51,7 +52,11 @@ class AggregateService(
         val tutteMetriche = registryRepository.findMetricheByArea(req.areaId) + req.misure
 
         val validDimIds = dims.map { it.dimensioneId }.toSet()
-        val cleanSelections = req.selections
+        // Section access: per un non-admin la selezione sull'azienda è forzata.
+        val vincolo = sezioneAccessoService.vincolo(req.areaId)
+        val selezioniEffettive =
+            if (vincolo == null) req.selections else req.selections + (vincolo.dimensioneId to vincolo.ids)
+        val cleanSelections = selezioniEffettive
             .filterKeys { it in validDimIds }
             .filterValues { it.isNotEmpty() }
         val cleanGroupBy = req.groupBy.filter { it in validDimIds }.distinct()
@@ -90,7 +95,8 @@ class AggregateService(
             order = if (cleanColumnBy.isEmpty()) req.order else null,
             orderMetrica = orderMetrica,
             limit = if (cleanColumnBy.isEmpty()) effectiveLimit else rowLimit,
-            registryVersion = versions.registryVersion
+            registryVersion = versions.registryVersion,
+            forzata = vincolo?.dimensioneId
         )
 
         var result = if (cleanColumnBy.isEmpty()) {
@@ -102,10 +108,10 @@ class AggregateService(
         if (req.resolveLabels || req.order == AggregateOrder.DIMENSION) {
             result = withLabels(result, cleanGroupBy, dimById)
             if (req.order == AggregateOrder.DIMENSION) {
-                result = sortByLabel(result, cleanGroupBy)
+                result = ordinaPerDimensione(result, cleanGroupBy, dimById)
             }
             if (!req.resolveLabels) {
-                result = AggregateResult(result.rows.map { it.copy(labels = emptyMap()) }, result.truncated)
+                result = result.copy(rows = result.rows.map { it.copy(labels = emptyMap()) })
             }
         }
 
@@ -138,7 +144,16 @@ class AggregateService(
             return result.rows.firstOrNull { it.groupKeys[dimId] == valueId }?.labels?.get(dimId) ?: "#$valueId"
         }
 
-        val tree = PivotEngine.buildHierarchy(result.rows, groupBy, metriche, ::labelFor, totali) { dimId -> colonnaFisicaByDim[dimId] }
+
+        val numeri: Map<UUID, Map<Long, BigDecimal>> = groupBy.associateWith { dimId ->
+            val colonna = dimensioni.firstOrNull { it.dimensioneId == dimId }?.colonnaFisica
+                ?: return@associateWith emptyMap<Long, BigDecimal>()
+            symbolLookupService.resolveNumeri(colonna, result.rows.mapNotNull { it.groupKeys[dimId] }.toSet())
+        }
+        val tree = PivotEngine.buildHierarchy(
+            result.rows, groupBy, metriche, ::labelFor, totali,
+            ordineFor = { dimId, valueId -> numeri[dimId]?.get(valueId) }
+        ) { dimId -> colonnaFisicaByDim[dimId] }
 
         return tree
     }
@@ -155,7 +170,8 @@ class AggregateService(
         order: AggregateOrder?,
         orderMetrica: AreaMetrica?,
         limit: Int,
-        registryVersion: Long
+        registryVersion: Long,
+        forzata: UUID? = null
     ): AggregateResult {
         val modello = modelloDatasetCache.get(areaId, registryVersion)
         val allGroupDims = groupBy + columnBy
@@ -174,6 +190,13 @@ class AggregateService(
         val selezioniPerCampo = selections.mapNotNull { (dimId, valori) ->
             nomi[dimId]?.takeIf { modello.grafo.tabelleCon(it).isNotEmpty() }?.let { it to valori }
         }.toMap()
+
+        if (forzata != null) {
+            val nomeForzato = nomi[forzata]
+            if (nomeForzato == null || nomeForzato !in selezioniPerCampo) {
+                throw SecurityException("Il campo azienda non è nell'indice del dataset")
+            }
+        }
 
         // Ogni metrica si calcola sul PROPRIO Fatti; i risultati dei vari Fatti
         // si affiancano sulle dimensioni in comune, senza mai sommare righe di Fatti diversi.
@@ -231,7 +254,7 @@ class AggregateService(
                 dimId, nomi[dimId] ?: error("Dimensione $dimId senza nome"), dimById[dimId]?.areaTabellaId
             )
         }
-        val plan = starQueryBuilder.plan(modello, fattiId, usate)
+        val plan = starQueryBuilder.plan(modello, fattiId, usate, selezioniPerCampo)
 
         val groupCols = allGroupDims.map { plan.dimColumn(it) }
         val groupAliases = groupCols.indices.map { "g_$it" }
@@ -304,13 +327,23 @@ class AggregateService(
             }
             return labelsByColumnDim[dimId]?.get(valueId) ?: "#$valueId"
         }
+        val numeriColonne: Map<UUID, Map<Long, BigDecimal>> = columnBy.associateWith { dimId ->
+            val colonna = dimById[dimId]?.colonnaFisica ?: return@associateWith emptyMap<Long, BigDecimal>()
+            symbolLookupService.resolveNumeri(colonna, flat.rows.mapNotNull { it.groupKeys[dimId] }.toSet())
+        }
+        val ordineColonne: (UUID, Long) -> BigDecimal? = { dimId, valueId -> numeriColonne[dimId]?.get(valueId) }
+
+        // Ordine unico delle colonne per tutte le righe (mesi Gen…Dic, non alfabetici).
+        val colonneInOrdine = PivotEngine.flattenLeafPaths(
+            PivotEngine.buildHierarchy(flat.rows, columnBy, metriche, ::labelFor, ordineFor = ordineColonne) { dimId -> colonnaFisicaByDim[dimId] }
+        ).map { (path, _) -> path.filter { it.isNotEmpty() }.joinToString("|") }.distinct()
 
         val grouped = flat.rows.groupBy { row -> groupBy.associateWith { row.groupKeys[it] } }
 
         val pivotRows = grouped.entries.take(limit).map { (groupKeyPartial, flatRowsInGroup) ->
             val groupKeys = groupKeyPartial.mapNotNull { (dimId, v) -> v?.let { dimId to it } }.toMap()
 
-            val tree = PivotEngine.buildHierarchy(flatRowsInGroup, columnBy, metriche, ::labelFor) { dimId -> colonnaFisicaByDim[dimId] }
+            val tree = PivotEngine.buildHierarchy(flatRowsInGroup, columnBy, metriche, ::labelFor, ordineFor = ordineColonne) { dimId -> colonnaFisicaByDim[dimId] }
             val leafPaths = PivotEngine.flattenLeafPaths(tree)
 
             val values = mutableMapOf<String, BigDecimal>()
@@ -329,7 +362,7 @@ class AggregateService(
             AggregateRow(groupKeys = groupKeys, values = values)
         }
 
-        return AggregateResult(pivotRows, flat.truncated || grouped.size > limit)
+        return AggregateResult(pivotRows, flat.truncated || grouped.size > limit, colonneInOrdine)
     }
 
     private fun addVariationColumns(
@@ -427,24 +460,40 @@ class AggregateService(
             dimId to symbolLookupService.resolveLabels(colonna, ids)
         }.toMap()
 
-        return AggregateResult(
-            result.rows.map { row ->
+        return result.copy(
+            rows = result.rows.map { row ->
                 row.copy(labels = row.groupKeys.mapNotNull { (dimId, valueId) ->
                     labelsByDim[dimId]?.get(valueId)?.let { dimId to it }
                 }.toMap())
-            },
-            result.truncated
+            }
+
         )
     }
 
-    private fun sortByLabel(result: AggregateResult, groupBy: List<UUID>): AggregateResult {
-        if (groupBy.isEmpty()) return result
-        val comparator = compareBy<AggregateRow> { row ->
-            groupBy.joinToString("\u0000") { dimId ->
-                row.labels[dimId] ?: row.groupKeys[dimId]?.toString() ?: ""
-            }
+    /** Ordina le righe per i valori delle dimensioni di raggruppamento, come in Qlik (vedi OrdinamentoValori). */
+    fun ordinaPerDimensione(
+        result: AggregateResult,
+        groupBy: List<UUID>,
+        dimById: Map<UUID, AreaDimensione>
+    ): AggregateResult {
+        if (groupBy.isEmpty() || result.rows.isEmpty()) return result
+        val numeri: Map<UUID, Map<Long, BigDecimal>> = groupBy.associateWith { dimId ->
+            val colonna = dimById[dimId]?.colonnaFisica ?: return@associateWith emptyMap<Long, BigDecimal>()
+            symbolLookupService.resolveNumeri(colonna, result.rows.mapNotNull { it.groupKeys[dimId] }.toSet())
         }
-        return AggregateResult(result.rows.sortedWith(comparator), result.truncated)
+        val confronto = Comparator<AggregateRow> { a, b ->
+            for (dimId in groupBy) {
+                val va = a.groupKeys[dimId]
+                val vb = b.groupKeys[dimId]
+                val c = OrdinamentoValori.confronta(
+                    va?.let { numeri[dimId]?.get(it) }, a.labels[dimId] ?: va?.toString() ?: "",
+                    vb?.let { numeri[dimId]?.get(it) }, b.labels[dimId] ?: vb?.toString() ?: ""
+                )
+                if (c != 0) return@Comparator c
+            }
+            0
+        }
+        return result.copy(rows = result.rows.sortedWith(confronto))
     }
 
 
@@ -477,6 +526,7 @@ class AggregateService(
             .sorted().joinToString(",")
 
         val raw = buildString {
+            append("ord2|")
             append(req.areaId); append('|')
             append(canonicalSelections); append('|')
             append(canonicalGroupBy); append('|')
