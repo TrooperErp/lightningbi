@@ -62,6 +62,8 @@ class LbiAppShell(
             }
         }
 
+
+
         val logoutButton = Button("Esci") {
             val currentUser = CurrentUserHolder.get()
             if (currentUser != null) {
@@ -83,7 +85,11 @@ class LbiAppShell(
             defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
         }
 
-        val rightControls = HorizontalLayout(themeToggle, logoutButton).apply {
+        val passwordButton = Button("Password") {
+            CambiaPasswordDialog(authService).open()
+        }.apply { className = "lbi-theme-toggle" }
+
+        val rightControls = HorizontalLayout(themeToggle, passwordButton, logoutButton).apply {
             isSpacing = true
             defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
         }

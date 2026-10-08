@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="037-accesso-dataset" author="lightningbi">
+        <sql>
+            CREATE TABLE lbi_area_accesso (
+                                              id        UUID PRIMARY KEY,
+                                              area_id   UUID NOT NULL REFERENCES lbi_area(id) ON DELETE CASCADE,
+                                              ruolo_id  UUID REFERENCES pg_lbi_system_roles(id) ON DELETE CASCADE,
+                                              utente_id UUID REFERENCES pg_lbi_system_users(id) ON DELETE CASCADE,
+                                              CONSTRAINT ck_area_accesso_uno CHECK ((ruolo_id IS NULL) &lt;&gt; (utente_id IS NULL))
+            );
+            CREATE UNIQUE INDEX ux_area_accesso_ruolo
+                ON lbi_area_accesso (area_id, ruolo_id) WHERE ruolo_id IS NOT NULL;
+            CREATE UNIQUE INDEX ux_area_accesso_utente
+                ON lbi_area_accesso (area_id, utente_id) WHERE utente_id IS NOT NULL;
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

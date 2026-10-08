@@ -31,13 +31,13 @@ class SymbolTableService(
             """
             CREATE TABLE IF NOT EXISTS $table (
                 value_id UInt32,
+                value_key String,
                 value_string String,
                 value_number Nullable(Decimal(38, 6))
             ) ENGINE = MergeTree()
-            ORDER BY (value_string)
+            ORDER BY (value_key)
             """.trimIndent()
         )
-        jdbcTemplate.execute("ALTER TABLE $table ADD COLUMN IF NOT EXISTS value_number Nullable(Decimal(38, 6))")
     }
 
     /**
@@ -72,7 +72,7 @@ class SymbolTableService(
         colonneNumeriche: List<String> = emptyList(),
         colonneOrdinamento: List<String> = emptyList()
     ): String {
-        require(Regex("^[a-z][a-z0-9_]*$").matches(tabellaFisica)) {
+        require(Regex("^[A-Za-z][A-Za-z0-9_]*$").matches(tabellaFisica)) {
             "Nome tabella non valido: '$tabellaFisica'"
         }
         require(colonneId.isNotEmpty()) { "Serve almeno una colonna id (chiave o campo) per $tabellaFisica" }
@@ -119,7 +119,7 @@ class SymbolTableService(
      * prima di una sincronizzazione incrementale.
      */
     fun colonneDi(tabellaFisica: String): Set<String> {
-        require(Regex("^[a-z][a-z0-9_]*$").matches(tabellaFisica)) { "Nome tabella non valido: '$tabellaFisica'" }
+        require(Regex("^[A-Za-z][A-Za-z0-9_]*$").matches(tabellaFisica)) { "Nome tabella non valido: '$tabellaFisica'" }
         return jdbcTemplate.queryForList(
             "SELECT name FROM system.columns WHERE database = currentDatabase() AND table = ?",
             String::class.java,
@@ -130,5 +130,22 @@ class SymbolTableService(
     /** Elimina una tabella. Usato per ripulire artefatti orfani dopo un rollback. */
     fun dropTable(tableName: String) {
         jdbcTemplate.execute("DROP TABLE IF EXISTS $tableName")
+    }
+
+    /**
+     * Mette al posto di [definitiva] la tabella [nuova], appena caricata, in un
+     * colpo solo: chi legge vede o la vecchia o la nuova, mai una via di mezzo.
+     * Se la definitiva non esiste ancora, la nuova ne prende il nome. La
+     * vecchia (o l'avanzo) si cancella alla fine.
+     */
+    fun sostituisciTabella(nuova: String, definitiva: String) {
+        require(Regex("^[A-Za-z][A-Za-z0-9_]*$").matches(nuova)) { "Nome tabella non valido: '$nuova'" }
+        require(Regex("^[A-Za-z][A-Za-z0-9_]*$").matches(definitiva)) { "Nome tabella non valido: '$definitiva'" }
+        if (colonneDi(definitiva).isEmpty()) {
+            jdbcTemplate.execute("RENAME TABLE $nuova TO $definitiva")
+        } else {
+            jdbcTemplate.execute("EXCHANGE TABLES $nuova AND $definitiva")
+            jdbcTemplate.execute("DROP TABLE IF EXISTS $nuova")
+        }
     }
 }

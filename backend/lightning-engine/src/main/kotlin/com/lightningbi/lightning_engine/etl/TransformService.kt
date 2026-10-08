@@ -10,11 +10,13 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
+import com.lightningbi.lightning_engine.repository.CampoTestoRepository
 
 @Service
 class TransformService(
     private val symbolLookupService: SymbolLookupService,
-    private val calendarioService: CalendarioService
+    private val calendarioService: CalendarioService,
+    private val campoTestoRepository: CampoTestoRepository
 ) {
     private val log = LoggerFactory.getLogger(TransformService::class.java)
 
@@ -137,9 +139,12 @@ class TransformService(
         }
 
         // Una symbol table per campo, un solo giro di lookup per colonna.
+        val campiTesto = campoTestoRepository.tutti()
         val idMaps: List<Map<String, Long>> = campi.indices.map { j ->
             val valori = testi[j].asSequence().filterNotNull().toSet()
-            symbolLookupService.getOrCreateIds(campi[j].fisica, valori, numeriDerivati[j] ?: emptyMap())
+            symbolLookupService.getOrCreateIds(
+                campi[j].fisica, valori, numeriDerivati[j] ?: emptyMap(), campi[j].fisica in campiTesto
+            )
         }
 
         val valid = ArrayList<Map<String, Any?>>(rows.size)

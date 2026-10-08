@@ -37,6 +37,7 @@ import com.vaadin.flow.router.BeforeEvent
 import com.vaadin.flow.router.HasUrlParameter
 import com.vaadin.flow.router.Route
 import java.util.UUID
+import com.lightningbi.lightning_engine.service.AccessoDatasetService
 
 /**
  * Pagina "Grafici": i grafici di UN'analisi. Stessa impostazione della pagina Analisi
@@ -55,7 +56,7 @@ import java.util.UUID
 @Uses(Icon::class)
 class ChartsView(
     private val chartService: ChartService,
-    private val registryRepository: RegistryRepository,
+    private val accessoDatasetService: AccessoDatasetService,
     private val userPivotStateRepository: UserPivotStateRepository,
     private val misuraAnalisiRepository: MisuraAnalisiRepository,
     private val pivotViewService: PivotViewService,
@@ -161,9 +162,9 @@ class ChartsView(
         graficoInModifica = null
         carteTipo.clear()
 
-        val dataset = areaId?.let { registryRepository.findAreaById(it) }
+        val aree = accessoDatasetService.areeVisibili().sortedBy { it.nome.lowercase() }
+        val dataset = areaId?.let { id -> aree.firstOrNull { it.id == id } }
         area = dataset
-        val aree = registryRepository.findAllAree().sortedBy { it.nome.lowercase() }
         if (dataset == null) {
             val vuota = Div(Span("Dataset non trovato.").apply { className = "lbi-qv-empty" }).apply { className = "lbi-qv-page" }
             val shell = LbiAppShell(menu(null, aree, emptyList(), null), vuota, authService)

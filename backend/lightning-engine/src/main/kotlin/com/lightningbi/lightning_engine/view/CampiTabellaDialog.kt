@@ -2,6 +2,7 @@ package com.lightningbi.lightning_engine.view
 
 import com.lightningbi.lightning_engine.model.ImportedColumn
 import com.lightningbi.lightning_engine.model.ImportedTable
+import com.lightningbi.lightning_engine.service.Naming
 import com.lightningbi.lightning_engine.service.TableImportService
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant
@@ -12,6 +13,7 @@ import com.vaadin.flow.component.notification.Notification
 import com.vaadin.flow.component.orderedlayout.VerticalLayout
 import com.vaadin.flow.component.textfield.TextField
 import java.util.UUID
+import com.vaadin.flow.component.checkbox.Checkbox
 
 /**
  * Nomi campo di una tabella importata. Il nome campo è il nome con cui la
@@ -32,6 +34,8 @@ class CampiTabellaDialog(
 
     private val colonne: List<ImportedColumn> = tableImportService.colonne(tabella.id)
     private val campi = LinkedHashMap<UUID, TextField>()
+    private val testoIniziale: Set<String> = tableImportService.campiTesto()
+    private val testo = LinkedHashMap<UUID, Checkbox>()
 
     init {
         headerTitle = "Campi di \"${tabella.nomeLogico}\""
@@ -70,6 +74,13 @@ class CampiTabellaDialog(
                     if (!isReadOnly) campi[c.id] = this
                 }
             }.setHeader("Nome campo").setFlexGrow(2)
+            addComponentColumn { c ->
+                Checkbox().apply {
+                    value = Naming.column(c.nomeCampo) in testoIniziale
+                    isEnabled = !c.derivata
+                    testo[c.id] = this
+                }
+            }.setHeader("Testo").setAutoWidth(true)
             setItems(colonne)
         }
         contenuto.add(grid)
@@ -78,10 +89,8 @@ class CampiTabellaDialog(
 
         val chiudi = Button("Chiudi") { close() }
         footer.add(chiudi)
-        if (!inDataset) {
-            val salva = Button("Salva") { salva() }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
-            footer.add(salva)
-        }
+        val salva = Button("Salva") { salva() }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
+        footer.add(salva)
     }
 
     private fun salva() {
@@ -89,13 +98,19 @@ class CampiTabellaDialog(
             .filter { campi.containsKey(it.id) }
             .associate { it.id to campi.getValue(it.id).value.trim() }
             .filter { (id, nuovo) -> nuovo != colonne.first { it.id == id }.nomeCampo }
-        if (rinomine.isEmpty()) {
+        val cambiTesto = colonne
+            .filter { testo.containsKey(it.id) && !it.derivata }
+            .filter { testo.getValue(it.id).value != (Naming.column(it.nomeCampo) in testoIniziale) }
+        if (rinomine.isEmpty() && cambiTesto.isEmpty()) {
             Notification.show("Nessuna modifica")
             return
         }
         try {
-            val n = tableImportService.rinominaCampi(tabella.id, rinomine)
-            Notification.show("Campi modificati: $n. La tabella si ricarica alla prossima sincronizzazione.")
+            // Il flag va sul nome campo come sarà DOPO la rinomina.
+            val nuoviNomi = colonne.associate { it.id to (rinomine[it.id] ?: it.nomeCampo) }
+            if (rinomine.isNotEmpty()) tableImportService.rinominaCampi(tabella.id, rinomine)
+            cambiTesto.forEach { tableImportService.impostaTesto(nuoviNomi.getValue(it.id), testo.getValue(it.id).value) }
+            Notification.show("Salvato. Le tabelle interessate vanno ricaricate da zero.")
             alSalvataggio()
             close()
         } catch (e: SecurityException) {

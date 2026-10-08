@@ -23,4 +23,12 @@ class UserRoleRepositoryImpl(
             userId, roleId
         )
     }
+
+    override fun replace(userId: UUID, roleId: UUID) {
+        val aggiornate = jdbcTemplate.update(
+            "UPDATE pg_lbi_system_user_roles SET role_id = ? WHERE user_id = ?",
+            roleId, userId
+        )
+        if (aggiornate == 0) assign(userId, roleId)
+    }
 }

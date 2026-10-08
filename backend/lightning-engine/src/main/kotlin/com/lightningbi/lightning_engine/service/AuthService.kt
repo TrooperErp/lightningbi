@@ -64,7 +64,20 @@ class AuthService(
         auditService.log("LOGOUT", userId, "Logout", ipAddress, username = user?.username ?: "")
     }
 
-    fun changePassword(userId: UUID, oldPassword: String, newPassword: String, ipAddress: String): Boolean {
+    /**
+     * Cambio della password da parte dell'utente. Se la password attuale è
+     * sbagliata ritorna false. Se la nuova non rispetta la regola lancia
+     * IllegalArgumentException (messaggio pronto per l'interfaccia). Dopo il
+     * cambio si chiudono le altre sessioni dell'utente, restando in quella
+     * da cui sta operando ([sessioneCorrente]).
+     */
+    fun changePassword(
+        userId: UUID,
+        oldPassword: String,
+        newPassword: String,
+        ipAddress: String,
+        sessioneCorrente: String
+    ): Boolean {
         val user = userRepository.findById(userId) ?: return false
 
         if (!passwordEncoder.matches(oldPassword, user.passwordHash)) {
@@ -72,15 +85,18 @@ class AuthService(
             return false
         }
 
+        RegolePassword.controlla(newPassword, user.username)?.let { throw IllegalArgumentException(it) }
+        require(newPassword != oldPassword) { "La nuova password deve essere diversa da quella attuale" }
+
         val updatedUser = user.copy(
             passwordHash = passwordEncoder.encode(newPassword)!!,
             updatedAt = LocalDateTime.now()
         )
         userRepository.update(updatedUser)
+        sessionService.revokeOthersForUser(userId, sessioneCorrente)
         auditService.log("PASSWORD_CHANGED", userId, "Password changed", ipAddress, username = user.username)
         return true
     }
-
     private fun handleFailedAttempt(user: User, ipAddress: String, userAgent: String) {
         val attempts = user.failedAttempts + 1
         val lockedUntil = if (attempts >= 5) LocalDateTime.now().plusMinutes(15) else null

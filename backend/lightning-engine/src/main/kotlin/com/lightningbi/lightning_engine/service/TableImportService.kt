@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDateTime
 import java.util.UUID
+import com.lightningbi.lightning_engine.repository.CampoTestoRepository
 
 /** Una colonna scelta per l'importazione. */
 data class ColonnaImport(val nome: String, val tipo: String, val isChiave: Boolean = false)
@@ -52,9 +53,25 @@ class TableImportService(
     private val connectionOrchestrator: ConnectionOrchestrator,
     private val symbolTableService: SymbolTableService,
     private val adminGuard: AdminGuard,
-    private val calendarioService: CalendarioService
+    private val calendarioService: CalendarioService,
+    private val campoTestoRepository: CampoTestoRepository
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+
+    /** Nomi fisici dei campi letti come testo (come text() in Qlik). */
+    fun campiTesto(): Set<String> = campoTestoRepository.tutti()
+
+
+    /**
+     * Imposta o toglie "Testo" su un campo. Vale per tutte le tabelle con quel
+     * campo. Non cambia lo schema: i valori già caricati restano come sono, quindi
+     * dopo la modifica tutte le tabelle che hanno il campo vanno ricaricate da zero.
+     */
+    fun impostaTesto(nomeCampo: String, testo: Boolean) {
+        adminGuard.requireAdmin()
+        campoTestoRepository.imposta(nomeCampo, testo)
+    }
+
 
     fun elenco(): List<TabellaImportataInfo> {
         adminGuard.requireAdmin()

@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service
 import java.time.Duration
 import java.time.LocalDateTime
 import java.util.UUID
+import com.lightningbi.lightning_engine.repository.CampoTestoRepository
 
 /** Cosa ha fatto una sincronizzazione. */
 data class EsitoSync(
@@ -73,6 +74,7 @@ class TableSyncRunner(
     private val redisTemplate: StringRedisTemplate,
     private val emailService: EmailService,
     private val tableImportService: TableImportService,
+    private val campoTestoRepository: CampoTestoRepository,
     /** Massimo di unità restituite da una query di chiavi. Superato = errore bloccante. */
     @Value("\${lbi.sync.keys-max-rows:200000}") private val keysMaxRows: Int,
     @Value("\${lbi.sync.keys-timeout-seconds:600}") private val keysTimeoutSeconds: Int,
@@ -289,11 +291,13 @@ class TableSyncRunner(
         progresso: (String) -> Unit,
         rinnova: () -> Unit
     ): EsitoSync {
-        progresso("${tabella.nomeLogico}: ricreo la tabella")
-        // DROP e CREATE (non TRUNCATE): lo schema coincide sempre con il registry.
-        symbolTableService.dropTable(tabella.tabellaFisica)
+        progresso("${tabella.nomeLogico}: preparo il ricarico")
+        // Si carica in una tabella ombra e a fine carico la si scambia con quella vera:
+        // chi legge vede sempre dati completi, e un errore a metà lascia intatta la vecchia.
+        val ombra = "${tabella.tabellaFisica}__new"
+        symbolTableService.dropTable(ombra) // avanzo di un tentativo interrotto
         symbolTableService.createImportedTable(
-            tabellaFisica = tabella.tabellaFisica,
+            tabellaFisica = ombra,
             colonneId = colonne.map { it.nomeCampo },
             colonneNumeriche = numeriche,
             colonneOrdinamento = ordinamento
@@ -302,16 +306,30 @@ class TableSyncRunner(
         var prossimoRid = 0L
         var caricate = 0L
         var scartate = 0L
-        connectionOrchestrator.extract(connectionId, schema, nomeOrigine) { righe ->
-            righe.chunked(chunkSize).forEach { blocco ->
-                rinnova()
-                val (valide, errori) = transformService.transform(
-                    blocco, colonne, chiaveObbligatoria = tabella.ruolo == RuoloTabella.DIMENSIONE
-                )
-                prossimoRid = loaderService.load(tabella.tabellaFisica, valide, colonneCaricate, prossimoRid)
-                caricate += valide.size
-                scartate += errori.size
-                progresso("${tabella.nomeLogico}: $caricate righe caricate")
+        var scambiata = false
+        try {
+            connectionOrchestrator.extract(connectionId, schema, nomeOrigine) { righe ->
+                righe.chunked(chunkSize).forEach { blocco ->
+                    rinnova()
+                    val (valide, errori) = transformService.transform(
+                        blocco, colonne, chiaveObbligatoria = tabella.ruolo == RuoloTabella.DIMENSIONE
+                    )
+                    prossimoRid = loaderService.load(ombra, valide, colonneCaricate, prossimoRid)
+                    caricate += valide.size
+                    scartate += errori.size
+                    progresso("${tabella.nomeLogico}: $caricate righe caricate")
+                }
+            }
+            progresso("${tabella.nomeLogico}: sostituisco la tabella")
+            symbolTableService.sostituisciTabella(ombra, tabella.tabellaFisica)
+            scambiata = true
+        } finally {
+            if (!scambiata) {
+                try {
+                    symbolTableService.dropTable(ombra)
+                } catch (e: Exception) {
+                    log.warn("Pulizia della tabella ombra '{}' fallita", ombra, e)
+                }
             }
         }
         if (caricate == 0L && scartate == 0L) {
@@ -478,8 +496,11 @@ class TableSyncRunner(
      */
     private fun chiaviComeId(campiUnita: List<String>, chiavi: List<List<String>>): List<List<Long>> {
         if (chiavi.isEmpty()) return emptyList()
+        val testi = campoTestoRepository.tutti()
         val ids: List<Map<String, Long>> = campiUnita.indices.map { j ->
-            symbolLookupService.findIds(campiUnita[j], chiavi.mapTo(HashSet()) { it[j] })
+            symbolLookupService.findIds(
+                campiUnita[j], chiavi.mapTo(HashSet()) { it[j] }, Naming.column(campiUnita[j]) in testi
+            )
         }
         val risultato = ArrayList<List<Long>>(chiavi.size)
         for (chiave in chiavi) {

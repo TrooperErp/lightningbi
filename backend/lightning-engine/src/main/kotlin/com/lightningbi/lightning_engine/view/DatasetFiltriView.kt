@@ -40,6 +40,7 @@ import com.vaadin.flow.router.OptionalParameter
 import com.vaadin.flow.router.Route
 import org.slf4j.LoggerFactory
 import java.util.UUID
+import com.lightningbi.lightning_engine.service.AccessoDatasetService
 
 /**
  * Pagina "Dataset": il foglio "Impostazione filtri" di Qlik. Solo selezioni:
@@ -61,6 +62,7 @@ import java.util.UUID
 class DatasetFiltriView(
     private val datasetService: DatasetService,
     private val registryRepository: RegistryRepository,
+    private val accessoDatasetService: AccessoDatasetService,
     private val pivotViewService: PivotViewService,
     private val userPivotStateRepository: UserPivotStateRepository,
     private val calendarioService: CalendarioService,
@@ -97,7 +99,7 @@ class DatasetFiltriView(
         isPadding = false
         isSpacing = false
 
-        val aree = registryRepository.findAllAree().sortedBy { it.nome.lowercase() }
+        val aree = accessoDatasetService.areeVisibili().sortedBy { it.nome.lowercase() }
         val richiesta = parametro?.let {
             try { UUID.fromString(it) } catch (_: IllegalArgumentException) { null }
         }

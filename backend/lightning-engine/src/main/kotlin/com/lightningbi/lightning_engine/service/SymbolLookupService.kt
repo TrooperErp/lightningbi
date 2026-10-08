@@ -71,15 +71,13 @@ class SymbolLookupService(
     fun getOrCreateIds(
         colonna: String,
         values: Set<String>,
-        numeri: Map<String, BigDecimal> = emptyMap()
+        numeri: Map<String, BigDecimal> = emptyMap(),
+        testo: Boolean = false
     ): Map<String, Long> {
         if (values.isEmpty()) return emptyMap()
         val table = Naming.symbolTable(colonna)
 
-        // Lettura ottimistica fuori dal lock: a regime quasi tutti i valori
-        // esistono già, e prendere il lock globale per una pura lettura
-        // serializzava inutilmente l'intero ETL.
-        val preexisting = fetchExisting(table, values)
+        val preexisting = fetchExisting(table, values, testo)
         if (preexisting.size == values.size) return preexisting
 
         val lockKey = "symbol-lock:${Naming.slug(colonna)}"
@@ -87,43 +85,40 @@ class SymbolLookupService(
 
         acquireLock(lockKey, lockValue, colonna)
         try {
-            // Rilettura dentro il lock: fra la lettura ottimistica e
-            // l'acquisizione un altro worker può aver inserito i mancanti.
-            val existing = fetchExisting(table, values)
+            val existing = fetchExisting(table, values, testo)
             val missing = values - existing.keys
             if (missing.isEmpty()) return existing
 
-            // max(value_id) va letto DENTRO il lock: garantisce che nessun
-            // altro processo stia assegnando id concorrenti sullo stesso
-            // campo nel frattempo. Il COALESCE porta il primo id a 1,
-            // lasciando lo zero libero per il valore non definito.
             val maxId = jdbcTemplate.queryForObject(
                 "SELECT max(value_id) FROM $table", Long::class.java
             ) ?: 0L
             var nextId = maxId + 1
 
-            val newRows = missing.map { it to nextId++ }
+            // Un id per CHIAVE: valori diversi con la stessa chiave (2, 002,
+            // 2.0) condividono l'id; l'etichetta è il primo incontrato.
+            val perChiave = LinkedHashMap<String, String>()
+            missing.forEach { perChiave.putIfAbsent(chiave(it, testo), it) }
+            val idDiChiave = perChiave.keys.associateWith { nextId++ }
 
-            // Due inserimenti distinti, senza legare mai un null: i valori
-            // numerici portano anche value_number, gli altri solo il testo.
-            val (numerici, testuali) = newRows
-                .map { (valore, id) -> Triple(valore, id, numeri[valore] ?: toNumero(valore)) }
-                .partition { it.third != null }
+            val righe = perChiave.map { (k, etichetta) ->
+                arrayOf<Any?>(idDiChiave.getValue(k), k, etichetta, numeri[etichetta] ?: toNumero(etichetta))
+            }
+            val (numerici, testuali) = righe.partition { it[3] != null }
             numerici.chunked(chunkSize).forEach { chunk ->
                 jdbcTemplate.batchUpdate(
-                    "INSERT INTO $table (value_id, value_string, value_number) VALUES (?, ?, ?)",
-                    chunk.map { arrayOf<Any>(it.second, it.first, it.third!!) }
+                    "INSERT INTO $table (value_id, value_key, value_string, value_number) VALUES (?, ?, ?, ?)",
+                    chunk.map { arrayOf<Any>(it[0]!!, it[1]!!, it[2]!!, it[3]!!) }
                 )
             }
             testuali.chunked(chunkSize).forEach { chunk ->
                 jdbcTemplate.batchUpdate(
-                    "INSERT INTO $table (value_id, value_string) VALUES (?, ?)",
-                    chunk.map { arrayOf<Any>(it.second, it.first) }
+                    "INSERT INTO $table (value_id, value_key, value_string) VALUES (?, ?, ?)",
+                    chunk.map { arrayOf<Any>(it[0]!!, it[1]!!, it[2]!!) }
                 )
             }
 
-            log.debug("Symbol table {}: aggiunti {} nuovi valori", table, newRows.size)
-            return existing + newRows.toMap()
+            log.debug("Symbol table {}: aggiunti {} nuovi valori", table, righe.size)
+            return existing + missing.associateWith { idDiChiave.getValue(chiave(it, testo)) }
         } finally {
             releaseLock(lockKey, lockValue)
         }
@@ -131,14 +126,27 @@ class SymbolLookupService(
 
     /**
      * Gli id dei valori che ESISTONO già nella symbol table del campo, senza
-     * crearne di nuovi. Un valore assente non compare nella mappa: per la
-     * chiave di un'unità vuol dire unità nuova, senza righe da cancellare.
-     * La symbol table deve esistere (si crea prima con SymbolTableService).
+     * crearne di nuovi. Un valore assente non compare nella mappa.
      */
-    fun findIds(colonna: String, values: Set<String>): Map<String, Long> {
+    fun findIds(colonna: String, values: Set<String>, testo: Boolean = false): Map<String, Long> {
         if (values.isEmpty()) return emptyMap()
-        return fetchExisting(Naming.symbolTable(colonna), values)
+        return fetchExisting(Naming.symbolTable(colonna), values, testo)
     }
+
+    /**
+     * Chiave d'identità del valore, come in Qlik: i testi che si leggono come
+     * lo stesso numero (2, 002, 2.0) hanno la stessa chiave. Con [testo]
+     * (equivalente di text()) vale il testo esatto.
+     */
+    private fun chiave(valore: String, testo: Boolean): String {
+        if (!testo) {
+            val n = toNumero(valore)
+            if (n != null) return "n:" + n.stripTrailingZeros().toPlainString()
+        }
+        return "t:$valore"
+    }
+
+
 
     // ===================== id -> stringa (lettura, UI) =====================
 
@@ -287,21 +295,19 @@ class SymbolLookupService(
         return blocchi
     }
 
-    private fun fetchExisting(table: String, values: Set<String>): Map<String, Long> {
-        val result = mutableMapOf<String, Long>()
-        blocchiPerDimensione(values).forEach { chunk ->
+    private fun fetchExisting(table: String, values: Set<String>, testo: Boolean): Map<String, Long> {
+        val chiaveDi = values.associateWith { chiave(it, testo) }
+        val idDiChiave = mutableMapOf<String, Long>()
+        blocchiPerDimensione(chiaveDi.values.toSet()).forEach { chunk ->
             val placeholders = chunk.joinToString(",") { "?" }
             jdbcTemplate.query(
-                "SELECT value_string, value_id FROM $table WHERE value_string IN ($placeholders)",
-                { rs, _ -> rs.getString("value_string") to rs.getLong("value_id") },
+                "SELECT value_key, value_id FROM $table WHERE value_key IN ($placeholders)",
+                { rs, _ -> rs.getString("value_key") to rs.getLong("value_id") },
                 *chunk.toTypedArray()
-            ).forEach { (str, id) ->
-                // MergeTree non garantisce unicità: in caso di duplicati
-                // (es. scrittura concorrente senza lock) si tiene l'id più
-                // basso, così tutti i lettori convergono sullo stesso valore.
-                result.merge(str, id) { a, b -> minOf(a, b) }
-            }
+            ).forEach { (k, id) -> idDiChiave.merge(k, id) { a, b -> minOf(a, b) } }
         }
+        val result = mutableMapOf<String, Long>()
+        chiaveDi.forEach { (v, k) -> idDiChiave[k]?.let { result[v] = it } }
         return result
     }
 

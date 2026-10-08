@@ -12,17 +12,20 @@ package com.lightningbi.lightning_engine.service
  *
  * Il nome logico (quello che l'utente vede, es. "Ordini" o "CODICE_CLIENTE")
  * resta invariato nel registry; qui si ricava solo la sua forma fisica.
+ *
+ * I nomi dei CAMPI conservano le maiuscole, come in Qlik: "Cliente" e
+ * "cliente" sono due campi diversi e non si associano. I nomi delle TABELLE
+ * sono sempre in minuscolo.
  */
 object Naming {
 
-    private val valid = Regex("^[a-z][a-z0-9_]*$")
+    private val valid = Regex("^[A-Za-z][A-Za-z0-9_]*$")
 
-    /** Converte un nome qualsiasi in identificatore SQL sicuro. */
+    /** Converte un nome qualsiasi in identificatore SQL sicuro, conservando le maiuscole. */
     fun slug(nome: String): String {
         val s = nome
-            .lowercase()
             .trim()
-            .replace(Regex("[^a-z0-9]+"), "_")
+            .replace(Regex("[^A-Za-z0-9]+"), "_")
             .replace(Regex("_+"), "_")
             .trim('_')
         // Un identificatore non può iniziare per cifra.
@@ -31,6 +34,9 @@ object Naming {
         require(valid.matches(safe)) { "Identificatore non valido dopo normalizzazione: '$safe' (da '$nome')" }
         return safe
     }
+
+    /** Come [slug], ma sempre in minuscolo: per i nomi delle tabelle. */
+    fun slugTabella(nome: String): String = slug(nome).lowercase()
 
     /** Nome colonna fisica su ClickHouse. */
     fun column(nome: String): String = slug(nome)
@@ -66,12 +72,12 @@ object Naming {
 
     /**
      * Tabella importata nel modello multi-tabella (TBS): <motore>_<db>__<nome>,
-     * es. mssql_sem__documenti, mssql_sem__clienti.
+     * es. mssql_sem__documenti, mssql_sem__clienti. Sempre in minuscolo.
      *
      * @param motore tipo della connessione (mssql, psql, ...)
      * @param nomeDb nome logico del database/schema sorgente (es. "sem")
      * @param nomeTabella nome logico della tabella importata (es. "Documenti")
      */
     fun importedTable(motore: String, nomeDb: String, nomeTabella: String): String =
-        "${slug(motore)}_${slug(nomeDb)}__${slug(nomeTabella)}"
+        "${slugTabella(motore)}_${slugTabella(nomeDb)}__${slugTabella(nomeTabella)}"
 }

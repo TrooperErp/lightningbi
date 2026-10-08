@@ -39,6 +39,7 @@ import com.vaadin.flow.router.OptionalParameter
 import com.vaadin.flow.router.Route
 import org.slf4j.LoggerFactory
 import java.util.UUID
+import com.lightningbi.lightning_engine.service.AccessoDatasetService
 
 /**
  * Pagina "Analisi": come un foglio di Qlik con una pivot. Un dataset ha molte
@@ -58,7 +59,7 @@ import java.util.UUID
 @Uses(Icon::class)
 class AnalisiView(
     private val analisiService: AnalisiService,
-    private val registryRepository: RegistryRepository,
+    private val accessoDatasetService: AccessoDatasetService,
     private val pivotViewService: PivotViewService,
     private val userPivotStateRepository: UserPivotStateRepository,
     private val filtriService: FiltriService,
@@ -121,7 +122,7 @@ class AnalisiView(
         isPadding = false
         isSpacing = false
 
-        val aree = registryRepository.findAllAree().sortedBy { it.nome.lowercase() }
+        val aree = accessoDatasetService.areeVisibili().sortedBy { it.nome.lowercase() }
         val parti = parametro?.split(',').orEmpty()
         val areaRichiesta = parti.getOrNull(0)?.let { id -> aree.firstOrNull { it.id.toString() == id } }
         val vistaRichiesta = parti.getOrNull(1)?.let { runCatching { UUID.fromString(it) }.getOrNull() }

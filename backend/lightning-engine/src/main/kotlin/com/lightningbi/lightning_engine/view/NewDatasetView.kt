@@ -44,6 +44,7 @@ import com.vaadin.flow.router.HasUrlParameter
 import com.vaadin.flow.router.OptionalParameter
 import com.vaadin.flow.router.Route
 import java.util.UUID
+import com.lightningbi.lightning_engine.service.AccessoDatasetService
 
 /**
  * Pagina "Dataset" (solo admin): costruzione e modifica di un dataset nello
@@ -66,6 +67,7 @@ import java.util.UUID
 @Uses(Icon::class)
 class NewDatasetView(
     private val datasetService: DatasetService,
+    private val accessoDatasetService: AccessoDatasetService,
     private val adminGuard: AdminGuard,
     private val authService: AuthService
 ) : VerticalLayout(), HasUrlParameter<String>, BeforeEnterObserver, BeforeLeaveObserver {
@@ -217,6 +219,12 @@ class NewDatasetView(
         ).apply {
             setWidthFull()
             defaultVerticalComponentAlignment = FlexComponent.Alignment.END
+        }
+        if (bozza.areaId != null) {
+            intestazione.addComponentAtIndex(
+                intestazione.componentCount - 2,
+                Button("Accessi", Icon(VaadinIcon.KEY)) { apriAccessi() }
+            )
         }
 
         val principale = HorizontalLayout(buildColonnaTabelle(), buildColonnaModello(), buildColonnaControlli()).apply {
@@ -651,6 +659,16 @@ class NewDatasetView(
         }
     }
 
+
+    private fun apriAccessi() {
+        val id = bozza.areaId ?: return
+        try {
+            AccessiDatasetDialog(accessoDatasetService, id, bozza.nome.trim()).open()
+        } catch (e: SecurityException) {
+            Notification.show(e.message ?: "Operazione non consentita")
+        }
+    }
+
     // ================= Salvataggio =================
 
     private fun salva() {
@@ -661,13 +679,22 @@ class NewDatasetView(
             return
         }
         try {
+            val eraNuovo = bozza.areaId == null
             val id = datasetService.salva(bozza)
             modificato = false
             Notification.show(
                 "Dataset \"${bozza.nome.trim()}\" salvato. Premi \"Sincronizza\" per caricare i dati.",
                 6000, Notification.Position.MIDDLE
             )
-            getUI().ifPresent { it.navigate(DatasetFiltriView::class.java, id.toString()) }
+            val vai = { getUI().ifPresent { it.navigate(DatasetFiltriView::class.java, id.toString()) } }
+            if (eraNuovo) {
+                // Un dataset nuovo non lo vede nessuno tranne l'admin: si assegnano subito gli accessi.
+                AccessiDatasetDialog(accessoDatasetService, id, bozza.nome.trim()).apply {
+                    addOpenedChangeListener { e -> if (!e.isOpened) vai() }
+                }.open()
+            } else {
+                vai()
+            }
         } catch (e: DatasetNonValidoException) {
             aggiornaProblemi()
             Notification.show(
