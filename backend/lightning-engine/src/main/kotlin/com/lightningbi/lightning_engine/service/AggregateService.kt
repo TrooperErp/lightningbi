@@ -349,6 +349,11 @@ class AggregateService(
             PivotEngine.buildHierarchy(flat.rows, columnBy, metriche, ::labelFor, ordineFor = ordineColonne) { dimId -> colonnaFisicaByDim[dimId] }
         ).map { (path, _) -> path.filter { it.isNotEmpty() }.joinToString("|") }.distinct()
 
+        // Percorso di colonna -> id dei suoi valori: serve ai grafici per selezionare dalla legenda.
+        val chiaviColonne = flat.rows.mapNotNull { r ->
+            val ids = columnBy.associateWith { r.groupKeys[it] ?: return@mapNotNull null }
+            columnBy.joinToString("|") { labelFor(it, ids.getValue(it)) } to ids
+        }.toMap()
         val grouped = flat.rows.groupBy { row -> groupBy.associateWith { row.groupKeys[it] } }
 
         val pivotRows = grouped.entries.take(limit).map { (groupKeyPartial, flatRowsInGroup) ->
@@ -373,7 +378,7 @@ class AggregateService(
             AggregateRow(groupKeys = groupKeys, values = values)
         }
 
-        return AggregateResult(pivotRows, flat.truncated || grouped.size > limit, colonneInOrdine)
+        return AggregateResult(pivotRows, flat.truncated || grouped.size > limit, colonneInOrdine, chiaviColonne)
     }
 
     private fun addVariationColumns(
@@ -537,7 +542,7 @@ class AggregateService(
             .sorted().joinToString(",")
 
         val raw = buildString {
-            append("ord2|")
+            append("ord3|")
             append(req.areaId); append('|')
             append(canonicalSelections); append('|')
             append(canonicalGroupBy); append('|')

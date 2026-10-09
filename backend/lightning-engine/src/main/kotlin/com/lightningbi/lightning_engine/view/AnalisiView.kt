@@ -104,6 +104,17 @@ class AnalisiView(
     private val contenitoreColonne = Div().apply { className = "lbi-qv-zone" }
     private val contenitoreMisure = Div().apply { className = "lbi-qv-zone" }
     private val corpoSelezioni = Div()
+
+    private val indietroButton = Button("Indietro", Icon(VaadinIcon.ARROW_BACKWARD)).apply {
+        addClassName("lbi-qv-clear")
+        element.setAttribute("title", "Torna alla selezione precedente")
+        addClickListener { indietro() }
+    }
+    private val avantiButton = Button("Avanti", Icon(VaadinIcon.ARROW_FORWARD)).apply {
+        addClassName("lbi-qv-clear")
+        element.setAttribute("title", "Rifai la selezione annullata")
+        addClickListener { avanti() }
+    }
     private val elencoCampi = Div().apply { className = "lbi-qv-panel-body" }
     private val ricercaCampi = TextField().apply {
         placeholder = "Cerca campo"
@@ -184,6 +195,7 @@ class AnalisiView(
             aggiornaZone()
             aggiornaSelezioniCorrenti()
             ricalcola()
+            aggiornaPulsantiCronologia()
         }
     }
 
@@ -226,7 +238,7 @@ class AnalisiView(
                 addClassName("lbi-qv-clear")
                 addThemeVariants(ButtonVariant.LUMO_ERROR)
             }
-        return Div(titolo, cancella, rinomina, elimina, zone).apply { className = "lbi-qv-top" }
+        return Div(titolo, cancella, indietroButton, avantiButton, rinomina, elimina, zone).apply { className = "lbi-qv-top" }
     }
 
     /** Le analisi del dataset come schede, come i fogli di Qlik. */
@@ -396,10 +408,14 @@ class AnalisiView(
     }
 
     /** Come nella pagina Dataset: un clic aggiunge o toglie il valore; un valore grigio toglie le selezioni in conflitto. */
+    /** Come nella pagina Dataset: un clic aggiunge o toglie il valore; un valore grigio toglie le selezioni in conflitto. */
     private fun alClic(dimId: UUID, valore: ValoreFiltro) {
-        val attuali = selezioni[dimId].orEmpty()
+        val nuove = selezioni.toMutableMap()
+        val attuali = nuove[dimId].orEmpty()
         if (valore.id in attuali) {
-            impostaSelezione(dimId, attuali - valore.id)
+            val resto = attuali - valore.id
+            if (resto.isEmpty()) nuove.remove(dimId) else nuove[dimId] = resto
+            applicaSelezioni(nuove)
             return
         }
         if (valore.stato == StatoValore.ESCLUSO) {
@@ -410,19 +426,79 @@ class AnalisiView(
                 log.warn("Calcolo dei conflitti fallito per la dimensione {}", dimId, e)
                 emptySet()
             }
-            daTogliere.forEach { selezioni.remove(it) }
+            daTogliere.forEach { nuove.remove(it) }
         }
-        impostaSelezione(dimId, attuali + valore.id)
+        nuove[dimId] = attuali + valore.id
+        applicaSelezioni(nuove)
     }
 
     private fun impostaSelezione(dimId: UUID, valori: Set<Long>) {
-        if (valori.isEmpty()) selezioni.remove(dimId) else selezioni[dimId] = valori
+        val nuove = selezioni.toMutableMap()
+        if (valori.isEmpty()) nuove.remove(dimId) else nuove[dimId] = valori
+        applicaSelezioni(nuove)
+    }
+
+    /**
+     * Clic su un grafico, come in Qlik: il valore cliccato diventa la selezione del suo campo
+     * (con più dimensioni nelle Righe, una per campo). Un secondo clic sullo stesso valore,
+     * già unico selezionato, toglie la selezione.
+     */
+    private fun selezionaDaGrafico(chiavi: Map<UUID, Long>) {
+        if (chiavi.isEmpty()) return
+        val giaSelezionato = chiavi.all { (dimId, valore) -> selezioni[dimId] == setOf(valore) }
+        val nuove = selezioni.toMutableMap()
+        if (giaSelezionato) chiavi.keys.forEach { nuove.remove(it) }
+        else chiavi.forEach { (dimId, valore) -> nuove[dimId] = setOf(valore) }
+        applicaSelezioni(nuove)
+    }
+
+    /**
+     * Unico punto in cui cambiano le selezioni: salva lo stato precedente nella cronologia
+     * (tranne per Indietro/Avanti), applica le nuove e aggiorna tutto.
+     */
+    private fun applicaSelezioni(nuove: Map<UUID, Set<Long>>, registra: Boolean = true) {
+        val a = area ?: return
+        val pulite = nuove.filterValues { it.isNotEmpty() }
+        if (pulite == selezioni.toMap()) {
+            aggiornaPulsantiCronologia()
+            return
+        }
+        if (registra) CronologiaSelezioni.registra(a.id, selezioni.toMap())
+        selezioni.clear()
+        selezioni.putAll(pulite)
         misura("salva selezioni") { salvaSelezioni() }
         misura("selezioni correnti") { aggiornaSelezioniCorrenti() }
         misura("campi e contatori") { aggiornaCampi() }
         misura("popup valori") { aggiornaDialoghi() }
         misura("ricalcolo pivot e grafici") { ricalcola() }
+        aggiornaPulsantiCronologia()
     }
+
+    private fun cancellaSelezioni() {
+        if (selezioni.isEmpty()) return
+        applicaSelezioni(emptyMap())
+        Notification.show("Selezioni cancellate", 2500, Notification.Position.BOTTOM_START)
+    }
+
+    private fun indietro() {
+        val a = area ?: return
+        CronologiaSelezioni.indietro(a.id, selezioni.toMap())?.let { applicaSelezioni(it, registra = false) }
+        aggiornaPulsantiCronologia()
+    }
+
+    private fun avanti() {
+        val a = area ?: return
+        CronologiaSelezioni.avanti(a.id, selezioni.toMap())?.let { applicaSelezioni(it, registra = false) }
+        aggiornaPulsantiCronologia()
+    }
+
+    private fun aggiornaPulsantiCronologia() {
+        val a = area
+        indietroButton.isEnabled = a != null && CronologiaSelezioni.puoIndietro(a.id)
+        avantiButton.isEnabled = a != null && CronologiaSelezioni.puoAvanti(a.id)
+    }
+
+
     private fun <T> misura(nome: String, blocco: () -> T): T {
         val inizio = System.nanoTime()
         try {
@@ -668,15 +744,7 @@ class AnalisiView(
         impostaSelezione(dimId, emptySet())
     }
 
-    private fun cancellaSelezioni() {
-        selezioni.clear()
-        salvaSelezioni()
-        aggiornaSelezioniCorrenti()
-        aggiornaCampi()
-        aggiornaDialoghi()
-        ricalcola()
-        Notification.show("Selezioni cancellate", 2500, Notification.Position.BOTTOM_START)
-    }
+
 
     private fun aggiornaSelezioniCorrenti() {
         val a = area ?: return
@@ -739,7 +807,7 @@ class AnalisiView(
     private fun aggiornaGrafici(v: PivotView) {
         try {
             val dati = chartService.getChartsDataDellAnalisi(v.id, dimensioni.map { it.dimensioneId }.toSet(), selezioni.toMap())
-            grafici.render(dati, dimensioni.map { it.dimensioneId })
+            grafici.render(dati, dimensioni.map { it.dimensioneId }) { chiavi -> selezionaDaGrafico(chiavi) }
         } catch (e: Exception) {
             log.warn("Calcolo dei grafici dell'analisi {} fallito", v.id, e)
             grafici.clearAll()

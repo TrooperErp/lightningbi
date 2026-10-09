@@ -117,5 +117,8 @@ data class AggregateResult(
     val rows: List<AggregateRow>,
     val truncated: Boolean,
     /** Con le Colonne: i percorsi delle colonne ("2025|Gen") nell'ordine in cui vanno mostrate. */
-    val colonne: List<String> = emptyList()
+
+    val colonne: List<String> = emptyList(),
+    /** Con le Colonne: per ogni percorso di colonna ("2025|Gen") gli id dei suoi valori, per selezionarli da un grafico. */
+    val chiaviColonne: Map<String, Map<UUID, Long>> = emptyMap()
 )

@@ -122,7 +122,8 @@ data class ChartData(
      */
     val series: List<ChartSeries>,
     /** True se i dati sono stati troncati: va segnalato all'utente. */
-    val truncated: Boolean
+    val truncated: Boolean,
+    val chiaviRighe: List<Map<UUID, Long>> = emptyList()
 )
 
 /**
@@ -138,5 +139,6 @@ data class ChartData(
 data class ChartSeries(
     val metricaNome: String,
     val values: List<Double>,
-    val pointColors: List<String?>? = null
+    val pointColors: List<String?>? = null,
+    val chiavi: Map<UUID, Long>? = null
 )

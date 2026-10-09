@@ -14,7 +14,8 @@ class ChartsPanelUi {
         isPadding = false
     }
 
-    fun render(chartsData: List<ChartResult>, rows: List<UUID>) {
+    /** @param alClic riceve gli id da selezionare quando si clicca un grafico */
+    fun render(chartsData: List<ChartResult>, rows: List<UUID>, alClic: (Map<UUID, Long>) -> Unit = {}) {
         root.removeAll()
 
         if (rows.isEmpty()) {
@@ -34,7 +35,7 @@ class ChartsPanelUi {
         chartsData.forEach { result ->
             when (result) {
                 is ChartResult.Ready -> {
-                    val chartComponent = EChartComponent()
+                    val chartComponent = EChartComponent(alClic)
                     grid.add(chartComponent)
                     chartComponent.render(result.data)
                 }

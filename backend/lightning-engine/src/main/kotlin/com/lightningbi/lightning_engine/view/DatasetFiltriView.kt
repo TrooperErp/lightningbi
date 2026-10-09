@@ -1,12 +1,15 @@
+// FILE: src/main/kotlin/com/lightningbi/lightning_engine/view/DatasetFiltriView.kt
 package com.lightningbi.lightning_engine.view
 
 import com.lightningbi.lightning_engine.etl.EtlOrchestrator
 import com.lightningbi.lightning_engine.model.Area
+import com.lightningbi.lightning_engine.model.Azienda
 import com.lightningbi.lightning_engine.model.PivotView
 import com.lightningbi.lightning_engine.model.UserPivotState
 import com.lightningbi.lightning_engine.repository.AreaSourceRepository
 import com.lightningbi.lightning_engine.repository.RegistryRepository
 import com.lightningbi.lightning_engine.repository.UserPivotStateRepository
+import com.lightningbi.lightning_engine.service.AccessoDatasetService
 import com.lightningbi.lightning_engine.service.AdminGuard
 import com.lightningbi.lightning_engine.service.AuthService
 import com.lightningbi.lightning_engine.service.CalendarioService
@@ -17,6 +20,7 @@ import com.lightningbi.lightning_engine.service.DatasetService
 import com.lightningbi.lightning_engine.service.FiltriService
 import com.lightningbi.lightning_engine.service.PivotViewService
 import com.lightningbi.lightning_engine.service.RiferimentoCampo
+import com.lightningbi.lightning_engine.service.SezioneAccessoService
 import com.lightningbi.lightning_engine.service.StatoValore
 import com.lightningbi.lightning_engine.service.ValoreFiltro
 import com.vaadin.flow.component.Component
@@ -40,7 +44,6 @@ import com.vaadin.flow.router.OptionalParameter
 import com.vaadin.flow.router.Route
 import org.slf4j.LoggerFactory
 import java.util.UUID
-import com.lightningbi.lightning_engine.service.AccessoDatasetService
 
 /**
  * Pagina "Dataset": il foglio "Impostazione filtri" di Qlik. Solo selezioni:
@@ -49,11 +52,12 @@ import com.lightningbi.lightning_engine.service.AccessoDatasetService
  *
  * - Un box per ogni tabella del dataset, con i suoi campi e il contatore
  *   (possibili/totali). Un clic su un campo ne apre l'elenco dei valori.
- * - Valori: verde selezionato, bianco possibile, grigio escluso. Come in
- *   QlikView: clic = quel valore diventa l'unica selezione; Ctrl+clic aggiunge
- *   o toglie; un clic sull'unico valore selezionato lo deseleziona.
- * - Selezioni correnti (con la X per togliere un campo) e Cancella selezioni.
- * - La barra Anno / Mese / Giorno e i Preferiti sono ancora senza dati.
+ * - Valori: verde selezionato, bianco possibile, grigio escluso. Un clic aggiunge
+ *   o toglie il valore; un valore grigio toglie le selezioni in conflitto.
+ * - Selezioni correnti (con la X per togliere un campo), Cancella selezioni e
+ *   Indietro / Avanti (cronologia condivisa con Analisi, come in Qlik).
+ * - Barra Anno / Mese / Giorno (derivati del campo data del calendario) e, per
+ *   l'admin, Ditta. I Preferiti sono ancora da fare.
  *
  * Route "dataset" e "dataset/{id}".
  */
@@ -71,8 +75,7 @@ class DatasetFiltriView(
     private val areaSourceRepository: AreaSourceRepository,
     private val adminGuard: AdminGuard,
     private val authService: AuthService,
-
-    private val sezioneAccessoService: com.lightningbi.lightning_engine.service.SezioneAccessoService
+    private val sezioneAccessoService: SezioneAccessoService
 ) : VerticalLayout(), HasUrlParameter<String>, AfterNavigationObserver {
 
     private val log = LoggerFactory.getLogger(DatasetFiltriView::class.java)
@@ -86,6 +89,17 @@ class DatasetFiltriView(
     private val nomiCampi = mutableMapOf<UUID, String>()
     private val corpoSelezioni = Div()
 
+    private val indietroButton = Button("Indietro", Icon(VaadinIcon.ARROW_BACKWARD)).apply {
+        addClassName("lbi-qv-clear")
+        element.setAttribute("title", "Torna alla selezione precedente")
+        addClickListener { indietro() }
+    }
+    private val avantiButton = Button("Avanti", Icon(VaadinIcon.ARROW_FORWARD)).apply {
+        addClassName("lbi-qv-clear")
+        element.setAttribute("title", "Rifai la selezione annullata")
+        addClickListener { avanti() }
+    }
+
     // Barra del calendario: componente ("anno", "mese", "giorno") -> dimensione del campo derivato.
     private val dimCalendario = mutableMapOf<String, UUID>()
     private val contenitoreAnni = Div().apply { className = "lbi-qv-chips lbi-qv-chips-anno" }
@@ -94,6 +108,9 @@ class DatasetFiltriView(
 
     // Ditta (solo admin): la dimensione del campo azienda, se il dataset ce l'ha.
     private var dimDitta: UUID? = null
+
+    // Campo azienda di un non-admin: forzato dal section access, quindi non si mostra.
+    private var dimNascosta: UUID? = null
     private val contenitoreDitte = Div().apply { className = "lbi-qv-chips lbi-qv-chips-anno" }
 
     override fun setParameter(event: BeforeEvent, @OptionalParameter parameter: String?) {
@@ -121,6 +138,7 @@ class DatasetFiltriView(
         nomiCampi.clear()
         dimCalendario.clear()
         dimDitta = if (area != null && adminGuard.isAdmin()) sezioneAccessoService.dimensioneAzienda(area.id) else null
+        dimNascosta = if (area != null && !adminGuard.isAdmin()) sezioneAccessoService.dimensioneAzienda(area.id) else null
         selezioni.clear()
         areaCorrente = area
 
@@ -140,6 +158,7 @@ class DatasetFiltriView(
         setFlexGrow(1.0, shell)
 
         if (area != null) aggiornaTutto()
+        aggiornaPulsantiCronologia()
     }
 
     private fun pagina(area: Area, bozza: DatasetBozza?): Component {
@@ -164,7 +183,6 @@ class DatasetFiltriView(
 
             val campi = bozza.campi().filter { !it.escluso }
             bozza.occorrenze.forEach { occ ->
-
                 // I campi tecnici (chiavi, prefissi della connessione) non si mostrano: servono solo a collegare le tabelle.
                 val suoi = campi.filter {
                     it.occorrenzaId == occ.id && !it.tecnico && RiferimentoCampo(occ.id, it.colonna) in bozza.dimensioni
@@ -191,7 +209,7 @@ class DatasetFiltriView(
                 addThemeVariants(ButtonVariant.LUMO_PRIMARY)
             }
 
-        val barra = Div(titolo, cancella)
+        val barra = Div(titolo, cancella, indietroButton, avantiButton)
         // Come il Reload di Qlik: solo chi costruisce il modello (admin) ricarica i dati.
         if (adminGuard.isAdmin()) {
             barra.add(
@@ -208,7 +226,7 @@ class DatasetFiltriView(
     /**
      * Anno / Mese / Giorno, come in Qlik: sono campi (i derivati del campo data scelto in Modello
      * dati) e si selezionano come gli altri. Finché il calendario non è configurato i valori
-     * restano grigi e non si possono cliccare.
+     * restano grigi e non si possono cliccare. Per l'admin anche Ditta.
      */
     private fun barraCalendario(): Component {
         fun gruppo(titolo: String, chips: Component) =
@@ -285,7 +303,8 @@ class DatasetFiltriView(
         } else {
             campi.sortedBy { it.etichetta.lowercase() }.forEach { campo ->
                 val dimId = dimensioni[occorrenzaId to campo.colonna] ?: return@forEach
-                if (dimId in dimCalendario.values) return@forEach  // sta nella barra in alto
+                if (dimId in dimCalendario.values) return@forEach // sta nella barra in alto
+                if (dimId == dimNascosta) return@forEach  // azienda forzata: il non-admin non la vede
                 val ui = CampoUi(area.id, dimId, campo.etichetta)
                 campiUi += ui
                 nomiCampi[dimId] = campo.etichetta
@@ -363,9 +382,12 @@ class DatasetFiltriView(
      * con quel valore si annullano.
      */
     private fun alClic(dimId: UUID, valore: ValoreFiltro, @Suppress("UNUSED_PARAMETER") ctrl: Boolean) {
-        val attuali = selezioni[dimId].orEmpty()
+        val nuove = selezioni.toMutableMap()
+        val attuali = nuove[dimId].orEmpty()
         if (valore.id in attuali) {
-            impostaSelezione(dimId, attuali - valore.id)
+            val resto = attuali - valore.id
+            if (resto.isEmpty()) nuove.remove(dimId) else nuove[dimId] = resto
+            applicaSelezioni(nuove)
             return
         }
         if (valore.stato == StatoValore.ESCLUSO) {
@@ -376,23 +398,57 @@ class DatasetFiltriView(
                 log.warn("Calcolo dei conflitti fallito per la dimensione {}", dimId, e)
                 emptySet()
             }
-            daTogliere.forEach { selezioni.remove(it) }
+            daTogliere.forEach { nuove.remove(it) }
         }
-        impostaSelezione(dimId, attuali + valore.id)
+        nuove[dimId] = attuali + valore.id
+        applicaSelezioni(nuove)
     }
 
     private fun impostaSelezione(dimId: UUID, valori: Set<Long>) {
-        if (valori.isEmpty()) selezioni.remove(dimId) else selezioni[dimId] = valori
+        val nuove = selezioni.toMutableMap()
+        if (valori.isEmpty()) nuove.remove(dimId) else nuove[dimId] = valori
+        applicaSelezioni(nuove)
+    }
+
+    /** Unico punto in cui cambiano le selezioni: cronologia (tranne Indietro/Avanti), salvataggio, aggiornamento. */
+    private fun applicaSelezioni(nuove: Map<UUID, Set<Long>>, registra: Boolean = true) {
+        val area = areaCorrente ?: return
+        val pulite = nuove.filterValues { it.isNotEmpty() }
+        if (pulite == selezioni.toMap()) {
+            aggiornaPulsantiCronologia()
+            return
+        }
+        if (registra) CronologiaSelezioni.registra(area.id, selezioni.toMap())
+        selezioni.clear()
+        selezioni.putAll(pulite)
         salvaSelezioni()
         aggiornaTutto()
+        aggiornaPulsantiCronologia()
     }
 
     /** Come "Cancella selezioni" di Qlik: svuota le selezioni del dataset, condivise con Analisi e Grafici. */
     private fun cancellaSelezioni() {
-        selezioni.clear()
-        salvaSelezioni()
-        aggiornaTutto()
+        if (selezioni.isEmpty()) return
+        applicaSelezioni(emptyMap())
         Notification.show("Selezioni cancellate", 2500, Notification.Position.BOTTOM_START)
+    }
+
+    private fun indietro() {
+        val area = areaCorrente ?: return
+        CronologiaSelezioni.indietro(area.id, selezioni.toMap())?.let { applicaSelezioni(it, registra = false) }
+        aggiornaPulsantiCronologia()
+    }
+
+    private fun avanti() {
+        val area = areaCorrente ?: return
+        CronologiaSelezioni.avanti(area.id, selezioni.toMap())?.let { applicaSelezioni(it, registra = false) }
+        aggiornaPulsantiCronologia()
+    }
+
+    private fun aggiornaPulsantiCronologia() {
+        val area = areaCorrente
+        indietroButton.isEnabled = area != null && CronologiaSelezioni.puoIndietro(area.id)
+        avantiButton.isEnabled = area != null && CronologiaSelezioni.puoAvanti(area.id)
     }
 
     // ================= Aggiornamento =================
@@ -425,7 +481,7 @@ class DatasetFiltriView(
         }
     }
 
-    /** Rilegge Anno, Mese e Giorno dai dati: ogni valore ha il suo stato (verde, bianco, grigio). */
+    /** Rilegge Anno, Mese, Giorno (e Ditta per l'admin) dai dati: ogni valore ha il suo stato. */
     private fun aggiornaCalendario() {
         val area = areaCorrente ?: return
         aggiornaDitte(area.id)
@@ -463,7 +519,7 @@ class DatasetFiltriView(
             val valori = filtriService.valori(areaId, selezioni, dimId, null, 0, MAX_CHIP)
             contenitoreDitte.removeAll()
             valori.sortedBy { it.etichetta.toIntOrNull() ?: Int.MAX_VALUE }.forEach { v ->
-                val nome = v.etichetta.toIntOrNull()?.let { com.lightningbi.lightning_engine.model.Azienda.fromCodice(it)?.label }
+                val nome = v.etichetta.toIntOrNull()?.let { Azienda.fromCodice(it)?.label }
                 contenitoreDitte.add(chipValore(dimId, v).apply { text = nome ?: v.etichetta })
             }
         } catch (e: Exception) {
@@ -600,6 +656,7 @@ class DatasetFiltriView(
             name = "indice-dataset-${area.id}"
         }.start()
     }
+
     // ================= Menu =================
 
     private fun menu(area: Area?, aree: List<Area>, analisi: List<PivotView>): List<LbiSidebarMenu.MenuGroup> {
@@ -689,7 +746,7 @@ class DatasetFiltriView(
         /** Quanti valori mostrare per campo nelle Selezioni correnti, prima dei puntini. */
         const val MAX_ETICHETTE = 3
 
-        /** Quanti valori leggere per Anno, Mese e Giorno: bastano per anni, 12 mesi e 31 giorni. */
+        /** Quanti valori leggere per Anno, Mese, Giorno e Ditta: bastano per anni, 12 mesi e 31 giorni. */
         const val MAX_CHIP = 100
     }
 }

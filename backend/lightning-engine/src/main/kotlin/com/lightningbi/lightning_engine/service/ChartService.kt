@@ -21,10 +21,25 @@ class ChartService(
     private val areaChartRepository: AreaChartRepository,
     private val registryRepository: RegistryRepository,
     private val aggregateService: AggregateService,
-    private val misuraAnalisiRepository: com.lightningbi.lightning_engine.repository.MisuraAnalisiRepository
+    private val misuraAnalisiRepository: com.lightningbi.lightning_engine.repository.MisuraAnalisiRepository,
+
+    private val versionService: VersionService,
+    private val sezioneAccessoService: SezioneAccessoService,
+    /** Thread per calcolare i grafici di un'analisi in parallelo. */
+    @org.springframework.beans.factory.annotation.Value("\${lbi.grafici.thread:4}") threadGrafici: Int
+
 
 ) {
     private val log = LoggerFactory.getLogger(ChartService::class.java)
+
+    private val pool = java.util.concurrent.Executors.newFixedThreadPool(threadGrafici.coerceAtLeast(1)) { r ->
+        Thread(r).apply { isDaemon = true; name = "grafici-${hashCode()}" }
+    }
+
+    @jakarta.annotation.PreDestroy
+    fun chiudi() {
+        pool.shutdown()
+    }
 
     private val maxPunti = 100
     private val maxFettePie = 12
@@ -73,17 +88,34 @@ class ChartService(
         pivotViewId: UUID,
         campiAmmessi: Set<UUID>,
         selections: Map<UUID, Set<Long>>
-    ): List<ChartResult> =
-        areaChartRepository.findByView(pivotViewId).map { chart ->
+    ): List<ChartResult> {
+        val grafici = areaChartRepository.findByView(pivotViewId)
+        if (grafici.isEmpty()) return emptyList()
+        // Vincolo e versioni nel thread della pagina: i thread del pool non hanno la sessione dell'utente.
+        val areaId = grafici.first().areaId
+        val vincolo = sezioneAccessoService.vincolo(areaId)
+        val versioni = versionService.snapshotVersions(areaId)
+
+        val futuri = grafici.map { chart ->
+            chart to java.util.concurrent.CompletableFuture.supplyAsync({
+                val metricaIds = areaChartRepository.findMetricheByChart(chart.id).map { it.metricaId }
+                computeChartData(chart, metricaIds, campiAmmessi, selections, versioni, vincolo)
+            }, pool)
+        }
+        return futuri.map { (chart, futuro) ->
             try {
-                getChartData(chart, campiAmmessi, selections)
-            } catch (e: IllegalArgumentException) {
-                ChartResult.Incoherent(chart, e.message ?: "Grafico non coerente con il dataset")
-            } catch (e: Exception) {
-                log.warn("Grafico '{}' ({}) non calcolabile per errore imprevisto", chart.titolo, chart.id, e)
-                ChartResult.Incoherent(chart, "Errore nel calcolo del grafico")
+                futuro.join()
+            } catch (e: java.util.concurrent.CompletionException) {
+                when (val causa = e.cause) {
+                    is IllegalArgumentException -> ChartResult.Incoherent(chart, causa.message ?: "Grafico non coerente con il dataset")
+                    else -> {
+                        log.warn("Grafico '{}' ({}) non calcolabile per errore imprevisto", chart.titolo, chart.id, causa ?: e)
+                        ChartResult.Incoherent(chart, "Errore nel calcolo del grafico")
+                    }
+                }
             }
         }
+    }
 
     /** Dati di un singolo grafico, calcolati sulle sue proprie Righe/Colonne (chart.pivotRows/chart.pivotColumns). */
     fun getChartData(
@@ -92,7 +124,10 @@ class ChartService(
         selections: Map<UUID, Set<Long>>
     ): ChartResult {
         val metricaIds = areaChartRepository.findMetricheByChart(chart.id).map { it.metricaId }
-        return computeChartData(chart, metricaIds, campiAmmessi, selections)
+        return computeChartData(
+            chart, metricaIds, campiAmmessi, selections,
+            versionService.snapshotVersions(chart.areaId), sezioneAccessoService.vincolo(chart.areaId)
+        )
     }
 
     /**
@@ -107,13 +142,18 @@ class ChartService(
         metricaIds: List<UUID>,
         campiAmmessi: Set<UUID>,
         selections: Map<UUID, Set<Long>>
-    ): ChartResult = computeChartData(chart, metricaIds, campiAmmessi, selections)
+    ): ChartResult = computeChartData(
+        chart, metricaIds, campiAmmessi, selections,
+        versionService.snapshotVersions(chart.areaId), sezioneAccessoService.vincolo(chart.areaId)
+    )
 
     private fun computeChartData(
         chart: AreaChart,
         metricaIds: List<UUID>,
         campiAmmessi: Set<UUID>,
-        selections: Map<UUID, Set<Long>>
+        selections: Map<UUID, Set<Long>>,
+        versioni: com.lightningbi.lightning_engine.model.VersionSnapshot,
+        vincolo: SezioneAccessoService.Vincolo?
     ): ChartResult {
         val pivotRows = chart.pivotRows.filter { it in campiAmmessi }
         val pivotColumns = chart.pivotColumns.filter { it in campiAmmessi }
@@ -158,7 +198,9 @@ class ChartService(
                 orderMetricId = if (columnsEffettive.isEmpty() && ordinePerQuery != AggregateOrder.DIMENSION) metricheOrdinate.first().id else null,
                 limit = limit,
                 resolveLabels = true
-            )
+            ),
+            versioni,
+            vincolo
         )
 
         // Riordino esplicito per etichetta SOLO quando l'utente ha scelto
@@ -180,7 +222,7 @@ class ChartService(
         val series = if (columnsEffettive.isEmpty()) {
             buildSeriesPerMetrica(rows, metricheOrdinate)
         } else {
-            buildSeriesPerColonna(rows, metricheOrdinate, chart.highlightDecline, result.colonne)
+            buildSeriesPerColonna(rows, metricheOrdinate, chart.highlightDecline, result.colonne, result.chiaviColonne)
         }
 
         return ChartResult.Ready(
@@ -188,7 +230,8 @@ class ChartService(
                 chart = chart,
                 labels = labels,
                 series = series,
-                truncated = result.truncated
+                truncated = result.truncated,
+                chiaviRighe = rows.map { r -> pivotRows.mapNotNull { d -> r.groupKeys[d]?.let { d to it } }.toMap() }
             )
         )
     }
@@ -229,8 +272,8 @@ class ChartService(
         rows: List<com.lightningbi.lightning_engine.model.AggregateRow>,
         metricheOrdinate: List<AreaMetrica>,
         highlightDecline: Boolean,
-        ordineColonne: List<String>
-
+        ordineColonne: List<String>,
+        chiaviColonne: Map<String, Map<UUID, Long>>
     ): List<ChartSeries> {
         val metrica = metricheOrdinate.first()
         val prefix = "${metrica.nome}|"
@@ -273,7 +316,8 @@ class ChartService(
                 ChartSeries(
                     metricaNome = nome,
                     values = serieValues[i],
-                    pointColors = List(serieValues[i].size) { paletteStandard[i % paletteStandard.size] }
+                    pointColors = List(serieValues[i].size) { paletteStandard[i % paletteStandard.size] },
+                    chiavi = chiaviColonne[nome]
                 )
             }
         }
@@ -286,13 +330,17 @@ class ChartService(
         val serieprecedente = ChartSeries(
             metricaNome = nomiColonna[0],
             values = previousValues,
-            pointColors = List(previousValues.size) { colorePrecedente }
+            pointColors = List(previousValues.size) { colorePrecedente },
+            chiavi = chiaviColonne[nomiColonna[0]]
         )
         val pointColors = currentValues.mapIndexed { idx, value ->
             val previous = previousValues.getOrNull(idx) ?: 0.0
             if (value < previous) coloreCalo else coloreCorrente
         }
-        val serieCorrente = ChartSeries(metricaNome = nomiColonna[1], values = currentValues, pointColors = pointColors)
+        val serieCorrente = ChartSeries(
+            metricaNome = nomiColonna[1], values = currentValues, pointColors = pointColors,
+            chiavi = chiaviColonne[nomiColonna[1]]
+        )
 
         return listOf(serieprecedente, serieCorrente)
     }

@@ -1,7 +1,9 @@
+// FILE: src/main/kotlin/com/lightningbi/lightning_engine/view/EChartComponent.kt
 package com.lightningbi.lightning_engine.view
 
 import com.lightningbi.lightning_engine.model.ChartData
 import com.lightningbi.lightning_engine.model.ChartType
+import com.vaadin.flow.component.ClientCallable
 import com.vaadin.flow.component.Tag
 import com.vaadin.flow.component.html.Div
 import tools.jackson.databind.ObjectMapper
@@ -11,19 +13,31 @@ import java.util.UUID
  * Un singolo grafico ECharts, disegnato dentro un div dedicato.
  *
  * ECharts richiede un elemento DOM proprio per istanza (echarts.init(dom)):
- * non si può condividere un contenitore tra più grafici. Ogni istanza di
- * questa classe possiede il proprio div con id univoco, generato una
- * volta alla creazione.
+ * ogni istanza di questa classe possiede il proprio div con id univoco.
  *
- * I dati (etichette, serie) arrivano già pronti da ChartService - questa
- * classe traduce ChartData nella struttura option di ECharts e la passa
- * al browser via JSON, non fa alcun calcolo.
+ * I dati arrivano già pronti da ChartService: questa classe traduce ChartData
+ * nella struttura option di ECharts e la passa al browser via JSON.
+ *
+ * CLIC, come in Qlik: il clic seleziona, non nasconde.
+ *  - barra, punto o fetta -> i valori delle Righe di quel punto;
+ *  - voce della legenda -> il valore di colonna della serie (grafico che segue
+ *    le Colonne) o, nella torta, la fetta.
+ * La legenda non nasconde più le serie: è una selezione, non un filtro locale.
+ * Radar, dispersione e cartina non sono cliccabili (i loro punti non sono un valore delle Righe).
+ *
+ * @param alClic riceve gli id da selezionare (dimensione -> valore)
  */
 @Tag("div")
-class EChartComponent : Div() {
+class EChartComponent(
+    private val alClic: (Map<UUID, Long>) -> Unit = {}
+) : Div() {
 
     private val chartId = "echart-${UUID.randomUUID().toString().replace("-", "")}"
     private val objectMapper = ObjectMapper()
+    private val log = org.slf4j.LoggerFactory.getLogger(EChartComponent::class.java)
+
+    /** I dati dell'ultimo disegno: servono a tradurre il clic in id. */
+    private var dati: ChartData? = null
 
     init {
         element.setAttribute("id", chartId)
@@ -31,20 +45,37 @@ class EChartComponent : Div() {
         style.set("height", "450px")
     }
 
+    /** Clic su un punto (barra, fetta, punto della linea): seleziona i valori delle Righe di quell'indice. */
+    @ClientCallable
+    fun clicPunto(indice: Int) {
+        log.info("[grafico] clic punto {}: chiavi {} (punti con chiavi: {})", indice, dati?.chiaviRighe?.getOrNull(indice), dati?.chiaviRighe?.size)
+        val chiavi = dati?.chiaviRighe?.getOrNull(indice) ?: return
+        if (chiavi.isNotEmpty()) alClic(chiavi)
+    }
+
+    /** Clic su una voce della legenda: la serie (valore di colonna) o, nella torta, la fetta con quel nome. */
+    @ClientCallable
+    fun clicLegenda(nome: String) {
+        log.info("[grafico] clic legenda '{}': serie {}", nome, dati?.series?.map { it.metricaNome to it.chiavi })
+        val d = dati ?: return
+        d.series.firstOrNull { it.metricaNome == nome }?.chiavi?.let {
+            if (it.isNotEmpty()) alClic(it)
+            return
+        }
+        val indice = d.labels.indexOf(nome)
+        if (indice >= 0) clicPunto(indice)
+    }
+
     /**
-     * Disegna o aggiorna il grafico con i dati forniti. Se il grafico
-     * esiste già su questo div (richiamato più volte, es. dopo un
-     * ricalcolo), echarts.init lo ridispone invece di crearne uno nuovo -
-     * comportamento nativo di ECharts quando richiamato sullo stesso dom.
+     * Disegna o aggiorna il grafico con i dati forniti. Se il grafico esiste già
+     * su questo div, echarts lo riusa invece di crearne uno nuovo.
      */
     fun render(chartData: ChartData) {
+        dati = chartData
         val option = buildOption(chartData)
         val optionJson = objectMapper.writeValueAsString(option)
+        val cliccabile = chartData.chart.tipo !in setOf(ChartType.RADAR, ChartType.SCATTER, ChartType.MAP)
 
-        // executeJs gira nel browser: init prende l'elemento con l'id
-        // generato, setOption disegna. notMerge=true evita che opzioni
-        // di una render precedente restino "appiccicate" a una nuova
-        // configurazione con meno serie o etichette diverse.
         element.executeJs(
             """
     let attempts = 0;
@@ -75,22 +106,33 @@ class EChartComponent : Div() {
                 chart = echarts.init(el);
             }
             chart.setOption(JSON.parse(${'$'}1), true);
+            // Il clic seleziona (come in Qlik). Si tolgono i gestori di un disegno precedente.
+            chart.off('click');
+            chart.off('legendselectchanged');
+            if (${'$'}2) {
+                chart.on('click', function (p) {
+                    if (p.componentType === 'series' && p.dataIndex != null) el.${'$'}server.clicPunto(p.dataIndex);
+                });
+                chart.on('legendselectchanged', function (p) {
+                    // La legenda non nasconde: si rimostra tutto e si seleziona.
+                    chart.dispatchAction({ type: 'legendAllSelect' });
+                    el.${'$'}server.clicLegenda(p.name);
+                });
+            }
         } catch (e) {
             mostra('Errore nel disegno del grafico: ' + e.message);
         }
     }
     tryRender();
     """.trimIndent(),
-            chartId, optionJson
+            chartId, optionJson, cliccabile
         )
-
     }
 
     /**
      * Traduce ChartData + tipo nel formato "option" di ECharts.
-     * Ogni ChartType ha una struttura leggermente diversa: PIE/DONUT
-     * usano una sola serie di tipo "pie" con i dati come coppie
-     * nome/valore, gli altri usano xAxis/yAxis con una serie per metrica.
+     * PIE/DONUT usano una sola serie "pie" con coppie nome/valore, gli altri
+     * xAxis/yAxis con una serie per metrica (o per valore di colonna).
      */
     private fun buildOption(chartData: ChartData): Map<String, Any?> {
         val tipo = chartData.chart.tipo
@@ -146,10 +188,7 @@ class EChartComponent : Div() {
             }
 
             ChartType.MAP -> {
-                // La mappa richiede un GeoJSON registrato lato client
-                // (echarts.registerMap) che oggi non è caricato: finché
-                // non lo aggiungiamo, mostriamo un messaggio invece di
-                // un grafico vuoto o rotto.
+                // La mappa richiede un GeoJSON registrato lato client (echarts.registerMap), oggi non caricato.
                 mapOf(
                     "title" to mapOf(
                         "text" to "Cartina non ancora disponibile: richiede un file geografico non caricato",
@@ -160,8 +199,7 @@ class EChartComponent : Div() {
             }
 
             else -> {
-                // BAR, BAR_HORIZONTAL, LINE, AREA: stesso schema, cambia
-                // solo l'orientamento degli assi e il tipo di serie.
+                // BAR, BAR_HORIZONTAL, LINE, AREA: stesso schema, cambia l'orientamento e il tipo di serie.
                 val isHorizontal = tipo == ChartType.BAR_HORIZONTAL
                 val categoryAxis = mapOf("type" to "category", "data" to chartData.labels)
                 val valueAxis = mapOf("type" to "value")
@@ -173,7 +211,7 @@ class EChartComponent : Div() {
                 }
                 val areaStyle = if (tipo == ChartType.AREA) mapOf("opacity" to 0.35) else null
 
-                val series = chartData.series.mapIndexed { i, s ->
+                val series = chartData.series.map { s ->
                     val base = mutableMapOf<String, Any?>(
                         "name" to s.metricaNome,
                         "type" to seriesType,
@@ -183,22 +221,11 @@ class EChartComponent : Div() {
 
                     val uniqueColors = s.pointColors?.filterNotNull()?.distinct()
                     when {
-                        // Tutti i punti della serie hanno lo stesso colore:
-                        // lo si imposta a livello di SERIE (itemStyle sulla
-                        // serie, non sui singoli punti), cosi' la legenda
-                        // di ECharts - che legge solo il colore di serie,
-                        // mai quello dei punti - mostra il colore giusto.
+                        // Un solo colore per tutta la serie: sulla serie, così la legenda lo mostra giusto.
                         uniqueColors != null && uniqueColors.size == 1 -> {
                             base["itemStyle"] = mapOf("color" to uniqueColors.first())
                         }
-                        // Colori misti nella stessa serie (caso 2 colonne
-                        // con highlightDecline: alcuni punti rossi, altri
-                        // blu dentro la serie "corrente"): colore per
-                        // singolo punto/barra. La legenda in questo caso
-                        // specifico mostra un colore che non rispecchia
-                        // ogni singola barra - limite noto di ECharts,
-                        // accettabile perché il dato visivo sulle barre
-                        // resta corretto.
+                        // Colori misti (cali in rosso): colore per singolo punto.
                         s.pointColors != null -> {
                             base["data"] = s.values.mapIndexed { idx, value ->
                                 val color = s.pointColors.getOrNull(idx)
@@ -210,7 +237,6 @@ class EChartComponent : Div() {
                             }
                         }
                     }
-
                     base
                 }
 

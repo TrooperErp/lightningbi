@@ -128,9 +128,13 @@ class AnalisiService(
     fun dimensioniDisponibili(areaId: UUID): List<DimensioneAnalisi> {
         val modello = modelloCorrente(areaId)
         val campi = modello.bozza.campi().filter { !it.escluso }.associateBy { it.occorrenzaId to it.colonna }
+
         val alias = modello.bozza.occorrenze.associate { it.id to it.alias }
+        // Per un non-admin il campo azienda è forzato dal section access: non si mostra.
+        val nascosta = sezioneAccessoService.vincolo(areaId)?.dimensioneId
         return registryRepository.findDimensioniByArea(areaId).mapNotNull { d ->
             val tabellaId = d.areaTabellaId ?: return@mapNotNull null
+            if (d.dimensioneId == nascosta) return@mapNotNull null
             val campo = campi[tabellaId to d.colonnaFisica] ?: return@mapNotNull null
             // Campi tecnici (chiavi, prefissi della connessione): nascosti, non cambiati.
             if (campo.tecnico) return@mapNotNull null
