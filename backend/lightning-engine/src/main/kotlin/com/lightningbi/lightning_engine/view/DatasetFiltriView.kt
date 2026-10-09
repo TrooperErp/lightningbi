@@ -70,7 +70,9 @@ class DatasetFiltriView(
     private val etlOrchestrator: EtlOrchestrator,
     private val areaSourceRepository: AreaSourceRepository,
     private val adminGuard: AdminGuard,
-    private val authService: AuthService
+    private val authService: AuthService,
+
+    private val sezioneAccessoService: com.lightningbi.lightning_engine.service.SezioneAccessoService
 ) : VerticalLayout(), HasUrlParameter<String>, AfterNavigationObserver {
 
     private val log = LoggerFactory.getLogger(DatasetFiltriView::class.java)
@@ -89,6 +91,10 @@ class DatasetFiltriView(
     private val contenitoreAnni = Div().apply { className = "lbi-qv-chips lbi-qv-chips-anno" }
     private val contenitoreMesi = Div().apply { className = "lbi-qv-chips lbi-qv-chips-mese" }
     private val contenitoreGiorni = Div().apply { className = "lbi-qv-chips lbi-qv-chips-giorno" }
+
+    // Ditta (solo admin): la dimensione del campo azienda, se il dataset ce l'ha.
+    private var dimDitta: UUID? = null
+    private val contenitoreDitte = Div().apply { className = "lbi-qv-chips lbi-qv-chips-anno" }
 
     override fun setParameter(event: BeforeEvent, @OptionalParameter parameter: String?) {
         parametro = parameter
@@ -114,6 +120,7 @@ class DatasetFiltriView(
         campiUi.clear()
         nomiCampi.clear()
         dimCalendario.clear()
+        dimDitta = if (area != null && adminGuard.isAdmin()) sezioneAccessoService.dimensioneAzienda(area.id) else null
         selezioni.clear()
         areaCorrente = area
 
@@ -151,7 +158,7 @@ class DatasetFiltriView(
             bozza.campiCalendario().forEach { (componente, campo) ->
                 dimensioni[campo.occorrenzaId to campo.colonna]?.let { dimId ->
                     dimCalendario[componente] = dimId
-                    nomiCampi[dimId] = campo.nomeOrigine
+                    nomiCampi[dimId] = campo.etichetta
                 }
             }
 
@@ -213,11 +220,15 @@ class DatasetFiltriView(
         calendarioService.nomiMesi().forEach { contenitoreMesi.add(chip(it)) }
         (1..31).forEach { contenitoreGiorni.add(chip(it.toString())) }
 
-        return Div(
+        contenitoreDitte.removeAll()
+        val barra = Div(
             gruppo("ANNO", contenitoreAnni),
             gruppo("MESE", contenitoreMesi),
             gruppo("GIORNO", contenitoreGiorni)
         ).apply { className = "lbi-qv-cal" }
+        // La ditta si sceglie solo da admin: per gli altri è forzata dal section access.
+        if (dimDitta != null) barra.add(gruppo("DITTA", contenitoreDitte))
+        return barra
     }
 
     private fun chip(testo: String): Span = Span(testo).apply { className = "lbi-qv-chip lbi-qv-chip-escluso" }
@@ -272,12 +283,12 @@ class DatasetFiltriView(
         if (campi.isEmpty()) {
             corpo.add(Span("Nessun campo da filtrare").apply { className = "lbi-qv-empty" })
         } else {
-            campi.sortedBy { it.nomeOrigine.lowercase() }.forEach { campo ->
+            campi.sortedBy { it.etichetta.lowercase() }.forEach { campo ->
                 val dimId = dimensioni[occorrenzaId to campo.colonna] ?: return@forEach
                 if (dimId in dimCalendario.values) return@forEach  // sta nella barra in alto
-                val ui = CampoUi(area.id, dimId, campo.nomeOrigine)
+                val ui = CampoUi(area.id, dimId, campo.etichetta)
                 campiUi += ui
-                nomiCampi[dimId] = campo.nomeOrigine
+                nomiCampi[dimId] = campo.etichetta
                 corpo.add(ui.contenitore)
             }
         }
@@ -417,6 +428,7 @@ class DatasetFiltriView(
     /** Rilegge Anno, Mese e Giorno dai dati: ogni valore ha il suo stato (verde, bianco, grigio). */
     private fun aggiornaCalendario() {
         val area = areaCorrente ?: return
+        aggiornaDitte(area.id)
         if (dimCalendario.isEmpty()) return
         try {
             dimCalendario["anno"]?.let { dimId ->
@@ -441,6 +453,21 @@ class DatasetFiltriView(
             }
         } catch (e: Exception) {
             log.warn("Calcolo del calendario fallito per il dataset {}", area.id, e)
+        }
+    }
+
+    /** Le ditte come chip, con il nome dell'azienda e il colore del loro stato. Solo admin. */
+    private fun aggiornaDitte(areaId: UUID) {
+        val dimId = dimDitta ?: return
+        try {
+            val valori = filtriService.valori(areaId, selezioni, dimId, null, 0, MAX_CHIP)
+            contenitoreDitte.removeAll()
+            valori.sortedBy { it.etichetta.toIntOrNull() ?: Int.MAX_VALUE }.forEach { v ->
+                val nome = v.etichetta.toIntOrNull()?.let { com.lightningbi.lightning_engine.model.Azienda.fromCodice(it)?.label }
+                contenitoreDitte.add(chipValore(dimId, v).apply { text = nome ?: v.etichetta })
+            }
+        } catch (e: Exception) {
+            log.warn("Calcolo delle ditte fallito per il dataset {}", areaId, e)
         }
     }
 

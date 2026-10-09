@@ -78,7 +78,8 @@ data class CampoEffettivo(
      * della connessione. Lega le tabelle ma non è informativo per l'utente: Dataset, Analisi e
      * Grafici non lo mostrano; resta nel Modello dati e nel conteggio distinti.
      */
-    val tecnico: Boolean = false
+    val tecnico: Boolean = false,
+    val etichetta: String = nomeOrigine
 ) {
     val numerico: Boolean get() = ColumnProposal.isNumerico(tipo)
 }
@@ -168,7 +169,12 @@ data class DatasetBozza(
                     escluso = ecc?.escluso == true,
                     derivataDa = c.derivataDa,
                     componente = c.componente,
-                    tecnico = c.isChiave || o.prefissiTecnici.any { c.nome.startsWith(it, ignoreCase = true) }
+                    // Tecnico solo finché il campo ha il nome della sorgente: rinominato
+                    // (in tabella o nel dataset) è un campo informativo, anche se marcato chiave.
+                    tecnico = Naming.column(c.nomeCampo) == Naming.column(c.nome) && ecc?.nomeCampo == null && (
+                            c.isChiave || o.prefissiTecnici.any { c.nome.startsWith(it, ignoreCase = true) }
+                            ),
+                    etichetta = ecc?.nomeCampo ?: if (qualificata) "${o.alias} ${c.nomeCampo}" else c.nomeCampo
 
 
                 )

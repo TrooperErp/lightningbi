@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.jdbc.core.BatchPreparedStatementSetter
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
+import java.math.BigDecimal
 import java.sql.PreparedStatement
 
 /** Come si cancellano le righe di un'unità su ClickHouse. */
@@ -56,20 +57,33 @@ class LoaderService(
      * [primoRid]. Restituisce il primo numero ancora libero, da passare al
      * caricamento successivo.
      */
-    fun load(tabellaFisica: String, rows: List<Map<String, Any?>>, columns: List<String>, primoRid: Long): Long {
+    /**
+     * Append puro: aggiunge le righe del blocco senza toccare quelle esistenti.
+     * Righe già presenti verranno duplicate se la sorgente le riespone.
+     *
+     * Ogni riga riceve un numero di riga persistente (lbi_rid), a partire da
+     * [primoRid]. Restituisce il primo numero ancora libero, da passare al
+     * caricamento successivo.
+     *
+     * @param columns colonne da scrivere, nell'ordine: ognuna deve stare nel blocco
+     *   (tra gli id o tra le copie numeriche)
+     */
+    fun load(tabellaFisica: String, blocco: BloccoColonne, columns: List<String>, primoRid: Long, sorgente: Int): Long {
         val table = requireIdentifier(tabellaFisica, "table")
         val cols = columns.map { requireIdentifier(it, "column") }
         require(Naming.RID_COLUMN !in cols) { "La colonna '${Naming.RID_COLUMN}' non si carica: la assegna il loader" }
-        if (rows.isEmpty()) {
+        if (blocco.righe == 0) {
             log.info("Load su {}: nessuna riga da inserire", table)
             return primoRid
         }
-        val ultimo = primoRid + rows.size - 1
+        require(Naming.SRC_COLUMN !in cols) { "La colonna '${Naming.SRC_COLUMN}' non si carica: la assegna il loader" }
+        require(sorgente in 0..255) { "Numero di sorgente non valido: $sorgente" }
+        val ultimo = primoRid + blocco.righe - 1
         check(ultimo <= MAX_RID) {
             "La tabella $table supera i $MAX_RID numeri di riga: serve un ricarico completo"
         }
-        insertBatched(table, rows, cols, primoRid)
-        log.info("Load su {}: {} righe inserite", table, rows.size)
+        insertBatched(table, blocco, cols, primoRid, sorgente)
+        log.info("Load su {}: {} righe inserite", table, blocco.righe)
         return ultimo + 1
     }
 
@@ -110,7 +124,7 @@ class LoaderService(
      * Restituisce quante unità ha cancellato (le chiavi passate, anche se non
      * avevano righe).
      */
-    fun deleteUnits(tabellaFisica: String, colonneUnita: List<String>, chiaviId: List<List<Long>>): Int {
+    fun deleteUnits(tabellaFisica: String, colonneUnita: List<String>, chiaviId: List<List<Long>>, sorgente: Int): Int {
         val table = requireIdentifier(tabellaFisica, "table")
         val colonne = colonneUnita.map { requireIdentifier(Naming.column(it), "column") }
         require(colonne.isNotEmpty()) { "Servono le colonne dell'unità" }
@@ -127,6 +141,8 @@ class LoaderService(
                 "(${colonne.joinToString(", ")}) IN (" +
                         blocco.joinToString(",") { chiave -> "(" + chiave.joinToString(",") + ")" } + ")"
             }
+            // Solo le righe di questa sorgente: la stessa chiave può esistere in un altro database.
+            val condizioneSorgente = "($condizione) AND ${Naming.SRC_COLUMN} = $sorgente"
             val sql = when (deleteMode) {
                 DeleteMode.MUTATION -> "ALTER TABLE $table DELETE WHERE $condizione SETTINGS mutations_sync = 2"
                 DeleteMode.LIGHTWEIGHT -> "DELETE FROM $table WHERE $condizione"
@@ -141,43 +157,53 @@ class LoaderService(
      * Chiavi distinte (come id) delle unità presenti in una tabella, per
      * rilevare le unità sparite dalla sorgente. Nell'ordine di [colonneUnita].
      */
-    fun distinctKeyIds(tabellaFisica: String, colonneUnita: List<String>): Set<List<Long>> {
+    fun distinctKeyIds(tabellaFisica: String, colonneUnita: List<String>, sorgente: Int): Set<List<Long>> {
         val table = requireIdentifier(tabellaFisica, "table")
         val colonne = colonneUnita.map { requireIdentifier(Naming.column(it), "column") }
         require(colonne.isNotEmpty()) { "Servono le colonne dell'unità" }
 
         val risultato = HashSet<List<Long>>()
-        jdbcTemplate.query("SELECT DISTINCT ${colonne.joinToString(", ")} FROM $table") { rs ->
+        jdbcTemplate.query(
+            "SELECT DISTINCT ${colonne.joinToString(", ")} FROM $table WHERE ${Naming.SRC_COLUMN} = $sorgente"
+        ) { rs ->
             risultato.add(colonne.indices.map { rs.getLong(it + 1) })
         }
         return risultato
     }
 
-    private fun insertBatched(table: String, rows: List<Map<String, Any?>>, cols: List<String>, primoRid: Long) {
-        val tutte = cols + Naming.RID_COLUMN
+    private fun insertBatched(table: String, blocco: BloccoColonne, cols: List<String>, primoRid: Long, sorgente: Int) {
+        val tutte = cols + Naming.RID_COLUMN + Naming.SRC_COLUMN
         val placeholders = tutte.joinToString(",") { "?" }
         val sql = "INSERT INTO $table (${tutte.joinToString(",")}) VALUES ($placeholders)"
 
-        var base = primoRid
-        rows.chunked(batchSize).forEach { chunk ->
-            val inizio = base
-            // BatchPreparedStatementSetter invece della variante con
-            // List<Array<Any>>: quest'ultima non accetta valori nulli, e
-            // TransformService ne produce legittimamente (le copie numeriche
-            // dei valori mancanti).
-            //
-            // setObject accetta null e lo passa al driver, che darà semmai un
-            // errore esplicito sulla colonna invece di un ClassCastException.
+        // Per ogni colonna l'array da cui leggere, risolto una volta sola (niente ricerche per nome per riga).
+        val idCols = arrayOfNulls<LongArray>(cols.size)
+        val numCols = arrayOfNulls<Array<BigDecimal?>>(cols.size)
+        cols.forEachIndexed { k, col ->
+            val ids = blocco.ids[col]
+            if (ids != null) idCols[k] = ids
+            else numCols[k] = blocco.numeri[col] ?: error("La colonna '$col' non è nel blocco trasformato")
+        }
+
+        var inizio = 0
+        while (inizio < blocco.righe) {
+            val base = inizio
+            val dimensione = minOf(batchSize, blocco.righe - base)
             jdbcTemplate.batchUpdate(sql, object : BatchPreparedStatementSetter {
                 override fun setValues(ps: PreparedStatement, i: Int) {
-                    val row = chunk[i]
-                    cols.forEachIndexed { idx, col -> ps.setObject(idx + 1, row[col]) }
-                    ps.setObject(cols.size + 1, inizio + i)
+                    val r = base + i
+                    for (k in cols.indices) {
+                        val ids = idCols[k]
+                        // Le copie numeriche possono essere null (valore mancante): setObject lo accetta.
+                        if (ids != null) ps.setLong(k + 1, ids[r]) else ps.setObject(k + 1, numCols[k]!![r])
+                    }
+                    ps.setLong(cols.size + 1, primoRid + r)
+                    ps.setInt(cols.size + 2, sorgente)
                 }
 
-                override fun getBatchSize(): Int = chunk.size
+                override fun getBatchSize(): Int = dimensione
             })
-            base += chunk.size
+            inizio += dimensione
         }
     }
 

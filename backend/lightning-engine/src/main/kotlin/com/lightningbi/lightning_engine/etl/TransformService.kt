@@ -1,24 +1,79 @@
+// FILE: src/main/kotlin/com/lightningbi/lightning_engine/etl/TransformService.kt
 package com.lightningbi.lightning_engine.etl
 
 import com.lightningbi.lightning_engine.model.ImportedColumn
+import com.lightningbi.lightning_engine.repository.CampoTestoRepository
 import com.lightningbi.lightning_engine.service.CalendarioService
 import com.lightningbi.lightning_engine.service.ColumnProposal
 import com.lightningbi.lightning_engine.service.ComponenteCalendario
 import com.lightningbi.lightning_engine.service.Naming
 import com.lightningbi.lightning_engine.service.SymbolLookupService
+import jakarta.annotation.PreDestroy
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
-import com.lightningbi.lightning_engine.repository.CampoTestoRepository
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.ForkJoinPool
+import java.util.stream.IntStream
+
+/**
+ * Un blocco di righe pronto per ClickHouse, a COLONNE: per ogni colonna fisica
+ * un array con un valore per riga (stesso indice in tutte le colonne).
+ *
+ * - [ids]: colonne id (UInt32), nome fisico -> id per riga;
+ * - [numeri]: copie numeriche, nome `<colonna>__n` -> valore per riga (null = mancante).
+ */
+class BloccoColonne(
+    val righe: Int,
+    val ids: Map<String, LongArray>,
+    val numeri: Map<String, Array<BigDecimal?>>,
+    val scartate: Int
+) {
+    companion object {
+        val VUOTO = BloccoColonne(0, emptyMap(), emptyMap(), 0)
+    }
+}
+
+/**
+ * Regole di una sorgente applicate durante la trasformazione (SorgenteTabella).
+ *
+ * @param campoDitta nome fisico del campo azienda (lbi.azienda.campo)
+ * @param dittaForzata valore da scrivere nel campo azienda al posto di quello letto; null = si legge
+ * @param prefissoChiavi testo davanti ai valori delle colonne chiave; null = nessuno
+ * @param prefissiTecnici prefissi delle colonne chiave della connessione (es. "_KEY"):
+ *   oltre alle colonne marcate chiave, prendono il prefisso anche queste
+ */
+data class RegoleSorgente(
+    val campoDitta: String? = null,
+    val dittaForzata: Int? = null,
+    val prefissoChiavi: String? = null,
+    val prefissiTecnici: List<String> = emptyList()
+) {
+    companion object {
+        val NESSUNA = RegoleSorgente()
+    }
+}
 
 @Service
 class TransformService(
     private val symbolLookupService: SymbolLookupService,
     private val calendarioService: CalendarioService,
-    private val campoTestoRepository: CampoTestoRepository
+    private val campoTestoRepository: CampoTestoRepository,
+    /** Thread per la trasformazione (colonne in parallelo). */
+    @Value("\${lbi.sync.thread-trasformazione:8}") threadTrasformazione: Int
 ) {
     private val log = LoggerFactory.getLogger(TransformService::class.java)
+
+    /** Pool dedicato: non ruba i thread al pool comune né alle richieste delle pagine. */
+    private val pool = ForkJoinPool(threadTrasformazione.coerceAtLeast(1))
+
+    @PreDestroy
+    fun chiudi() {
+        pool.shutdown()
+    }
 
     companion object {
         const val NULL_VALUE_ID = 0L
@@ -27,6 +82,10 @@ class TransformService(
         // Decimal(38, 6): vedi SymbolTableService.createImportedTable.
         private const val SCALA_NUMERICA = 6
         private const val PRECISIONE_NUMERICA = 38
+
+        /** Segnali negli array grezzi: riga da scartare (chiave obbligatoria mancante, id assente). */
+        private const val SCARTA_CHIAVE = -1L
+        private const val SCARTA_ID = -2L
     }
 
     /** Una colonna da trasformare, con i nomi già calcolati una volta sola. */
@@ -44,47 +103,46 @@ class TransformService(
         val componente: ComponenteCalendario? = null
     )
 
+    /** Una colonna trasformata su tutte le righe del blocco, prima di togliere le scartate. */
+    private class ColonnaGrezza(
+        /** Id per riga, oppure SCARTA_CHIAVE / SCARTA_ID. */
+        val ids: LongArray,
+        /** Copia numerica per riga, se la colonna è numerica. */
+        val numeri: Array<BigDecimal?>?,
+        val fuoriScala: Long,
+        /** Un valore senza id, per il log (null se non ce ne sono). */
+        val esempioSenzaId: String?
+    )
+
     /**
-     * Trasforma le righe estratte in righe pronte per ClickHouse. La forma di
-     * ogni colonna non dipende dal dataset: lo stesso schema serve a tutti i
-     * dataset che usano la tabella.
+     * Trasforma le righe estratte in un blocco a colonne pronto per ClickHouse.
+     * La forma di ogni colonna non dipende dal dataset.
      *
      * - Ogni colonna diventa un id (UInt32) della symbol table del suo CAMPO,
-     *   che si chiama come la colonna fisica ed è condivisa da tutte le
-     *   tabelle con una colonna omonima (è ciò che fa combaciare gli id su
-     *   Fatti e Dimensione, e rende possibile l'associazione per nome).
+     *   condivisa da tutte le tabelle con una colonna omonima (è ciò che rende
+     *   possibile l'associazione per nome).
      * - Le colonne di tipo numerico (non chiave) hanno anche la copia
-     *   `<colonna>__n` (Naming.numericColumn), Decimal con null per il valore
-     *   mancante.
-     * - Un valore assente diventa [NULL_VALUE_ID] (le colonne sono UInt32 non
-     *   nullable). Fa eccezione la chiave quando [chiaveObbligatoria]: una riga
-     *   di Dimensione senza chiave non si collegherebbe a nulla e viene
-     *   scartata. Sui Fatti una chiave assente resta (id 0 = non definito).
-     * - I valori si NORMALIZZANO prima della symbol table: spazi tolti (le
-     *   colonne CHAR di SQL Server arrivano con il riempimento) e numeri in
-     *   forma canonica ("123", "123.00" e 123 sono lo stesso valore). Senza,
-     *   una chiave int sui Fatti e numeric su una Dimensione darebbe id
-     *   diversi e il collegamento resterebbe vuoto senza errori.
-     *
-     * - I campi DERIVATI da una data (calendario, come i campi derivati di Qlik:
-     *   anno, mese, giorno...) non esistono sulla sorgente: si calcolano dalla
-     *   colonna data di origine, con valori duali (testo e numero). Una data
-     *   assente dà id 0 (non definito).
+     *   `<colonna>__n` (Naming.numericColumn), Decimal con null per il valore mancante.
+     * - Un valore assente diventa [NULL_VALUE_ID]. Fa eccezione la chiave quando
+     *   [chiaveObbligatoria]: una riga di Dimensione senza chiave viene scartata.
+     * - I valori si NORMALIZZANO prima della symbol table: spazi tolti e numeri
+     *   in forma canonica ("123", "123.00" e 123 sono lo stesso valore).
+     * - I campi DERIVATI da una data (calendario) si calcolano dalla colonna data
+     *   di origine, con valori duali (testo e numero). Una data assente dà id 0.
      * - Le date si normalizzano in un testo canonico ordinabile (2026-10-01).
      *
-     * Le righe arrivano come le restituisce il connettore: le chiavi sono le
-     * etichette colonna in minuscolo. Le righe in uscita hanno i nomi FISICI.
-     * Le colonne che non sono tra quelle importate non vengono lette.
+     * IN PARALLELO per colonna, su un pool dedicato. L'ordine delle righe in
+     * uscita è quello in entrata, senza le scartate.
      *
-     * @return (righe valide, righe scartate)
+     * Le righe arrivano come le restituisce il connettore (etichette colonna in minuscolo).
      */
     fun transform(
         rows: List<Map<String, Any?>>,
         colonne: List<ImportedColumn>,
-        chiaveObbligatoria: Boolean
-    ): Pair<List<Map<String, Any?>>, List<Map<String, Any?>>> {
-
-        if (rows.isEmpty()) return emptyList<Map<String, Any?>>() to emptyList()
+        chiaveObbligatoria: Boolean,
+        regole: RegoleSorgente = RegoleSorgente.NESSUNA
+    ): BloccoColonne {
+        if (rows.isEmpty()) return BloccoColonne.VUOTO
 
         val campi = colonne.map { c ->
             Campo(
@@ -112,90 +170,136 @@ class TransformService(
                     "Colonne trovate: ${disponibili.joinToString(", ")}"
         }
 
-        // Per i campi derivati: il numero che accompagna ogni testo (valori duali).
-        val numeriDerivati: Array<MutableMap<String, BigDecimal>?> = arrayOfNulls(campi.size)
+        val n = rows.size
 
-        // Valori normalizzati, calcolati una volta sola: [colonna][riga].
-        val testi: Array<Array<String?>> = Array(campi.size) { j ->
-            val campo = campi[j]
-            val componente = campo.componente
-            if (componente != null) {
-                val padre = campo.derivataDa ?: error("Campo derivato senza colonna di origine: ${campo.fisica}")
-                val dualiDelCampo = HashMap<String, BigDecimal>()
-                numeriDerivati[j] = dualiDelCampo
-                Array(rows.size) { i ->
-                    val data = calendarioService.daValore(rows[i][padre])
-                    if (data == null) null
-                    else {
-                        val derivato = calendarioService.derivato(componente, data)
-                        dualiDelCampo[derivato.testo] = derivato.numero
-                        derivato.testo
-                    }
-                }
-            } else {
-                val origine = campo.origine
-                Array(rows.size) { i -> normalizza(rows[i][origine]) }
-            }
-        }
-
-        // Una symbol table per campo, un solo giro di lookup per colonna.
+        // ---- 1. colonne in parallelo: normalizzazione, symbol table, array grezzi ----
         val campiTesto = campoTestoRepository.tutti()
-        val idMaps: List<Map<String, Long>> = campi.indices.map { j ->
-            val valori = testi[j].asSequence().filterNotNull().toSet()
-            symbolLookupService.getOrCreateIds(
-                campi[j].fisica, valori, numeriDerivati[j] ?: emptyMap(), campi[j].fisica in campiTesto
-            )
+        val inizioColonne = System.nanoTime()
+        val grezze: List<ColonnaGrezza> = inParallelo(campi.size) { j ->
+            colonnaGrezza(campi[j], rows, campi[j].fisica in campiTesto, chiaveObbligatoria, regole)
         }
+        val msColonne = (System.nanoTime() - inizioColonne) / 1_000_000
 
-        val valid = ArrayList<Map<String, Any?>>(rows.size)
-        val errors = ArrayList<Map<String, Any?>>()
-        var fuoriScala = 0L
-
-        for (i in rows.indices) {
-            val out = HashMap<String, Any?>(campi.size * 2)
-            var rowValid = true
-
-            for (j in campi.indices) {
-                val campo = campi[j]
-                val testo = testi[j][i]
-
-                if (testo == null) {
-                    if (campo.isChiave && chiaveObbligatoria) {
-                        rowValid = false
-                        break
-                    }
-                    // Mai null: la colonna è UInt32 NOT NULL.
-                    out[campo.fisica] = NULL_VALUE_ID
-                } else {
-                    val id = idMaps[j][testo]
-                    if (id == null) {
-                        // Il lookup avrebbe dovuto creare l'id: se manca è un
-                        // problema della symbol table, non del dato. Va
-                        // scartata la riga invece di scriverci uno zero.
-                        log.warn("Valore '{}' senza id nel campo '{}': riga scartata", testo, campo.fisica)
-                        rowValid = false
-                        break
-                    }
-                    out[campo.fisica] = id
-                }
-
-                if (campo.numerica) {
-                    val numero = toNumero(rows[i][campo.origine])
-                    if (numero == null && testo != null) fuoriScala++
-                    out[Naming.numericColumn(campo.fisica)] = numero
-                }
+        // ---- 2. righe valide ----
+        val inizioRighe = System.nanoTime()
+        val valida = BooleanArray(n) { true }
+        grezze.forEachIndexed { j, g ->
+            g.esempioSenzaId?.let {
+                log.warn("Valore '{}' senza id nel campo '{}': righe scartate", it, campi[j].fisica)
             }
-
-            if (rowValid) valid.add(out) else errors.add(rows[i])
+            val a = g.ids
+            for (i in 0 until n) if (a[i] < 0) valida[i] = false
         }
+        var nValide = 0
+        for (i in 0 until n) if (valida[i]) nValide++
+        val indici = IntArray(nValide)
+        var k = 0
+        for (i in 0 until n) if (valida[i]) indici[k++] = i
 
+        // ---- 3. compattazione in parallelo: solo le righe valide ----
+        val tutte = nValide == n
+        val compatte: List<Pair<LongArray, Array<BigDecimal?>?>> = inParallelo(campi.size) { j ->
+            val g = grezze[j]
+            if (tutte) g.ids to g.numeri
+            else LongArray(nValide) { g.ids[indici[it]] } to g.numeri?.let { num -> Array(nValide) { num[indici[it]] } }
+        }
+        val ids = LinkedHashMap<String, LongArray>(campi.size)
+        val numeri = LinkedHashMap<String, Array<BigDecimal?>>()
+        campi.forEachIndexed { j, campo ->
+            ids[campo.fisica] = compatte[j].first
+            compatte[j].second?.let { numeri[Naming.numericColumn(campo.fisica)] = it }
+        }
+        val msRighe = (System.nanoTime() - inizioRighe) / 1_000_000
+
+        log.info("[sync] colonne (normalizzazione e simboli): {} ms su {} colonne; righe: {} ms", msColonne, campi.size, msRighe)
+        val fuoriScala = grezze.sumOf { it.fuoriScala }
         if (fuoriScala > 0) {
             log.warn(
                 "{} valori di colonne numeriche non rappresentabili come Decimal({},{}): copia numerica nulla, l'id resta",
                 fuoriScala, PRECISIONE_NUMERICA, SCALA_NUMERICA
             )
         }
-        return valid to errors
+        return BloccoColonne(nValide, ids, numeri, n - nValide)
+    }
+
+    /** Normalizza la colonna, ottiene gli id (creandoli se mancano) e costruisce gli array per riga. */
+    private fun colonnaGrezza(
+        campo: Campo,
+        rows: List<Map<String, Any?>>,
+        testo: Boolean,
+        chiaveObbligatoria: Boolean,
+        regole: RegoleSorgente
+    ): ColonnaGrezza {
+        val componente = campo.componente
+        val numeriDerivati = HashMap<String, BigDecimal>()
+        val testi: Array<String?> = if (componente != null) {
+            val padre = campo.derivataDa ?: error("Campo derivato senza colonna di origine: ${campo.fisica}")
+            Array(rows.size) { i ->
+                val data = calendarioService.daValore(rows[i][padre])
+                if (data == null) null
+                else {
+                    val derivato = calendarioService.derivato(componente, data)
+                    numeriDerivati[derivato.testo] = derivato.numero
+                    derivato.testo
+                }
+            }
+        } else {
+            val origine = campo.origine
+            Array(rows.size) { i -> normalizza(rows[i][origine]) }
+        }
+
+        // Regole della sorgente: ditta forzata sul campo azienda, prefisso sulle colonne chiave.
+        val forzata = regole.dittaForzata?.takeIf { campo.componente == null && campo.fisica == regole.campoDitta }
+        if (forzata != null) {
+            val v = forzata.toString()
+            for (i in testi.indices) testi[i] = v
+        }
+        val prefisso = regole.prefissoChiavi
+        if (prefisso != null && campo.componente == null &&
+            (campo.isChiave || regole.prefissiTecnici.any { campo.origine.startsWith(it.lowercase()) })
+        ) {
+            for (i in testi.indices) testi[i]?.let { testi[i] = prefisso + it }
+        }
+
+        val valori = testi.asSequence().filterNotNull().toSet()
+        val mappa = symbolLookupService.getOrCreateIds(campo.fisica, valori, numeriDerivati, testo)
+
+        var esempioSenzaId: String? = null
+        val ids = LongArray(rows.size) { i ->
+            val t = testi[i]
+            when {
+                t == null -> if (campo.isChiave && chiaveObbligatoria) SCARTA_CHIAVE else NULL_VALUE_ID
+                else -> mappa[t] ?: run {
+                    // Il lookup avrebbe dovuto creare l'id: problema della symbol table, non del dato.
+                    if (esempioSenzaId == null) esempioSenzaId = t
+                    SCARTA_ID
+                }
+            }
+        }
+
+        var fuoriScala = 0L
+        val numeri: Array<BigDecimal?>? = if (!campo.numerica) null else {
+            val origine = campo.origine
+            Array(rows.size) { i ->
+                val numero = if (forzata != null) toNumero(forzata) else toNumero(rows[i][origine])
+                if (numero == null && testi[i] != null) fuoriScala++
+                numero
+            }
+        }
+        return ColonnaGrezza(ids, numeri, fuoriScala, esempioSenzaId)
+    }
+
+    /** Esegue f(0..n-1) sul pool dedicato e restituisce i risultati nell'ordine. Le eccezioni escono come sono. */
+    private fun <T> inParallelo(n: Int, f: (Int) -> T): List<T> {
+        if (n == 0) return emptyList()
+        if (n == 1) return listOf(f(0))
+        try {
+            return pool.submit(Callable {
+                IntStream.range(0, n).parallel().mapToObj { f(it) }.toList()
+            }).get()
+        } catch (e: ExecutionException) {
+            throw e.cause ?: e
+        }
     }
 
     /**

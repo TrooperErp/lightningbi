@@ -66,14 +66,14 @@ class BitmapIndexBuilder(
         jdbcTemplate.execute("ALTER TABLE $stagingTable DROP PARTITION '$partition'")
 
         val campi = bozza.campi().filter { !it.escluso }
+        // Solo le dimensioni visibili: i collegamenti tra tabelle si attraversano dalle colonne (GrafoDataset).
         val nomiDimensione = campi
-            .filter { RiferimentoCampo(it.occorrenzaId, it.colonna) in bozza.dimensioni }
+            .filter { !it.tecnico && RiferimentoCampo(it.occorrenzaId, it.colonna) in bozza.dimensioni }
             .map { it.nomeCampo }
             .toSet()
         val associazioni = bozza.associazioniAttive()
 
-        val indicizzati = nomiDimensione + associazioni.map { it.nomeCampo }
-        val composte = bozza.chiaviComposte()
+        val indicizzati = nomiDimensione
 
         associazioni.filter { it.perValore }.forEach {
             log.warn(
@@ -94,21 +94,11 @@ class BitmapIndexBuilder(
                 "La tabella '${tabella.nomeLogico}' non ha i numeri di riga: serve un \"Ricarico completo\""
             }
 
-            val voci = suoi.map { c ->
+            val coppie = suoi.joinToString(", ") { c ->
                 val nome = Naming.requirePhysical(c.nomeCampo, "campo")
                 val colonna = Naming.requirePhysical(c.colonna, "colonna")
                 "('$nome', toUInt64($colonna))"
-            }.toMutableList()
-            // Chiavi composte che passano da questa tabella: voce con l'hash a 64 bit
-            // della combinazione degli id (stesso ordine dei campi in tutte le tabelle).
-            composte.filter { occ.id in it.occorrenze }.forEach { chiave ->
-                val colonne = chiave.campi.map { nomeCampo ->
-                    Naming.requirePhysical(suoi.first { it.nomeCampo == nomeCampo }.colonna, "colonna")
-                }
-                val nome = Naming.requirePhysical(chiave.nome, "campo")
-                voci += "('$nome', cityHash64(${colonne.joinToString(", ")}))"
             }
-            val coppie = voci.joinToString(", ")
 
             jdbcTemplate.execute(
                 """

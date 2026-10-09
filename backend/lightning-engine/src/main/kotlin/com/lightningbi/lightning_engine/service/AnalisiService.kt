@@ -55,8 +55,32 @@ class AnalisiService(
     private val aggregateService: AggregateService,
     private val registryRepository: RegistryRepository,
     private val modelloDatasetCache: ModelloDatasetCache,
-    private val versionService: VersionService
+    private val versionService: VersionService,
+    private val sezioneAccessoService: SezioneAccessoService,
+    /** Thread per le query di un'analisi (principale, livelli, totale) in parallelo. */
+    @org.springframework.beans.factory.annotation.Value("\${lbi.analisi.thread:6}") threadAnalisi: Int
 ) {
+
+    /** Pool dedicato alle query delle analisi: thread daemon, così non trattengono lo spegnimento. */
+    private val pool = java.util.concurrent.Executors.newFixedThreadPool(threadAnalisi.coerceAtLeast(1)) { r ->
+        Thread(r).apply { isDaemon = true; name = "analisi-${hashCode()}" }
+    }
+
+    @jakarta.annotation.PreDestroy
+    fun chiudi() {
+        pool.shutdown()
+    }
+
+    /** Esegue [blocco] sul pool; l'eccezione esce com'era (non avvolta), così la pagina la riconosce. */
+    private fun <T> inParallelo(blocco: () -> T): java.util.concurrent.CompletableFuture<T> =
+        java.util.concurrent.CompletableFuture.supplyAsync(blocco, pool)
+
+    private fun <T> attendi(f: java.util.concurrent.CompletableFuture<T>): T =
+        try {
+            f.join()
+        } catch (e: java.util.concurrent.CompletionException) {
+            throw e.cause ?: e
+        }
 
     // ================= Analisi =================
 
@@ -110,7 +134,7 @@ class AnalisiService(
             val campo = campi[tabellaId to d.colonnaFisica] ?: return@mapNotNull null
             // Campi tecnici (chiavi, prefissi della connessione): nascosti, non cambiati.
             if (campo.tecnico) return@mapNotNull null
-            DimensioneAnalisi(d.dimensioneId, campo.nomeOrigine, alias[tabellaId].orEmpty())
+            DimensioneAnalisi(d.dimensioneId, campo.etichetta, alias[tabellaId].orEmpty())
         }.sortedWith(compareBy({ it.tabella.lowercase() }, { it.nome.lowercase() }))
     }
     /** I campi dei Fatti su cui si può scrivere una misura. */
@@ -120,7 +144,7 @@ class AnalisiService(
         return modello.bozza.campi()
             .filter { !it.escluso && it.occorrenzaId in fatti }
             // Una chiave non si somma né si media; resta disponibile per il conteggio di distinti.
-            .map { CampoMisurabile(it.occorrenzaId, fatti.getValue(it.occorrenzaId), it.colonna, it.nomeOrigine, it.numerico && !it.tecnico) }
+            .map { CampoMisurabile(it.occorrenzaId, fatti.getValue(it.occorrenzaId), it.colonna, it.etichetta, it.numerico && !it.tecnico) }
             .sortedWith(compareBy({ it.tabella.lowercase() }, { it.nome.lowercase() }))
     }
 
@@ -210,7 +234,7 @@ class AnalisiService(
             TipoAggregazione.SUM, TipoAggregazione.AVG, TipoAggregazione.MIN, TipoAggregazione.MAX
         )
         require(!soloNumerici || campo.numerico) {
-            "${etichetta(tipo)} richiede un campo numerico: '${campo.nomeOrigine}' non lo è"
+            "${etichetta(tipo)} richiede un campo numerico: '${campo.etichetta}' non lo è"
         }
         return MisuraAnalisi(id, vista.id, pulito, tipo, areaTabellaId, colonna)
     }
@@ -262,15 +286,29 @@ class AnalisiService(
             resolveLabels = true,
             showVariationPercent = false
         )
-        val risultato = aggregateService.getAggregates(richiesta)
+        // Vincolo e versioni una volta sola, nel thread della pagina (la sessione dell'utente sta qui).
+        val vincolo = sezioneAccessoService.vincolo(vista.areaId)
+        val versioni = versionService.snapshotVersions(vista.areaId)
 
-        // Totali dei livelli intermedi: per ogni livello k (le prime k dimensioni delle Righe)
-        // una query, e il valore di ogni nodo si prende da lì.
-        val totali = mutableMapOf<List<Long>, Map<String, BigDecimal>>()
-        for (livello in 1 until vista.pivotRows.size) {
+        // Tutte le query partono insieme: principale, un livello per ogni dimensione intermedia
+        // delle Righe, totale generale. Ognuna è indipendente dalle altre.
+        val principale = inParallelo { aggregateService.getAggregates(richiesta, versioni, vincolo) }
+        val livelli = (1 until vista.pivotRows.size).map { livello ->
             val dimensioniLivello = vista.pivotRows.take(livello)
-            val perLivello = aggregateService.getAggregates(richiesta.copy(groupBy = dimensioniLivello, limit = null))
-            perLivello.rows.forEach { riga ->
+            dimensioniLivello to inParallelo {
+                aggregateService.getAggregates(richiesta.copy(groupBy = dimensioniLivello, limit = null), versioni, vincolo)
+            }
+        }
+        val totale = inParallelo {
+            aggregateService.getAggregates(richiesta.copy(groupBy = emptyList(), limit = null), versioni, vincolo)
+        }
+
+        val risultato = attendi(principale)
+
+        // Totali dei livelli intermedi: il valore di ogni nodo si prende dalla query del suo livello.
+        val totali = mutableMapOf<List<Long>, Map<String, BigDecimal>>()
+        livelli.forEach { (dimensioniLivello, futuro) ->
+            attendi(futuro).rows.forEach { riga ->
                 val percorso = dimensioniLivello.map { riga.groupKeys[it] ?: return@forEach }
                 totali[percorso] = riga.values
             }
@@ -281,9 +319,8 @@ class AnalisiService(
         )
 
         // Totale generale: nessuna dimensione nelle Righe, le stesse Colonne.
-        val totaleGenerale = if (gerarchia.isEmpty()) null else
-            aggregateService.getAggregates(richiesta.copy(groupBy = emptyList(), limit = null)).rows.firstOrNull()
-        val conTotale = if (totaleGenerale == null) gerarchia
+        val totaleGenerale = attendi(totale).rows.firstOrNull()
+        val conTotale = if (gerarchia.isEmpty() || totaleGenerale == null) gerarchia
         else listOf(PivotEngine.PivotNode(dimId = null, valueId = null, label = "Totale", values = totaleGenerale.values)) + gerarchia
 
         return RisultatoAnalisi(risultato, conTotale, metriche)

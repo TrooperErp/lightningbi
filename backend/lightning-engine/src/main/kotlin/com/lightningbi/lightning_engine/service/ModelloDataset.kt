@@ -52,7 +52,8 @@ class ModelloDatasetCache(
                 ?: error("Tabella importata ${o.importedTableId} non trovata")
             o.id to tabella.tabellaFisica
         }
-        val modello = ModelloDataset(areaId, bozza, GrafoDataset.da(areaId, bozza), fisiche)
+        // ModelloDataset.kt — ModelloDatasetCache.get
+        val modello = ModelloDataset(areaId, bozza, GrafoDataset.da(areaId, bozza, fisiche), fisiche)
         cache[areaId] = registryVersion to modello
         return modello
     }

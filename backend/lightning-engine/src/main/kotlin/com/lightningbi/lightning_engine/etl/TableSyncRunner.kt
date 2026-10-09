@@ -1,3 +1,4 @@
+// FILE: src/main/kotlin/com/lightningbi/lightning_engine/etl/TableSyncRunner.kt
 package com.lightningbi.lightning_engine.etl
 
 import com.lightningbi.lightning_engine.connector.ConnectionOrchestrator
@@ -7,9 +8,12 @@ import com.lightningbi.lightning_engine.model.ImportedColumn
 import com.lightningbi.lightning_engine.model.ImportedTable
 import com.lightningbi.lightning_engine.model.ModalitaSync
 import com.lightningbi.lightning_engine.model.RuoloTabella
+import com.lightningbi.lightning_engine.model.SorgenteTabella
 import com.lightningbi.lightning_engine.model.TableSync
+import com.lightningbi.lightning_engine.repository.CampoTestoRepository
 import com.lightningbi.lightning_engine.repository.EtlRunRepository
 import com.lightningbi.lightning_engine.repository.ImportedTableRepository
+import com.lightningbi.lightning_engine.repository.SorgenteTabellaRepository
 import com.lightningbi.lightning_engine.repository.TableSyncRepository
 import com.lightningbi.lightning_engine.service.ColumnProposal
 import com.lightningbi.lightning_engine.service.EmailService
@@ -25,7 +29,9 @@ import org.springframework.stereotype.Service
 import java.time.Duration
 import java.time.LocalDateTime
 import java.util.UUID
-import com.lightningbi.lightning_engine.repository.CampoTestoRepository
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /** Cosa ha fatto una sincronizzazione. */
 data class EsitoSync(
@@ -38,34 +44,44 @@ data class EsitoSync(
 )
 
 /**
- * Sincronizza UNA tabella importata dalla sua sorgente: completa (si ricrea
- * la tabella e si ricarica tutto) oppure incrementale (si sostituiscono solo
- * le unità cambiate). Non conosce i dataset: chi la chiama si occupa di
+ * Sincronizza UNA tabella importata dalle sue sorgenti: completa (si ricrea la
+ * tabella e si ricarica tutto) oppure incrementale (si sostituiscono solo le
+ * unità cambiate). Non conosce i dataset: chi la chiama si occupa di
  * ricostruire gli indici di quelli che usano la tabella.
  *
+ * SORGENTI: la connessione della tabella (numero 0) più quelle aggiuntive
+ * ([SorgenteTabella], numeri 1..255), accodate nella stessa tabella come il
+ * CONCATENATE di Qlik. Ogni riga porta il numero della sua sorgente nella
+ * colonna nascosta lbi_src. Per ogni sorgente aggiuntiva si applicano le sue
+ * regole ([RegoleSorgente]): ditta forzata sul campo azienda e prefisso sulle
+ * colonne chiave, così le chiavi di database diversi non collidono.
+ *
  * NOMI: verso la SORGENTE si usa il nome della colonna ([ImportedColumn.nome]);
- * verso CLICKHOUSE (colonne fisiche, symbol table, cancellazioni) il nome del
- * campo ([ImportedColumn.nomeCampo]). Le colonne dell'unità, che l'admin sceglie
- * tra i nomi delle colonne, si traducono con [campoDi].
+ * verso CLICKHOUSE il nome del campo ([ImportedColumn.nomeCampo]). Le colonne
+ * dell'unità, che l'admin sceglie tra i nomi delle colonne, si traducono con [campoDi].
  *
- * Schemi, come in Qlik: le unità cambiate si riconoscono con una query scritta
- * dall'admin (datastamp), le righe vecchie di una unità si tolgono per chiave
- * e si reinseriscono quelle rilette, le unità sparite dalla sorgente si
- * tolgono confrontando le chiavi. I dati che dipendono da altri documenti
- * (per esempio il residuo di un ordine) NON li risolve il motore: si
- * risolvono con un datastamp completo nella vista sulla sorgente o con la
- * query delle unità da rileggere sempre.
+ * COMPLETA: pipeline a tre stadi (lettura -> trasformazione -> inserimento) su
+ * una tabella ombra, scambiata con quella vera a fine carico.
  *
- * ClickHouse non ha transazioni: se una sincronizzazione incrementale si
- * ferma a metà, alcune unità possono essere cancellate e non ancora
- * reinserite. L'ora dell'ultima sincronizzazione NON avanza, quindi al giro
- * dopo le stesse unità risultano di nuovo cambiate e vengono rilette.
+ * INCREMENTALE, per sorgente: le unità cambiate si riconoscono con una query
+ * scritta dall'admin (datastamp), le righe vecchie si tolgono per chiave (solo
+ * quelle della sorgente) e si reinseriscono quelle rilette; le unità sparite si
+ * tolgono confrontando le chiavi. Le query si eseguono su ogni sorgente: il
+ * database di ogni sorgente deve avere le stesse viste.
+ *
+ * ClickHouse non ha transazioni: se una incrementale si ferma a metà, l'ora
+ * dell'ultima sincronizzazione NON avanza e al giro dopo le stesse unità
+ * risultano di nuovo cambiate.
+ *
+ * Limite: l'ora di riferimento è unica per tabella (la più vecchia tra quelle
+ * delle sorgenti). Va bene finché gli orologi dei database sono allineati.
  */
 @Service
 class TableSyncRunner(
     private val importedTableRepository: ImportedTableRepository,
     private val tableSyncRepository: TableSyncRepository,
     private val etlRunRepository: EtlRunRepository,
+    private val sorgenteTabellaRepository: SorgenteTabellaRepository,
     private val connectionOrchestrator: ConnectionOrchestrator,
     private val transformService: TransformService,
     private val loaderService: LoaderService,
@@ -79,9 +95,13 @@ class TableSyncRunner(
     @Value("\${lbi.sync.keys-max-rows:200000}") private val keysMaxRows: Int,
     @Value("\${lbi.sync.keys-timeout-seconds:600}") private val keysTimeoutSeconds: Int,
     /** Se le cancellazioni rilevate superano questa percentuale delle unità, la sincronizzazione si ferma. */
-    @Value("\${lbi.sync.max-delete-percent:50}") private val maxDeletePercent: Int
+    @Value("\${lbi.sync.max-delete-percent:50}") private val maxDeletePercent: Int,
+    /** Nome del campo azienda: le sorgenti con ditta forzata lo sovrascrivono. */
+    @Value("\${lbi.azienda.campo:CODICE_DITTA}") campoAzienda: String
 ) {
     private val log = LoggerFactory.getLogger(TableSyncRunner::class.java)
+
+    private val campoDitta = Naming.column(campoAzienda)
 
     /** Righe per blocco: la memoria resta piatta qualunque sia la dimensione della tabella. */
     private val chunkSize = 50_000
@@ -108,6 +128,9 @@ class TableSyncRunner(
         end
         """.trimIndent(), Long::class.java
     )
+
+    /** Una sorgente da cui leggere: numero (lbi_src), connessione, regole e nome per i log. */
+    private class Sorgente(val numero: Int, val connectionId: UUID, val regole: RegoleSorgente, val nome: String)
 
     // ================= Punto d'ingresso =================
 
@@ -197,11 +220,10 @@ class TableSyncRunner(
         progresso: (String) -> Unit,
         rinnova: () -> Unit
     ): EsitoSync {
-        val connectionId = tabella.connectionId
-            ?: throw IllegalStateException("La tabella '${tabella.nomeLogico}' non ha una connessione")
         val nomeOrigine = tabella.nomeOrigine
             ?: throw IllegalStateException("La tabella '${tabella.nomeLogico}' non ha il nome di origine")
         val schema = tabella.schemaOrigine
+        val sorgenti = sorgentiDi(tabella)
 
         // Calendario: per le colonne data di tabelle importate prima di questo passo (o con
         // componenti nuovi in configurazione) crea i campi derivati mancanti.
@@ -211,13 +233,12 @@ class TableSyncRunner(
         require(colonne.isNotEmpty()) { "La tabella '${tabella.nomeLogico}' non ha colonne importate" }
         val config = tableSyncRepository.findByTable(tabella.id) ?: TableSync(importedTableId = tabella.id)
 
-        progresso("${tabella.nomeLogico}: controllo delle colonne sulla sorgente")
-        controllaColonne(connectionId, schema, nomeOrigine, tabella, colonne)
+        progresso("${tabella.nomeLogico}: controllo delle colonne sulle sorgenti")
+        sorgenti.forEach { controllaColonne(it, schema, nomeOrigine, tabella, colonne) }
 
-        // L'ora di riferimento è quella della SORGENTE, presa prima di leggere
-        // qualsiasi cosa: una modifica fatta mentre si sincronizza avrà un
-        // datastamp posteriore e al giro dopo risulterà cambiata.
-        val inizio = connectionOrchestrator.sourceNow(connectionId)
+        // L'ora di riferimento è quella delle SORGENTI, presa prima di leggere qualsiasi
+        // cosa; con più sorgenti la più vecchia, per non saltare modifiche.
+        val inizio = sorgenti.minOf { connectionOrchestrator.sourceNow(it.connectionId) }
 
         // Lato ClickHouse si usa il NOME CAMPO: colonne fisiche, copie numeriche, symbol table.
         val fisiche = colonne.map { Naming.column(it.nomeCampo) }
@@ -234,17 +255,51 @@ class TableSyncRunner(
         val completa = forzaCompleta ||
                 config.modalita == ModalitaSync.COMPLETA ||
                 config.ultimaSyncInizio == null ||
-                symbolTableService.colonneDi(tabella.tabellaFisica) != (colonneCaricate + Naming.RID_COLUMN).toSet()
+                symbolTableService.colonneDi(tabella.tabellaFisica) !=
+                (colonneCaricate + Naming.RID_COLUMN + Naming.SRC_COLUMN).toSet()
 
         val esito = if (completa) {
-            sincronizzaCompleta(tabella, colonne, numeriche, ordinamento, colonneCaricate, connectionId, schema, nomeOrigine, progresso, rinnova)
+            sincronizzaCompleta(tabella, colonne, numeriche, ordinamento, colonneCaricate, sorgenti, schema, nomeOrigine, progresso, rinnova)
         } else {
-            sincronizzaIncrementale(tabella, colonne, config, colonneCaricate, connectionId, schema, nomeOrigine, progresso, rinnova)
+            var totale = EsitoSync(ModalitaSync.INCREMENTALE, 0, 0, 0, 0)
+            sorgenti.forEach { s ->
+                val parziale = sincronizzaIncrementale(tabella, colonne, config, colonneCaricate, s, schema, nomeOrigine, progresso, rinnova)
+                totale = totale.copy(
+                    righeCaricate = totale.righeCaricate + parziale.righeCaricate,
+                    righeScartate = totale.righeScartate + parziale.righeScartate,
+                    unitaSostituite = totale.unitaSostituite + parziale.unitaSostituite,
+                    unitaEliminate = totale.unitaEliminate + parziale.unitaEliminate
+                )
+            }
+            totale
         }
 
         // Anche dopo una completa: così la prima incrementale può partire da qui.
         tableSyncRepository.updateUltimaSync(tabella.id, inizio)
         return esito
+    }
+
+    /** La sorgente principale (la connessione della tabella) e quelle aggiuntive, in ordine di numero. */
+    private fun sorgentiDi(tabella: ImportedTable): List<Sorgente> {
+        val principale = tabella.connectionId
+            ?: throw IllegalStateException("La tabella '${tabella.nomeLogico}' non ha una connessione")
+        val nomePrincipale = connectionOrchestrator.findById(principale)?.nome ?: "principale"
+        val aggiuntive = sorgenteTabellaRepository.findByTable(tabella.id).map { s ->
+            val connessione = connectionOrchestrator.findById(s.connectionId)
+                ?: throw IllegalStateException("Connessione della sorgente ${s.ordine} di '${tabella.nomeLogico}' non trovata")
+            Sorgente(
+                numero = s.ordine,
+                connectionId = s.connectionId,
+                regole = RegoleSorgente(
+                    campoDitta = campoDitta,
+                    dittaForzata = s.dittaForzata,
+                    prefissoChiavi = s.prefissoChiavi,
+                    prefissiTecnici = ColumnProposal.lista(connessione.parametri, ColumnProposal.PREFISSI_COLONNA_CHIAVE)
+                ),
+                nome = connessione.nome
+            )
+        }
+        return listOf(Sorgente(SorgenteTabella.PRINCIPALE, principale, RegoleSorgente.NESSUNA, nomePrincipale)) + aggiuntive
     }
 
     /**
@@ -254,27 +309,43 @@ class TableSyncRunner(
     private fun campoDi(colonne: List<ImportedColumn>, nomeColonna: String): String? =
         colonne.firstOrNull { Naming.column(it.nome) == Naming.column(nomeColonna) }?.nomeCampo
 
-    /** Ogni colonna importata deve esistere ancora sulla sorgente. Le nuove non si segnalano (le ignorate non sono registrate). */
+    /** Ogni colonna importata deve esistere ancora sulla sorgente. Le nuove non si segnalano. */
     private fun controllaColonne(
-        connectionId: UUID,
+        sorgente: Sorgente,
         schema: String?,
         nomeOrigine: String,
         tabella: ImportedTable,
         colonne: List<ImportedColumn>
     ) {
         val reali = try {
-            connectionOrchestrator.listColumns(connectionId, schema, nomeOrigine).map { it.name.lowercase() }.toSet()
+            connectionOrchestrator.listColumns(sorgente.connectionId, schema, nomeOrigine).map { it.name.lowercase() }.toSet()
         } catch (e: Exception) {
             // L'estrazione darà l'errore vero.
-            log.warn("Impossibile leggere le colonne della sorgente per '{}': proseguo", tabella.nomeLogico, e)
+            log.warn("Impossibile leggere le colonne di '{}' sulla sorgente '{}': proseguo", tabella.nomeLogico, sorgente.nome, e)
             return
         }
         // I campi derivati (calendario) non esistono sulla sorgente: li calcola la sincronizzazione.
         val mancanti = colonne.filter { !it.derivata }.map { it.nome }.filter { it.lowercase() !in reali }
         check(mancanti.isEmpty()) {
-            "Nella sorgente non ci sono più le colonne importate di '${tabella.nomeLogico}': ${mancanti.joinToString(", ")}. " +
-                    "La sincronizzazione è bloccata per evitare un fallimento a metà."
+            "Sulla sorgente '${sorgente.nome}' non ci sono più le colonne importate di '${tabella.nomeLogico}': " +
+                    "${mancanti.joinToString(", ")}. La sincronizzazione è bloccata per evitare un fallimento a metà."
         }
+    }
+
+    /**
+     * Il valore (già normalizzato) come è scritto su ClickHouse per quella sorgente: ditta forzata
+     * sul campo azienda, prefisso sulle colonne chiave. Deve seguire le stesse regole di
+     * TransformService.colonnaGrezza.
+     */
+    private fun regolato(colonna: ImportedColumn, testo: String, regole: RegoleSorgente): String {
+        if (colonna.derivata) return testo
+        val forzata = regole.dittaForzata
+        if (forzata != null && Naming.column(colonna.nomeCampo) == regole.campoDitta) return forzata.toString()
+        val prefisso = regole.prefissoChiavi
+        if (prefisso != null &&
+            (colonna.isChiave || regole.prefissiTecnici.any { colonna.nome.lowercase().startsWith(it.lowercase()) })
+        ) return prefisso + testo
+        return testo
     }
 
     // ================= Completa =================
@@ -285,7 +356,7 @@ class TableSyncRunner(
         numeriche: List<String>,
         ordinamento: List<String>,
         colonneCaricate: List<String>,
-        connectionId: UUID,
+        sorgenti: List<Sorgente>,
         schema: String?,
         nomeOrigine: String,
         progresso: (String) -> Unit,
@@ -303,28 +374,105 @@ class TableSyncRunner(
             colonneOrdinamento = ordinamento
         )
 
+        // Pipeline a tre stadi: lettura (questo thread) -> trasformazione -> inserimento.
+        // Code di un blocco: la memoria resta limitata a pochi blocchi.
+        val daTrasformare = ArrayBlockingQueue<Any>(1)
+        val daInserire = ArrayBlockingQueue<Any>(1)
+        val errore = AtomicReference<Throwable?>(null)
+        val chiaveObbligatoria = tabella.ruolo == RuoloTabella.DIMENSIONE
+
+        // Scritti solo dal thread di inserimento; letti dopo il join (che ne garantisce la visibilità).
         var prossimoRid = 0L
         var caricate = 0L
         var scartate = 0L
-        var scambiata = false
-        try {
-            connectionOrchestrator.extract(connectionId, schema, nomeOrigine) { righe ->
-                righe.chunked(chunkSize).forEach { blocco ->
-                    rinnova()
-                    val (valide, errori) = transformService.transform(
-                        blocco, colonne, chiaveObbligatoria = tabella.ruolo == RuoloTabella.DIMENSIONE
+
+        val trasforma = Thread {
+            try {
+                while (true) {
+                    val m = prendi(daTrasformare, errore)
+                    if (m === FINE) break
+                    val letto = m as Letto
+                    val t = System.nanoTime()
+                    val blocco = transformService.transform(letto.righe, colonne, chiaveObbligatoria, letto.regole)
+                    metti(
+                        daInserire,
+                        Trasformato(letto.numero, letto.sorgente, letto.righe.size, letto.msLettura, blocco, (System.nanoTime() - t) / 1_000_000),
+                        errore
                     )
-                    prossimoRid = loaderService.load(ombra, valide, colonneCaricate, prossimoRid)
-                    caricate += valide.size
-                    scartate += errori.size
+                }
+                metti(daInserire, FINE, errore)
+            } catch (e: Throwable) {
+                errore.compareAndSet(null, e)
+            }
+        }.apply { name = "sync-${tabella.nomeLogico}-trasforma"; isDaemon = true }
+
+        val inserisce = Thread {
+            try {
+                while (true) {
+                    val m = prendi(daInserire, errore)
+                    if (m === FINE) break
+                    val tr = m as Trasformato
+                    val t = System.nanoTime()
+                    prossimoRid = loaderService.load(ombra, tr.blocco, colonneCaricate, prossimoRid, tr.sorgente)
+                    val msInserimento = (System.nanoTime() - t) / 1_000_000
+                    caricate += tr.blocco.righe
+                    scartate += tr.blocco.scartate
+                    log.info(
+                        "[sync] {} blocco {} (sorgente {}, {} righe): lettura {} ms, trasformazione {} ms, inserimento {} ms",
+                        tabella.nomeLogico, tr.numero, tr.sorgente, tr.righeLette,
+                        tr.msLettura, tr.msTrasformazione, msInserimento
+                    )
                     progresso("${tabella.nomeLogico}: $caricate righe caricate")
                 }
+            } catch (e: Throwable) {
+                errore.compareAndSet(null, e)
             }
+        }.apply { name = "sync-${tabella.nomeLogico}-inserisce"; isDaemon = true }
+
+        val inizioTotale = System.nanoTime()
+        var scambiata = false
+        try {
+            trasforma.start()
+            inserisce.start()
+            try {
+                var numero = 0
+                // Le sorgenti si leggono una dopo l'altra verso la stessa ombra.
+                for (s in sorgenti) {
+                    val inizioSorgente = System.nanoTime()
+                    connectionOrchestrator.extract(s.connectionId, schema, nomeOrigine) { righe ->
+                        // La lettura è pigra: il tempo fino alla consegna del blocco è lettura dalla sorgente.
+                        var t = System.nanoTime()
+                        righe.chunked(chunkSize).forEach { blocco ->
+                            val msLettura = (System.nanoTime() - t) / 1_000_000
+                            rinnova()
+                            numero++
+                            metti(daTrasformare, Letto(numero, s.numero, s.regole, blocco, msLettura), errore)
+                            t = System.nanoTime()
+                        }
+                    }
+                    log.info(
+                        "[sync] {}: sorgente {} ('{}') letta in {} s",
+                        tabella.nomeLogico, s.numero, s.nome, (System.nanoTime() - inizioSorgente) / 1_000_000_000
+                    )
+                }
+                metti(daTrasformare, FINE, errore)
+            } catch (e: Throwable) {
+                // Ferma gli altri stadi; l'errore vero (se è di un altro stadio) è già in [errore].
+                errore.compareAndSet(null, e)
+            }
+            trasforma.join()
+            inserisce.join()
+            errore.get()?.let { throw it }
+
+            log.info("[sync] {}: {} righe in {} s", tabella.nomeLogico, caricate, (System.nanoTime() - inizioTotale) / 1_000_000_000)
             progresso("${tabella.nomeLogico}: sostituisco la tabella")
             symbolTableService.sostituisciTabella(ombra, tabella.tabellaFisica)
             scambiata = true
         } finally {
             if (!scambiata) {
+                errore.compareAndSet(null, IllegalStateException("Sincronizzazione interrotta"))
+                trasforma.join(30_000)
+                inserisce.join(30_000)
                 try {
                     symbolTableService.dropTable(ombra)
                 } catch (e: Exception) {
@@ -338,14 +486,56 @@ class TableSyncRunner(
         return EsitoSync(ModalitaSync.COMPLETA, caricate, scartate, 0, 0)
     }
 
+    // ---------- pipeline ----------
+
+    /** Fine del flusso in una coda della pipeline. */
+    private object FINE
+
+    private class Letto(
+        val numero: Int,
+        val sorgente: Int,
+        val regole: RegoleSorgente,
+        val righe: List<Map<String, Any?>>,
+        val msLettura: Long
+    )
+
+    /** Non tiene il blocco letto: le righe grezze si liberano appena trasformate. */
+    private class Trasformato(
+        val numero: Int,
+        val sorgente: Int,
+        val righeLette: Int,
+        val msLettura: Long,
+        val blocco: BloccoColonne,
+        val msTrasformazione: Long
+    )
+
+    /** Mette in coda aspettando il posto; si ferma se un altro stadio ha fallito. */
+    private fun metti(coda: ArrayBlockingQueue<Any>, elemento: Any, errore: AtomicReference<Throwable?>) {
+        while (!coda.offer(elemento, 200, TimeUnit.MILLISECONDS)) {
+            if (errore.get() != null) throw PipelineFermata()
+        }
+    }
+
+    /** Prende dalla coda aspettando un elemento; si ferma se un altro stadio ha fallito. */
+    private fun prendi(coda: ArrayBlockingQueue<Any>, errore: AtomicReference<Throwable?>): Any {
+        while (true) {
+            coda.poll(200, TimeUnit.MILLISECONDS)?.let { return it }
+            if (errore.get() != null) throw PipelineFermata()
+        }
+    }
+
+    /** Uno stadio si ferma perché un altro è fallito: non è l'errore vero, che resta quello del primo. */
+    private class PipelineFermata : RuntimeException("Pipeline fermata da un errore in un altro stadio")
+
     // ================= Incrementale =================
 
+    /** Incrementale di UNA sorgente: tocca solo le righe con il suo lbi_src. */
     private fun sincronizzaIncrementale(
         tabella: ImportedTable,
         colonne: List<ImportedColumn>,
         config: TableSync,
         colonneCaricate: List<String>,
-        connectionId: UUID,
+        sorgente: Sorgente,
         schema: String?,
         nomeOrigine: String,
         progresso: (String) -> Unit,
@@ -359,73 +549,82 @@ class TableSyncRunner(
         }
         val ultima = config.ultimaSyncInizio!!
         val riferimento = ultima.minusSeconds(config.margineSecondi.toLong())
+        val etichetta = "${tabella.nomeLogico} (${sorgente.nome})"
 
         // Colonne dell'unità: nomi sulla SORGENTE (query delle chiavi, estrazione) e,
         // tradotti, nomi campo su CLICKHOUSE (symbol table, cancellazioni, confronto chiavi).
         val colonneUnita = config.colonneUnita
-        val campiUnita = colonneUnita.map { nome ->
-            campoDi(colonne, nome)
+        val colonneUnitaImportate = colonneUnita.map { nome ->
+            colonne.firstOrNull { Naming.column(it.nome) == Naming.column(nome) }
                 ?: error("La colonna dell'unità '$nome' non è tra le colonne importate di '${tabella.nomeLogico}'")
         }
+        val campiUnita = colonneUnitaImportate.map { it.nomeCampo }
 
-        // 1) Unità da rileggere: cambiate più quelle da rileggere sempre. Senza
-        //    doppioni: la chiave si confronta nella forma normalizzata.
-        progresso("${tabella.nomeLogico}: cerco le unità cambiate")
+        /** La chiave come è scritta su ClickHouse per questa sorgente, o null se ha un valore vuoto. */
+        fun chiaveScritta(chiave: List<Any?>): List<String>? {
+            val n = chiave.mapIndexed { j, v ->
+                transformService.normalizza(v)?.let { regolato(colonneUnitaImportate[j], it, sorgente.regole) }
+            }
+            return if (n.any { it == null }) null else n.map { it!! }
+        }
+
+        // 1) Unità da rileggere: cambiate più quelle da rileggere sempre. Senza doppioni:
+        //    la chiave si confronta come è scritta su ClickHouse; si rilegge con quella della sorgente.
+        progresso("$etichetta: cerco le unità cambiate")
         val daRileggere = LinkedHashMap<List<String>, List<Any?>>()
         var senzaChiave = 0
         fun aggiungi(chiavi: List<List<Any?>>) {
             for (chiave in chiavi) {
-                val normalizzata = chiave.map { transformService.normalizza(it) }
-                if (normalizzata.any { it == null }) {
+                val scritta = chiaveScritta(chiave)
+                if (scritta == null) {
                     senzaChiave++
                     continue
                 }
-                daRileggere.putIfAbsent(normalizzata.map { it!! }, chiave)
+                daRileggere.putIfAbsent(scritta, chiave)
             }
         }
         rinnova()
         aggiungi(
             connectionOrchestrator.runKeyQuery(
-                connectionId, config.queryCambiati, riferimento, colonneUnita, keysMaxRows, keysTimeoutSeconds
+                sorgente.connectionId, config.queryCambiati, riferimento, colonneUnita, keysMaxRows, keysTimeoutSeconds
             ).chiavi
         )
         if (!config.querySempre.isNullOrBlank()) {
             rinnova()
             aggiungi(
                 connectionOrchestrator.runKeyQuery(
-                    connectionId, config.querySempre, riferimento, colonneUnita, keysMaxRows, keysTimeoutSeconds
+                    sorgente.connectionId, config.querySempre, riferimento, colonneUnita, keysMaxRows, keysTimeoutSeconds
                 ).chiavi
             )
         }
         if (senzaChiave > 0) {
-            log.warn("'{}': {} unità con una colonna chiave vuota, non identificabili e ignorate", tabella.nomeLogico, senzaChiave)
+            log.warn("'{}': {} unità con una colonna chiave vuota, non identificabili e ignorate", etichetta, senzaChiave)
         }
 
         var caricate = 0L
         var scartate = 0L
 
-        // 2) Sostituzione: si cancellano le righe vecchie delle unità già presenti
-        //    e si rileggono dalla sorgente. Una chiave senza id nella symbol table
-        //    è una unità nuova: non ha righe da cancellare.
+        // 2) Sostituzione: si cancellano le righe vecchie delle unità già presenti (solo di
+        //    questa sorgente) e si rileggono. Una chiave senza id è una unità nuova.
         if (daRileggere.isNotEmpty()) {
-            progresso("${tabella.nomeLogico}: sostituisco ${daRileggere.size} unità")
+            progresso("$etichetta: sostituisco ${daRileggere.size} unità")
             rinnova()
             var prossimoRid = loaderService.prossimoRid(tabella.tabellaFisica)
             val esistenti = chiaviComeId(campiUnita, daRileggere.keys.toList())
-            loaderService.deleteUnits(tabella.tabellaFisica, campiUnita, esistenti)
+            loaderService.deleteUnits(tabella.tabellaFisica, campiUnita, esistenti, sorgente.numero)
 
             connectionOrchestrator.extractUnits(
-                connectionId, schema, nomeOrigine, colonneUnita, daRileggere.values.toList()
+                sorgente.connectionId, schema, nomeOrigine, colonneUnita, daRileggere.values.toList()
             ) { righe ->
                 righe.chunked(chunkSize).forEach { blocco ->
                     rinnova()
-                    val (valide, errori) = transformService.transform(
-                        blocco, colonne, chiaveObbligatoria = tabella.ruolo == RuoloTabella.DIMENSIONE
+                    val trasformato = transformService.transform(
+                        blocco, colonne, chiaveObbligatoria = tabella.ruolo == RuoloTabella.DIMENSIONE, regole = sorgente.regole
                     )
-                    prossimoRid = loaderService.load(tabella.tabellaFisica, valide, colonneCaricate, prossimoRid)
-                    caricate += valide.size
-                    scartate += errori.size
-                    progresso("${tabella.nomeLogico}: $caricate righe riscritte")
+                    prossimoRid = loaderService.load(tabella.tabellaFisica, trasformato, colonneCaricate, prossimoRid, sorgente.numero)
+                    caricate += trasformato.righe
+                    scartate += trasformato.scartate
+                    progresso("$etichetta: $caricate righe riscritte")
                 }
             }
         }
@@ -433,66 +632,59 @@ class TableSyncRunner(
         // 3) Cancellazioni: unità presenti da noi e sparite dalla sorgente.
         var eliminate = 0
         if (config.confrontaCancellazioni) {
-            progresso("${tabella.nomeLogico}: cerco le unità sparite dalla sorgente")
+            progresso("$etichetta: cerco le unità sparite dalla sorgente")
             rinnova()
-            eliminate = eliminaSparite(tabella, colonneUnita, campiUnita, connectionId, schema, nomeOrigine, rinnova)
+            eliminate = eliminaSparite(tabella, colonneUnita, campiUnita, sorgente, schema, nomeOrigine, rinnova, ::chiaveScritta)
         }
 
         return EsitoSync(ModalitaSync.INCREMENTALE, caricate, scartate, daRileggere.size.toLong(), eliminate.toLong())
     }
 
     /**
-     * Elimina le unità che ClickHouse ha e la sorgente non ha più. Due
-     * controlli bloccanti, mai silenziosi: una sorgente che restituisce zero
-     * chiavi (vista vuota per un problema) o una cancellazione di massa
-     * cancellerebbero i dati. In quel caso si lancia il ricarico completo a mano.
-     *
-     * [colonneUnita] sono i nomi sulla sorgente (per leggere le chiavi), [campiUnita] i nomi
-     * campo corrispondenti (per ClickHouse), nello stesso ordine.
+     * Elimina le unità di UNA sorgente che ClickHouse ha e la sorgente non ha più. Due
+     * controlli bloccanti, mai silenziosi: una sorgente che restituisce zero chiavi o una
+     * cancellazione di massa cancellerebbero i dati.
      */
     private fun eliminaSparite(
         tabella: ImportedTable,
         colonneUnita: List<String>,
         campiUnita: List<String>,
-        connectionId: UUID,
+        sorgente: Sorgente,
         schema: String?,
         nomeOrigine: String,
-        rinnova: () -> Unit
+        rinnova: () -> Unit,
+        chiaveScritta: (List<Any?>) -> List<String>?
     ): Int {
-        val inClickHouse = loaderService.distinctKeyIds(tabella.tabellaFisica, campiUnita)
+        val inClickHouse = loaderService.distinctKeyIds(tabella.tabellaFisica, campiUnita, sorgente.numero)
         val inSorgente = HashSet<List<Long>>()
 
-        connectionOrchestrator.extractKeys(connectionId, schema, nomeOrigine, colonneUnita) { chiavi ->
+        connectionOrchestrator.extractKeys(sorgente.connectionId, schema, nomeOrigine, colonneUnita) { chiavi ->
             chiavi.chunked(5_000).forEach { blocco ->
                 rinnova()
-                val normalizzate = blocco.mapNotNull { chiave ->
-                    val n = chiave.map { transformService.normalizza(it) }
-                    if (n.any { it == null }) null else n.map { it!! }
-                }
-                inSorgente.addAll(chiaviComeId(campiUnita, normalizzate))
+                inSorgente.addAll(chiaviComeId(campiUnita, blocco.mapNotNull { chiaveScritta(it) }))
             }
         }
 
         if (inClickHouse.isEmpty()) return 0
         check(inSorgente.isNotEmpty()) {
-            "La sorgente non ha restituito nessuna chiave per '${tabella.nomeLogico}': non elimino tutto. " +
+            "La sorgente '${sorgente.nome}' non ha restituito nessuna chiave per '${tabella.nomeLogico}': non elimino tutto. " +
                     "Controlla la sorgente oppure lancia il ricarico completo a mano"
         }
 
         val sparite = inClickHouse - inSorgente
         if (sparite.isEmpty()) return 0
         check(sparite.size.toLong() * 100 <= inClickHouse.size.toLong() * maxDeletePercent) {
-            "Le unità sparite dalla sorgente per '${tabella.nomeLogico}' sono ${sparite.size} su ${inClickHouse.size}: " +
+            "Le unità sparite dalla sorgente '${sorgente.nome}' per '${tabella.nomeLogico}' sono ${sparite.size} su ${inClickHouse.size}: " +
                     "oltre il $maxDeletePercent%. La sincronizzazione si ferma: alza lbi.sync.max-delete-percent " +
                     "oppure lancia il ricarico completo a mano"
         }
-        return loaderService.deleteUnits(tabella.tabellaFisica, campiUnita, sparite.toList())
+        return loaderService.deleteUnits(tabella.tabellaFisica, campiUnita, sparite.toList(), sorgente.numero)
     }
 
     /**
-     * Le chiavi (già normalizzate, nell'ordine dei campi dell'unità) come
-     * id delle symbol table dei rispettivi campi. Solo lettura: una chiave con
-     * un valore senza id non compare nel risultato.
+     * Le chiavi (come sono scritte su ClickHouse, nell'ordine dei campi dell'unità) come
+     * id delle symbol table dei rispettivi campi. Solo lettura: una chiave con un valore
+     * senza id non compare nel risultato.
      */
     private fun chiaviComeId(campiUnita: List<String>, chiavi: List<List<String>>): List<List<Long>> {
         if (chiavi.isEmpty()) return emptyList()

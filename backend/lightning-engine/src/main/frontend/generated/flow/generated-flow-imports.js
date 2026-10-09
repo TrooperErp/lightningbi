@@ -48,12 +48,6 @@ import 'react';
 
 const loadOnDemand = (key) => {
   const pending = [];
-  if (key === '7b6aebf56e3723452af3a60bae5a2df68d84d5a4538b3c7269ee56314a1a5ce0') {
-    pending.push(import('./chunks/chunk-f23099b023c00e2acb7f4d19ec53ce594b1916f3950159b4f2db990fc14470b3.js'));
-  }
-  if (key === '22a7785a08af1f6cdf92f8105f2c0c9eedf441c9782dc20b5bd2c028eb40fe28') {
-    pending.push(import('./chunks/chunk-a74a01a1c8c3ca56ae57ba86c80565fdb79911af44433524b057e67a80debcde.js'));
-  }
   if (key === 'af026b2d7a6a4b1dfbb55b1ec17a88d1d517d9d1021df9d37ae2d2ea37da8cd8') {
     pending.push(import('./chunks/chunk-1c7d2aed6991e3808e84b14e704e4656093347f41f4ea801bad8232b67a4e03e.js'));
   }
@@ -65,6 +59,12 @@ const loadOnDemand = (key) => {
   }
   if (key === '48c8b0fb3963386e2867f9e11c9fa03bb83b0030c5bfb20d0067ccd6ec214095') {
     pending.push(import('./chunks/chunk-5447f1d07dbd2890b3340bee8e5e490aeeeb342bf2ba4b2654d51f4630bc1acb.js'));
+  }
+  if (key === '7b6aebf56e3723452af3a60bae5a2df68d84d5a4538b3c7269ee56314a1a5ce0') {
+    pending.push(import('./chunks/chunk-f23099b023c00e2acb7f4d19ec53ce594b1916f3950159b4f2db990fc14470b3.js'));
+  }
+  if (key === '22a7785a08af1f6cdf92f8105f2c0c9eedf441c9782dc20b5bd2c028eb40fe28') {
+    pending.push(import('./chunks/chunk-a74a01a1c8c3ca56ae57ba86c80565fdb79911af44433524b057e67a80debcde.js'));
   }
   return Promise.all(pending);
 }

@@ -45,7 +45,18 @@ class AggregateService(
     fun getAggregates(req: AggregateRequest): AggregateResult =
         getAggregates(req, versionService.snapshotVersions(req.areaId))
 
-    fun getAggregates(req: AggregateRequest, versions: VersionSnapshot): AggregateResult {
+    fun getAggregates(req: AggregateRequest, versions: VersionSnapshot): AggregateResult =
+        getAggregates(req, versions, sezioneAccessoService.vincolo(req.areaId))
+
+    /**
+     * Come sopra, con il vincolo del section access già calcolato: per le query in parallelo, che
+     * girano in thread senza la sessione dell'utente. Il vincolo va calcolato nel thread della pagina.
+     */
+    fun getAggregates(
+        req: AggregateRequest,
+        versions: VersionSnapshot,
+        vincolo: SezioneAccessoService.Vincolo?
+    ): AggregateResult {
         registryRepository.findAreaById(req.areaId) ?: error("Area not found: ${req.areaId}")
         val dims = registryRepository.findDimensioniByArea(req.areaId)
         val dimById = dims.associateBy { it.dimensioneId }
@@ -53,7 +64,7 @@ class AggregateService(
 
         val validDimIds = dims.map { it.dimensioneId }.toSet()
         // Section access: per un non-admin la selezione sull'azienda è forzata.
-        val vincolo = sezioneAccessoService.vincolo(req.areaId)
+
         val selezioniEffettive =
             if (vincolo == null) req.selections else req.selections + (vincolo.dimensioneId to vincolo.ids)
         val cleanSelections = selezioniEffettive

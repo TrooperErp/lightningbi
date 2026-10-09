@@ -54,7 +54,8 @@ class TableImportService(
     private val symbolTableService: SymbolTableService,
     private val adminGuard: AdminGuard,
     private val calendarioService: CalendarioService,
-    private val campoTestoRepository: CampoTestoRepository
+    private val campoTestoRepository: CampoTestoRepository,
+    private val sorgenteTabellaRepository: com.lightningbi.lightning_engine.repository.SorgenteTabellaRepository
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -339,6 +340,64 @@ class TableImportService(
         val nuove = colonneCalendario(importedTableId, colonne)
         if (nuove.isNotEmpty()) importedTableRepository.saveColumns(nuove)
         return nuove.size
+    }
+
+
+    // ================= Sorgenti aggiuntive =================
+
+    /** Le sorgenti aggiuntive della tabella (la principale è la sua connessione). */
+    fun sorgenti(importedTableId: UUID): List<com.lightningbi.lightning_engine.model.SorgenteTabella> {
+        adminGuard.requireAdmin()
+        return sorgenteTabellaRepository.findByTable(importedTableId)
+    }
+
+    /**
+     * Aggiunge una sorgente: la stessa vista letta da un'altra connessione e accodata nella tabella.
+     * La prossima sincronizzazione è completa, perché le righe della nuova sorgente non ci sono ancora.
+     */
+    @Transactional("postgresTransactionManager")
+    fun aggiungiSorgente(
+        importedTableId: UUID,
+        connectionId: UUID,
+        dittaForzata: Int?,
+        prefissoChiavi: String?
+    ): com.lightningbi.lightning_engine.model.SorgenteTabella {
+        adminGuard.requireAdmin()
+        val tabella = importedTableRepository.findById(importedTableId)
+            ?: throw IllegalArgumentException("Tabella importata non trovata")
+        require(connectionOrchestrator.findById(connectionId) != null) { "Connessione non trovata" }
+        require(connectionId != tabella.connectionId) { "È già la connessione principale della tabella" }
+        require(sorgenteTabellaRepository.findByTable(importedTableId).none { it.connectionId == connectionId }) {
+            "La tabella ha già una sorgente su questa connessione"
+        }
+        val prefisso = prefissoChiavi?.trim()?.ifEmpty { null }
+        val ordine = sorgenteTabellaRepository.prossimoOrdine(importedTableId)
+        val sorgente = com.lightningbi.lightning_engine.model.SorgenteTabella(
+            id = UUID.randomUUID(),
+            importedTableId = importedTableId,
+            ordine = ordine,
+            connectionId = connectionId,
+            dittaForzata = dittaForzata,
+            prefissoChiavi = prefisso
+        )
+        sorgenteTabellaRepository.save(sorgente)
+        tableSyncRepository.resetUltimaSync(importedTableId)
+        log.info("Tabella '{}': aggiunta la sorgente {} (ditta {}, prefisso '{}')", tabella.nomeLogico, ordine, dittaForzata, prefisso)
+        return sorgente
+    }
+
+    /**
+     * Toglie una sorgente aggiuntiva. Le sue righe restano nella tabella fino alla prossima
+     * sincronizzazione, che è completa e le toglie.
+     */
+    @Transactional("postgresTransactionManager")
+    fun eliminaSorgente(importedTableId: UUID, sorgenteId: UUID) {
+        adminGuard.requireAdmin()
+        require(sorgenteTabellaRepository.findByTable(importedTableId).any { it.id == sorgenteId }) {
+            "Sorgente non trovata"
+        }
+        sorgenteTabellaRepository.delete(sorgenteId)
+        tableSyncRepository.resetUltimaSync(importedTableId)
     }
 
     /**

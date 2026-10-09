@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="039-sorgenti-tabella" author="lightningbi">
+        <sql>
+            CREATE TABLE lbi_imported_table_sorgente (
+                                                         id                UUID        PRIMARY KEY,
+                                                         imported_table_id UUID        NOT NULL REFERENCES lbi_imported_table(id) ON DELETE CASCADE,
+                                                         ordine            INT         NOT NULL,
+                                                         connection_id     UUID        NOT NULL REFERENCES lbi_connection(id),
+                                                         ditta_forzata     INT         NULL,
+                                                         prefisso_chiavi   VARCHAR(20) NULL,
+                                                         CONSTRAINT uq_sorgente_ordine UNIQUE (imported_table_id, ordine),
+                                                         CONSTRAINT uq_sorgente_connessione UNIQUE (imported_table_id, connection_id),
+                                                         CONSTRAINT ck_sorgente_ordine CHECK (ordine BETWEEN 1 AND 255),
+                                                         CONSTRAINT ck_sorgente_prefisso CHECK (prefisso_chiavi IS NULL OR length(prefisso_chiavi) > 0)
+            );
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

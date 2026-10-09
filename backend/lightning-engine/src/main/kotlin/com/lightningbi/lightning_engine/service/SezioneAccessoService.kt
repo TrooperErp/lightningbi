@@ -61,7 +61,8 @@ class SezioneAccessoService(
         return selezioni + (v.dimensioneId to v.ids)
     }
 
-    private fun dimensioneAzienda(areaId: UUID): UUID? {
+
+    fun dimensioneAzienda(areaId: UUID): UUID? {
         val dims = registryRepository.findDimensioniByArea(areaId)
         val nomi = registryRepository.findDimensioniByIds(dims.map { it.dimensioneId }).associate { it.id to it.nome }
         val voluto = Naming.column(campoAzienda)

@@ -96,10 +96,14 @@ class SymbolTableService(
         require(Naming.RID_COLUMN !in ids) {
             "Il nome di colonna '${Naming.RID_COLUMN}' è riservato (tabella $tabellaFisica)"
         }
+        require(Naming.SRC_COLUMN !in ids) {
+            "Il nome di colonna '${Naming.SRC_COLUMN}' è riservato (tabella $tabellaFisica)"
+        }
         val defs = buildList {
             ids.forEach { add("$it UInt32") }
             numeriche.forEach { add("${Naming.numericColumn(it)} Nullable(Decimal(38, 6))") }
             add("${Naming.RID_COLUMN} UInt32")
+            add("${Naming.SRC_COLUMN} UInt8")
         }.joinToString(",\n                ")
 
         jdbcTemplate.execute(

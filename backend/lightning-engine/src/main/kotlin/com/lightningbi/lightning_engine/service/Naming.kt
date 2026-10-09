@@ -64,6 +64,12 @@ object Naming {
      */
     const val RID_COLUMN = "lbi_rid"
 
+    /**
+     * Numero della sorgente da cui viene la riga (UInt8): 0 = la connessione della
+     * tabella, 1..255 = le sorgenti aggiuntive (SorgenteTabella). Nome riservato.
+     */
+    const val SRC_COLUMN = "lbi_src"
+
     /** Verifica che un identificatore fisico sia sicuro da inserire in SQL (accetta il doppio underscore delle tabelle importate). */
     fun requirePhysical(value: String, what: String): String {
         require(valid.matches(value)) { "Identificatore $what non valido: '$value'" }

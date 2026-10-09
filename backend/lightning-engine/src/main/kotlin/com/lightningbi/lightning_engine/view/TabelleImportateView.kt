@@ -175,6 +175,7 @@ class TabelleImportateView(
                     val radice = addItem(Icon(VaadinIcon.ELLIPSIS_DOTS_V).apply { style.set("color", "var(--lbi-text)") })
                     radice.subMenu.addItem("Ricarico completo") { confermaRicaricoCompleto(info) }
                     radice.subMenu.addItem("Configura sincronizzazione") { apriSincronizzazione(info) }
+                    radice.subMenu.addItem("Sorgenti") { apriSorgenti(info) }
                     radice.subMenu.addItem("Campi") { apriCampi(info) }
                     radice.subMenu.addItem("Elimina") { confermaEliminaTabella(info) }
                 }
@@ -224,6 +225,10 @@ class TabelleImportateView(
 
     private fun apriCampi(info: TabellaImportataInfo) {
         CampiTabellaDialog(tableImportService, info.tabella, info.dataset.isNotEmpty()) { ricarica() }.open()
+    }
+
+    private fun apriSorgenti(info: TabellaImportataInfo) {
+        SorgentiTabellaDialog(tableImportService, connectionOrchestrator, info.tabella) { ricarica() }.open()
     }
 
     private fun confermaRicaricoCompleto(info: TabellaImportataInfo) {
