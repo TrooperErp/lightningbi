@@ -2,10 +2,10 @@
 // (stessa cartella e stessa riga `package` di OrdinamentoValoriTest)
 package com.lightining.service
 
-import com.lightning.model.AggregateRow
-import com.lightning.model.AreaMetrica
-import com.lightning.model.TipoAggregazione
-import com.lightning.service.PivotEngine
+import com.lightning.bi.model.AggregateRow
+import com.lightning.bi.model.AreaMetrica
+import com.lightning.bi.model.TipoAggregazione
+import com.lightning.bi.service.PivotEngine
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue

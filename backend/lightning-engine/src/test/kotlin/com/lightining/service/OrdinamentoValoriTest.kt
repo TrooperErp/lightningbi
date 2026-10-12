@@ -1,6 +1,6 @@
 package com.lightining.service
 
-import com.lightning.service.OrdinamentoValori
+import com.lightning.bi.service.OrdinamentoValori
 import java.math.BigDecimal
 import java.util.Random
 import kotlin.test.Test

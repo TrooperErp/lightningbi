@@ -1,8 +1,8 @@
 // src/test/kotlin/com/lightningbi/lightning/engine/service/DimensionSortOrdersTest.kt
 package com.lightining.service
 
-import com.lightning.service.DimensionSortOrders
-import com.lightning.service.DimensionSortOrders.confrontoNaturale
+import com.lightning.bi.service.DimensionSortOrders
+import com.lightning.bi.service.DimensionSortOrders.confrontoNaturale
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test

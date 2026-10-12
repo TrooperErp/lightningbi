@@ -1,0 +1,135 @@
+package com.lightning.bi.view
+
+import com.lightning.bi.service.AuthService
+import com.vaadin.flow.component.Component
+import com.vaadin.flow.component.UI
+import com.vaadin.flow.component.button.Button
+import com.vaadin.flow.component.html.Image
+import com.vaadin.flow.component.html.Span
+import com.vaadin.flow.component.orderedlayout.FlexComponent
+import com.vaadin.flow.component.orderedlayout.HorizontalLayout
+import com.vaadin.flow.component.orderedlayout.VerticalLayout
+import com.vaadin.flow.server.VaadinServletRequest
+
+/**
+ * Shell condivisa da tutte le pagine dell'app: banda nera in alto (logo,
+ * titolo, tema) e sidebar blu a sinistra, identiche ovunque.
+ *
+ * updateMenuGroups() permette a chi la usa di rinfrescare la sidebar
+ * quando cambia lo stato che decide quali voci sono enabled/active (es.
+ * dopo aver verificato una sorgente), senza dover ricostruire l'intera
+ * shell: solo la sidebar viene ridisegnata.
+ *
+ * sourceStatusSpan mostra lo stato sorgente ("Sorgente verificata: X")
+ * nella topbar, accanto al nome analisi - prima viveva nella centerArea
+ * di AssociativeExplorerUi, occupando una riga verticale dedicata sopra
+ * il pivot panel; spostato qui per recuperare spazio verticale nella
+ * pagina Analisi.
+ */
+class LbiAppShell(
+    initialMenuGroups: List<LbiSidebarMenu.MenuGroup>,
+    centerContent: Component,
+    private val authService: AuthService,
+    analysisName: String? = null
+) : VerticalLayout() {
+
+    private var isDark = false
+    private val sidebar = LbiSidebarMenu()
+    private val analysisNameSpan = Span("")
+    private val sourceStatusSpan = Span("").apply { className = "lbi-source-status-topbar" }
+
+    init {
+        className = "lbi-app"
+        width = "100%"
+        isPadding = false
+        isSpacing = false
+
+        val logoImage = Image("images/logo.png", "LightningBI").apply { className = "lbi-logo-img" }
+        val logoSpan = Span("LightningBI").apply { className = "lbi-logo" }
+        val logoContainer = HorizontalLayout(logoImage, logoSpan).apply {
+            className = "lbi-logo-container"
+            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
+            isSpacing = true
+        }
+
+
+        val themeToggle = Button("Dark").apply {
+            className = "lbi-theme-toggle"
+            addClickListener {
+                isDark = !isDark
+                element.executeJs(
+                    "document.documentElement.setAttribute('theme', \$0)",
+                    if (isDark) "dark" else ""
+                )
+                text = if (isDark) "Light" else "Dark"
+            }
+        }
+
+
+
+        val logoutButton = Button("Esci") {
+            val currentUser = CurrentUserHolder.get()
+            if (currentUser != null) {
+                val request = VaadinServletRequest.getCurrent().httpServletRequest
+                authService.logout(currentUser.sessionId, currentUser.userId, request.remoteAddr)
+                CurrentUserHolder.clear()
+                SessioneCookie.cancella()
+            }
+            UI.getCurrent().navigate(LoginView::class.java)
+        }.apply { className = "lbi-theme-toggle" }
+
+        analysisNameSpan.apply {
+            text = analysisName ?: ""
+            className = "lbi-analysis-name"
+        }
+
+        val centerInfo = HorizontalLayout(analysisNameSpan, sourceStatusSpan).apply {
+            isSpacing = true
+            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
+        }
+
+        val passwordButton = Button("Password") {
+            CambiaPasswordDialog(authService).open()
+        }.apply { className = "lbi-theme-toggle" }
+
+        val rightControls = HorizontalLayout(themeToggle, passwordButton, logoutButton).apply {
+            isSpacing = true
+            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
+        }
+
+        val topMenuBar = HorizontalLayout(logoContainer, centerInfo, rightControls).apply {
+            className = "lbi-topmenu"
+            justifyContentMode = FlexComponent.JustifyContentMode.BETWEEN
+            defaultVerticalComponentAlignment = FlexComponent.Alignment.CENTER
+            setWidthFull()
+        }
+
+        sidebar.setGroups(initialMenuGroups)
+
+        val body = HorizontalLayout(sidebar, centerContent).apply {
+            className = "lbi-body"
+            width = "100%"
+            isPadding = false
+            isSpacing = true
+            setFlexGrow(0.0, sidebar)
+            setFlexGrow(1.0, centerContent)
+        }
+
+        add(topMenuBar, body)
+        setFlexGrow(0.0, topMenuBar)
+        setFlexGrow(1.0, body)
+    }
+
+    /** Ridisegna solo la sidebar con i gruppi aggiornati, lasciando il resto della shell intatto. */
+    fun updateMenuGroups(groups: List<LbiSidebarMenu.MenuGroup>) {
+        sidebar.setGroups(groups)
+    }
+    fun updateAnalysisName(name: String?) {
+        analysisNameSpan.text = name ?: ""
+    }
+
+    /** Aggiorna il testo di stato sorgente nella topbar (es. "Sorgente verificata: X"). */
+    fun updateSourceStatus(text: String?) {
+        sourceStatusSpan.text = text ?: ""
+    }
+}
