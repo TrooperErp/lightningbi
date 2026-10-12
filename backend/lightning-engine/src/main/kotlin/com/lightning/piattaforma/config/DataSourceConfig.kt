@@ -1,4 +1,4 @@
-package com.lightning.bi.config
+package com.lightning.piattaforma.config
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource

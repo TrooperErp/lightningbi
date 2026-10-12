@@ -1,4 +1,4 @@
-package com.lightning.bi.service
+package com.lightning.piattaforma.service
 
 import com.lightning.piattaforma.repository.PermissionRepository
 import com.lightning.piattaforma.repository.RolePermissionRepository

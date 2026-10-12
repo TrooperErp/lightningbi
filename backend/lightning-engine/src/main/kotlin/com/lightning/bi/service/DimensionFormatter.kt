@@ -1,6 +1,6 @@
 package com.lightning.bi.service
 
-import com.lightning.bi.model.Azienda
+import com.lightning.piattaforma.model.Azienda
 import com.lightning.bi.model.MeseItaliano
 
 /**

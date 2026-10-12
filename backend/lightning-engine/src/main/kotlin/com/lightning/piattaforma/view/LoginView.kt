@@ -1,9 +1,10 @@
-package com.lightning.bi.view
+package com.lightning.piattaforma.view
 
+import com.lightning.bi.view.DatasetFiltriView
 import com.lightning.piattaforma.repository.UserRepository
-import com.lightning.bi.service.AuthService
-import com.lightning.bi.service.JwtService
-import com.lightning.bi.service.SessionService
+import com.lightning.piattaforma.service.AuthService
+import com.lightning.piattaforma.service.JwtService
+import com.lightning.piattaforma.service.SessionService
 import com.vaadin.flow.component.Key
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant

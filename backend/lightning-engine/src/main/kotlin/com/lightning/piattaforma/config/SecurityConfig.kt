@@ -1,4 +1,4 @@
-package com.lightning.bi.config
+package com.lightning.piattaforma.config
 
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration

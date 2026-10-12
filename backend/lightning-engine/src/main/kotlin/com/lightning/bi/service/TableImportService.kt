@@ -14,6 +14,7 @@ import com.lightning.bi.repository.ImportedTableRepository
 import com.lightning.bi.repository.RegistryRepository
 import com.lightning.bi.repository.SorgenteTabellaRepository
 import com.lightning.bi.repository.TableSyncRepository
+import com.lightning.piattaforma.service.AdminGuard
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service

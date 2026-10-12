@@ -7,7 +7,7 @@ import com.lightning.bi.repository.ImportedTableRepository
 import com.lightning.bi.repository.RegistryRepository
 import com.lightning.bi.repository.TableSyncRepository
 import com.lightning.bi.service.BitmapIndexBuilder
-import com.lightning.bi.service.EmailService
+import com.lightning.piattaforma.service.EmailService
 import com.lightning.bi.service.EtlCompletionService
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value

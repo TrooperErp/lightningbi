@@ -3,7 +3,7 @@ package com.lightning.bi.view
 import com.lightning.bi.connector.ConnectionOrchestrator
 import com.lightning.bi.model.RuoloTabella
 import com.lightning.bi.model.SourceConnection
-import com.lightning.bi.service.AdminGuard
+import com.lightning.piattaforma.service.AdminGuard
 import com.lightning.bi.service.EsitoImport
 import com.lightning.bi.service.ImportazioneMultiplaService
 import com.lightning.bi.service.RichiestaImport

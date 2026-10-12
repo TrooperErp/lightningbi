@@ -1,4 +1,4 @@
-package com.lightning.bi.model
+package com.lightning.piattaforma.model
 
 /**
  * Le aziende del gruppo, mappate sul codice_ditta usato nelle view

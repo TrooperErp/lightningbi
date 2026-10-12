@@ -5,6 +5,7 @@ import com.lightning.bi.model.ModalitaSync
 import com.lightning.bi.model.TableSync
 import com.lightning.bi.repository.ImportedTableRepository
 import com.lightning.bi.repository.TableSyncRepository
+import com.lightning.piattaforma.service.AdminGuard
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.util.UUID

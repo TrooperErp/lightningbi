@@ -1,6 +1,6 @@
-package com.lightning.bi.service
+package com.lightning.piattaforma.service
 
-import com.lightning.bi.view.CurrentUserHolder
+import com.lightning.piattaforma.view.CurrentUserHolder
 import org.springframework.stereotype.Component
 
 /**

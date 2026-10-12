@@ -1,4 +1,4 @@
-package com.lightning.bi.repository
+package com.lightning.piattaforma.repository
 
 import java.util.UUID
 

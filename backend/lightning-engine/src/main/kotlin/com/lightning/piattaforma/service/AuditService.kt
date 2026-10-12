@@ -1,4 +1,4 @@
-package com.lightning.bi.service
+package com.lightning.piattaforma.service
 
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service

@@ -1,6 +1,6 @@
-package com.lightning.bi.view
+package com.lightning.piattaforma.view
 
-import com.lightning.bi.service.AuthService
+import com.lightning.piattaforma.service.AuthService
 import com.vaadin.flow.component.Component
 import com.vaadin.flow.component.UI
 import com.vaadin.flow.component.button.Button

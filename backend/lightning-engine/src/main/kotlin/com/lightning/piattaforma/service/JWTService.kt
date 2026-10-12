@@ -1,4 +1,4 @@
-package com.lightning.bi.service
+package com.lightning.piattaforma.service
 
 import io.jsonwebtoken.Claims
 import io.jsonwebtoken.Jwts

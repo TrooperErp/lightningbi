@@ -1,4 +1,4 @@
-package com.lightning.bi.model
+package com.lightning.piattaforma.model
 
 import java.time.LocalDateTime
 import java.util.UUID

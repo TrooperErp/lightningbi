@@ -1,4 +1,4 @@
-package com.lightning.bi.repository
+package com.lightning.piattaforma.repository
 
 import com.lightning.piattaforma.model.Session
 import java.util.UUID

@@ -1,0 +1,232 @@
+/* ============================================================
+   Lightning — tema comune della piattaforma (base: Aura)
+   Un solo set di token: light-dark() sceglie il valore in base
+   allo schema colore della pagina (Page.setColorScheme).
+   Prefisso --lt-*: non mescolare con --lumo-*.
+   ============================================================ */
+
+@font-face {
+    font-family: "Source Sans 3";
+    src: url("../fonts/source-sans-3.woff2") format("woff2-variations"),
+    url("../fonts/source-sans-3.woff2") format("woff2");
+    font-weight: 200 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Source Code Pro";
+    src: url("../fonts/source-code-pro.woff2") format("woff2-variations"),
+    url("../fonts/source-code-pro.woff2") format("woff2");
+    font-weight: 200 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+html {
+    /* ---- Aura ---- */
+    --aura-font-family: "Source Sans 3", system-ui, sans-serif;
+    --aura-base-font-size: 14;
+    --aura-base-size: 14;
+    --aura-base-radius: 5;
+    --aura-accent-color-light: #3D4FD8;
+    --aura-accent-color-dark: #6E7CFF;
+    --aura-background-color-light: #F5F6F8;
+    --aura-background-color-dark: #0D0E11;
+
+    /* ---- superfici e testo ---- */
+    --lt-bg:          light-dark(#F5F6F8, #0D0E11);
+    --lt-surface:     light-dark(#FFFFFF, #15171C);
+    --lt-surface-2:   light-dark(#F0F2F5, #1B1E24);
+    --lt-rail:        light-dark(#FBFBFC, #111317);
+    --lt-border:      light-dark(#E1E4EA, #2A2E36);
+    --lt-text:        light-dark(#1A1D23, #E7E9ED);
+    --lt-muted:       light-dark(#5C6370, #9AA1AD);
+    --lt-faint:       light-dark(#A3A9B4, #555B66);
+
+    /* ---- accento e segnali ---- */
+    --lt-accent:      light-dark(#3D4FD8, #6E7CFF);
+    --lt-accent-soft: light-dark(#E9ECFD, #22264A);
+    --lt-accent-text: light-dark(#2F3FC0, #A9B2FF);
+    --lt-warn-soft:   light-dark(#FDEBDD, #3A2614);
+    --lt-warn-text:   light-dark(#9A4A10, #F2B47E);
+    --lt-ok:          light-dark(#1E9E57, #3CC47C);
+    --lt-up:          light-dark(#17804A, #4FD18C);
+    --lt-down:        light-dark(#C2410C, #FF8A5B);
+
+    /* ---- stati dei valori (come Qlik): selezionato, possibile, escluso ---- */
+    --lt-sel:         light-dark(#17804A, #1F8A52);
+    --lt-sel-text:    #FFFFFF;
+    --lt-sel-soft:    light-dark(#E5F4EC, #14291E);
+    --lt-sel-border:  light-dark(#BFE3CE, #235A3B);
+    --lt-pos:         light-dark(#FFFFFF, #E7E9ED);
+    --lt-pos-text:    light-dark(#1A1D23, #15171C);
+    --lt-esc:         light-dark(#D5D8DE, #30343C);
+    --lt-esc-text:    light-dark(#5C6370, #8E95A1);
+
+    /* ---- grafici ---- */
+    --lt-serie-1:     light-dark(#E8913A, #F2A35E);
+    --lt-serie-2:     light-dark(#3D4FD8, #7F8CFF);
+
+    /* ---- caratteri e misure della shell ---- */
+    --lt-font:        "Source Sans 3", system-ui, sans-serif;
+    --lt-mono:        "Source Code Pro", ui-monospace, monospace;
+    --lt-radius:      6px;
+    --lt-topbar:      46px;
+    --lt-rail-w:      52px;
+    --lt-panel-w:     240px;
+    --lt-statusbar:   26px;
+}
+
+html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--lt-bg);
+    color: var(--lt-text);
+    font-family: var(--lt-font);
+}
+
+/* Cifre allineate in tabelle e contatori */
+.lt-num {
+    font-family: var(--lt-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   Shell
+   ============================================================ */
+
+.lt-shell {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--lt-bg);
+    color: var(--lt-text);
+    font-family: var(--lt-font);
+    font-size: 13px;
+}
+
+.lt-corpo { flex: 1; display: flex; min-height: 0; }
+.lt-spazio { flex: 1; }
+
+/* ---- barra in alto ---- */
+.lt-barra-alta {
+    height: var(--lt-topbar);
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 12px;
+    background: var(--lt-surface);
+    border-bottom: 1px solid var(--lt-border);
+}
+.lt-logo { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; color: var(--lt-text); }
+.lt-logo svg { color: var(--lt-accent); }
+.lt-badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; }
+.lt-badge-accento { background: var(--lt-accent-soft); color: var(--lt-accent-text); }
+.lt-badge-avviso { background: var(--lt-warn-soft); color: var(--lt-warn-text); font-size: 10px; letter-spacing: .04em; }
+.lt-percorso { display: flex; gap: 6px; align-items: center; color: var(--lt-muted); white-space: nowrap; }
+.lt-percorso-ultimo { color: var(--lt-text); font-weight: 500; }
+.lt-ricerca-box { flex: 1 1 200px; display: flex; justify-content: center; min-width: 0; }
+.lt-ricerca { width: 100%; max-width: 420px; }
+.lt-tasto { font-family: var(--lt-mono); font-size: 10px; padding: 1px 5px; border: 1px solid var(--lt-border); border-radius: 4px; color: var(--lt-muted); }
+.lt-stato-dati { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--lt-muted); white-space: nowrap; }
+.lt-stato-dati::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--lt-ok); }
+.lt-stato-dati.lt-errore::before { background: var(--lt-down); }
+.lt-utente { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.lt-avatar { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 600; background: var(--lt-accent-soft); color: var(--lt-accent-text); }
+
+/* ---- barra dei moduli ---- */
+.lt-barra-moduli {
+    width: var(--lt-rail-w);
+    flex: 0 0 var(--lt-rail-w);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 0;
+    background: var(--lt-rail);
+    border-right: 1px solid var(--lt-border);
+}
+.lt-modulo {
+    width: 38px; height: 38px; min-width: 38px; padding: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--lt-muted);
+}
+.lt-modulo[disabled] { color: var(--lt-faint); }
+.lt-modulo.lt-attivo { background: var(--lt-accent-soft); color: var(--lt-accent-text); }
+
+/* ---- pannello del modulo ---- */
+.lt-pannello {
+    width: var(--lt-panel-w);
+    flex: 0 0 var(--lt-panel-w);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: var(--lt-surface);
+    border-right: 1px solid var(--lt-border);
+    overflow: auto;
+}
+.lt-pannello-chiudi { position: absolute; top: 6px; right: 6px; z-index: 1; }
+.lt-pannello.lt-chiuso { width: 28px; flex-basis: 28px; overflow: hidden; }
+.lt-pannello.lt-chiuso .lt-pannello-corpo { display: none; }
+.lt-pannello-corpo { display: flex; flex-direction: column; min-height: 0; }
+
+/* ---- contenuto ---- */
+.lt-contenuto { flex: 1 1 600px; min-width: 0; display: flex; flex-direction: column; overflow: auto; }
+.lt-contenuto > * { flex: 1 1 auto; }
+
+/* ---- barra di stato ---- */
+.lt-barra-stato {
+    height: var(--lt-statusbar);
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 12px;
+    background: var(--lt-surface);
+    border-top: 1px solid var(--lt-border);
+    font-size: 11px;
+    color: var(--lt-muted);
+}
+.lt-stato-pagina { display: flex; gap: 16px; }
+
+/* ---- pulsanti icona ---- */
+.lt-icona-btn { min-width: 30px; width: 30px; height: 30px; padding: 0; }
+
+/* ============================================================
+   Elementi comuni delle pagine
+   ============================================================ */
+
+.lt-pagina { padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; }
+.lt-titolo-pagina { margin: 0; font-size: 18px; font-weight: 600; }
+.lt-vuoto { color: var(--lt-muted); font-style: italic; }
+
+.lt-griglia-schede { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.lt-scheda {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px;
+    background: var(--lt-surface);
+    border: 1px solid var(--lt-border);
+    border-radius: 8px;
+    color: var(--lt-text);
+    text-decoration: none;
+}
+.lt-scheda:hover { border-color: var(--lt-accent); }
+.lt-scheda-icona { color: var(--lt-accent); width: 18px; height: 18px; }
+.lt-scheda-titolo { font-weight: 600; }
+
+/* elenco nel pannello di sinistra */
+.lt-elenco { display: flex; flex-direction: column; padding: 8px 6px; }
+.lt-elenco-titolo { padding: 4px 8px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--lt-muted); }
+.lt-elenco-voce {
+    display: flex; align-items: center; gap: 8px;
+    height: 30px; padding: 0 8px;
+    border-radius: 6px;
+    color: var(--lt-text);
+    text-decoration: none;
+}
+.lt-elenco-voce:hover { background: var(--lt-surface-2); }
+.lt-elenco-voce vaadin-icon { width: 14px; height: 14px; color: var(--lt-muted); }
+.lt-elenco-voce.lt-attiva { background: var(--lt-accent-soft); color: var(--lt-accent-text); font-weight: 500; }

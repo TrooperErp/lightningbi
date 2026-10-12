@@ -1,6 +1,9 @@
-/* ============================================
-   LightningBI - Tema Dynamics 365 / TrooperERP
-   ============================================ */
+/* ============================================================
+   PONTE: stili delle pagine VECCHIE (ex tema "associa").
+   Solo classi lbi-*: nessuna regola globale su vaadin-button,
+   dialog, notifiche o html/body, per non sporcare la UI nuova.
+   Da cancellare quando l'ultima pagina vecchia e' sostituita.
+   ============================================================ */
 
 :root {
     --lbi-font: "Segoe UI", "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
@@ -32,30 +35,6 @@
     --lbi-excluded-text: #a19f9d;
     --lbi-state-selected: #22c55e;
     --lbi-state-selected-bg-soft: #e8f9ee;
-}
-
-[theme~="dark"] {
-    --lbi-bg: #201f1e;
-    --lbi-surface: #292827;
-    --lbi-surface-2: #201f1e;
-    --lbi-border: #3b3a39;
-    --lbi-text: #f3f2f1;
-    --lbi-text-muted: #c8c6c4;
-
-    --lbi-header-bg: #000000;
-
-    --lbi-excluded-bg: #3b3a39;
-    --lbi-excluded-text: #797775;
-    --lbi-state-selected-bg-soft: #113322;
-}
-
-html, body {
-    background: var(--lbi-bg);
-    color: var(--lbi-text);
-    font-family: var(--lbi-font);
-    height: 100%;
-    margin: 0;
-    padding: 0;
 }
 
 .lbi-app {
@@ -96,16 +75,6 @@ html, body {
 
 .lbi-menubar {
     background: transparent;
-}
-
-vaadin-menu-bar-button {
-    color: var(--lbi-header-fg) !important;
-    background: transparent !important;
-    border-radius: var(--lbi-radius) !important;
-}
-
-vaadin-menu-bar-button:hover {
-    background: rgba(255, 255, 255, 0.1) !important;
 }
 
 .lbi-theme-toggle {
@@ -358,10 +327,6 @@ vaadin-menu-bar-button:hover {
     text-overflow: ellipsis;
 }
 
-/* Card verde/grigio/escluso: Span cliccabili dentro un Div puro a
-   flex-wrap: i chip si adattano al proprio testo e vanno a capo in
-   modo naturale, invece di essere forzati in una griglia rigida a 2
-   colonne che tronca le etichette lunghe. */
 .lbi-filter-grid {
     display: flex;
     flex-wrap: wrap;
@@ -403,9 +368,6 @@ vaadin-menu-bar-button:hover {
     flex: 0 0 auto;
 }
 
-/* Card filtro nella pagina "Configura Analisi": griglia a più colonne
-   invece di impilarsi a tutta pagina (le card sono pensate per stare
-   in una colonna stretta di 420px, qui vanno affiancate). */
 .lbi-config-fields-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -418,13 +380,10 @@ vaadin-menu-bar-button:hover {
     width: auto;
 }
 
-vaadin-notification-card {
-    border-radius: 8px;
-}
-
 .lbi-wizard-dialog vaadin-grid::part(header-row) {
     height: auto;
 }
+
 .lbi-wizard-dialog vaadin-grid::part(header-cell) {
     height: auto;
     align-items: flex-start;
@@ -482,28 +441,6 @@ vaadin-notification-card {
     margin-top: 12px;
 }
 
-vaadin-button {
-    border-radius: 8px !important;
-    font-weight: 500;
-    box-shadow: none !important;
-    background: var(--lbi-accent) !important;
-    color: #ffffff !important;
-}
-
-vaadin-button:hover {
-    background: var(--lbi-accent-hover) !important;
-}
-
-vaadin-button[disabled] {
-    background: var(--lbi-accent-disabled) !important;
-    color: rgba(255,255,255,0.7) !important;
-    cursor: not-allowed;
-}
-
-/* ============================================
-   PIVOT PANEL - restyling Enterprise/SaaS
-   ============================================ */
-
 .lbi-pivot-panel {
     border: 1px solid var(--lbi-border);
     padding: 10px;
@@ -538,11 +475,6 @@ vaadin-button[disabled] {
     border-radius: 8px;
 }
 
-[theme~="dark"] .lbi-pivot-zone {
-    background: var(--lbi-surface-2);
-}
-
-/* Chip nel pool (non ancora assegnati) - rettangolo smussato, non pillola */
 .lbi-pivot-chip {
     display: inline-flex;
     align-items: center;
@@ -593,7 +525,6 @@ vaadin-button[disabled] {
     opacity: 0.7;
 }
 
-/* Chip posizionato dentro Righe/Colonne/Valori - tono su tono per tipo */
 .lbi-pivot-zone-chip {
     align-items: center;
     gap: 0;
@@ -623,7 +554,6 @@ vaadin-button[disabled] {
     white-space: nowrap;
 }
 
-/* Pulsanti su/giù/rimuovi: tono su tono con la chip, icona nera, sempre visibili */
 .lbi-pivot-chip-btn {
     min-width: 22px !important;
     width: 22px !important;
@@ -657,35 +587,11 @@ vaadin-button[disabled] {
     color: #1a1a1a !important;
 }
 
-vaadin-button[theme~="icon"] {
-    background: var(--lbi-accent) !important;
-    min-width: 32px !important;
-    width: 32px !important;
-    height: 32px !important;
-    --vaadin-icon-color: #ffffff;
-}
-
-vaadin-button[theme~="icon"]:hover {
-    background: var(--lbi-accent-hover) !important;
-}
-
-vaadin-confirm-dialog-overlay::part(cancel-button),
-vaadin-confirm-dialog-overlay::part(confirm-button),
-vaadin-confirm-dialog-overlay::part(reject-button) {
-    background: var(--lbi-accent) !important;
-    color: #ffffff !important;
-    border-radius: 8px !important;
-}
-
-vaadin-confirm-dialog-overlay::part(cancel-button):hover,
-vaadin-confirm-dialog-overlay::part(confirm-button):hover,
-vaadin-confirm-dialog-overlay::part(reject-button):hover {
-    background: var(--lbi-accent-hover) !important;
-}
 .flyout-item-active {
     background: var(--lbi-sidebar-bg-hover);
     border-left: 3px solid var(--lbi-accent);
 }
+
 .lbi-chart-type-gallery {
     display: flex;
     flex-direction: row;
@@ -719,28 +625,33 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.08);
     transform: translateY(-2px);
 }
+
 .lbi-charts-grid {
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
     gap: 16px;
 }
+
 .lbi-charts-panel {
     background: var(--lbi-surface);
     width: 100%;
     box-sizing: border-box;
 }
+
 .lbi-analysis-name {
     color: var(--lbi-header-fg);
     font-weight: 600;
     font-size: 14px;
 }
+
 .lbi-chart-placeholder {
     border: 1px dashed var(--lbi-border);
     border-radius: 8px;
     background: var(--lbi-surface-2);
     box-sizing: border-box;
 }
+
 .lbi-source-status-topbar {
     color: var(--lbi-header-fg);
     font-size: 12px;
@@ -750,23 +661,12 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
     text-overflow: ellipsis;
     max-width: 380px;
 }
-/* ============================================
-   Pagina Dataset: foglio "Impostazione filtri" (stile Qlik)
-   Da aggiungere IN FONDO a themes/associa/styles.css
-   ============================================ */
 
 :root {
     --lbi-qv-bg: #e9edfa;
     --lbi-qv-border: #4f56c9;
     --lbi-qv-title-bg: #ffffff;
     --lbi-qv-bar: #d9d9d9;
-}
-
-[theme~="dark"] {
-    --lbi-qv-bg: #1b1d2e;
-    --lbi-qv-border: #5b62d6;
-    --lbi-qv-title-bg: #292827;
-    --lbi-qv-bar: #3b3a39;
 }
 
 .lbi-qv-page {
@@ -780,8 +680,6 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
     box-sizing: border-box;
     overflow: auto;
 }
-
-/* ---- barra in alto ---- */
 
 .lbi-qv-top {
     display: flex;
@@ -816,8 +714,6 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
 .lbi-qv-clear {
     align-self: center;
 }
-
-/* ---- calendario: Anno / Mese / Giorno ---- */
 
 .lbi-qv-cal {
     display: flex;
@@ -877,7 +773,6 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
     min-width: 34px;
 }
 
-/* Stati come in Qlik: selezionato (verde), possibile (bianco), escluso (grigio). */
 .lbi-qv-chip-selezionato {
     background: #00c853;
     color: #ffffff;
@@ -893,8 +788,6 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
     background: var(--lbi-excluded-bg);
     color: var(--lbi-excluded-text);
 }
-
-/* ---- corpo ---- */
 
 .lbi-qv-body {
     display: flex;
@@ -979,8 +872,6 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
     font-style: italic;
 }
 
-/* ---- una riga di campo dentro il box di una tabella ---- */
-
 .lbi-qv-field-row {
     display: flex;
     align-items: center;
@@ -1020,12 +911,6 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
     background: var(--lbi-surface-2);
     border-bottom: 1px solid var(--lbi-border);
 }
-/* ============================================
-   Pagina Dataset: filtri collegati ai dati
-   Da aggiungere IN FONDO a themes/associa/styles.css, dopo il blocco precedente
-   ============================================ */
-
-/* ---- riga di campo con selezione (verde) o senza valori possibili (grigia) ---- */
 
 .lbi-qv-field-selected {
     background: #00c853;
@@ -1040,8 +925,6 @@ vaadin-confirm-dialog-overlay::part(reject-button):hover {
     background: var(--lbi-excluded-bg);
     color: var(--lbi-excluded-text);
 }
-
-/* ---- elenco dei valori di un campo ---- */
 
 .lbi-qv-search {
     padding: 2px 4px;
@@ -1058,8 +941,6 @@ vaadin-grid.lbi-qv-grid::part(cell) {
     min-height: 20px;
 }
 
-/* Stati come in Qlik: selezionato (verde), possibile (bianco), escluso (grigio).
-   Il nome della parte è applicato dalla griglia alle celle della riga. */
 vaadin-grid.lbi-qv-grid::part(lbi-qv-val-selezionato),
 vaadin-grid.lbi-qv-grid::part(lbi-qv-val-selezionato-cell) {
     background: #00c853;
@@ -1078,8 +959,6 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     background: var(--lbi-excluded-bg);
     color: var(--lbi-excluded-text);
 }
-
-/* ---- Selezioni correnti ---- */
 
 .lbi-qv-sel-row {
     display: grid;
@@ -1106,21 +985,12 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     font-weight: 600;
 }
 
-/* ============================================
-   Pagina Analisi (stesso linguaggio della pagina Dataset)
-   Da aggiungere IN FONDO a themes/associa/styles.css, dopo i blocchi della pagina Dataset
-   ============================================ */
-
-/* ---- schede delle analisi ---- */
-
 .lbi-qv-tabs {
     display: flex;
     align-items: center;
     gap: 8px;
     border-bottom: 1px solid var(--lbi-qv-border);
 }
-
-/* ---- campi a sinistra ---- */
 
 .lbi-qv-group-title {
     padding: 3px 8px;
@@ -1135,8 +1005,6 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
 .lbi-qv-field-add {
     cursor: default;
 }
-
-/* ---- centro: zone e pivot ---- */
 
 .lbi-qv-analisi-centro {
     flex-direction: column;
@@ -1184,19 +1052,9 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     flex: 0 0 auto;
 }
 
-
-
-/* ============================================
-   Interfaccia Dataset e Analisi: bordi arrotondati, pulsanti leggibili, pivot compatta
-   Da aggiungere IN FONDO a themes/associa/styles.css.
-   Sostituisce il blocco "Pulsanti terziari nelle pagine Dataset e Analisi" se l'avevi aggiunto: toglilo.
-   ============================================ */
-
 :root {
     --lbi-qv-radius: 8px;
 }
-
-/* ---- bordi arrotondati ---- */
 
 .lbi-qv-panel {
     border-radius: var(--lbi-qv-radius);
@@ -1225,8 +1083,6 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
 .lbi-qv-page vaadin-combo-box::part(input-field) {
     border-radius: var(--lbi-qv-radius);
 }
-
-/* ---- pulsanti piccoli dentro pannelli, schede e selezioni: sempre leggibili ---- */
 
 .lbi-qv-panel vaadin-button,
 .lbi-qv-tabs vaadin-button,
@@ -1259,8 +1115,6 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     opacity: 0.45;
 }
 
-/* ---- pivot compatta: non a tutta pagina ---- */
-
 .lbi-qv-risultato {
     max-width: 920px;
     border: 1px solid var(--lbi-qv-border);
@@ -1268,17 +1122,10 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     overflow: hidden;
 }
 
-
-/* Il pannello Misure è più largo: le voci portano nome e aggregazione */
 .lbi-qv-zones .lbi-qv-zone-panel:last-child {
     flex: 2 1 340px;
 }
 
-/* ============================================
-   Pagina Grafici (stesso linguaggio delle pagine Dataset e Analisi)
-   Da aggiungere IN FONDO a themes/associa/styles.css, dopo gli altri blocchi
-   ============================================ */
-
 .lbi-qv-tipi {
     display: flex;
     flex-wrap: wrap;
@@ -1354,93 +1201,6 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     gap: 8px;
     justify-content: flex-end;
 }
-
-/* ============================================
-   Pagina Grafici (stesso linguaggio delle pagine Dataset e Analisi)
-   Da aggiungere IN FONDO a themes/associa/styles.css, dopo gli altri blocchi
-   ============================================ */
-
-.lbi-qv-tipi {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 8px;
-}
-
-.lbi-qv-tipo {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    width: 96px;
-    height: 78px;
-    padding: 4px;
-    box-sizing: border-box;
-    background: var(--lbi-surface);
-    border: 1px solid var(--lbi-qv-border);
-    border-radius: var(--lbi-qv-radius);
-    cursor: pointer;
-    user-select: none;
-}
-
-.lbi-qv-tipo:hover {
-    background: var(--lbi-surface-2);
-}
-
-.lbi-qv-tipo svg {
-    width: 44px;
-    height: 32px;
-}
-
-.lbi-qv-tipo-nome {
-    font-size: 11px;
-    font-weight: 600;
-    text-align: center;
-    line-height: 1.1;
-}
-
-.lbi-qv-tipo-selezionato {
-    border-width: 2px;
-    background: var(--lbi-surface-2);
-    box-shadow: 0 0 0 2px var(--lbi-qv-border) inset;
-}
-
-.lbi-qv-form {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.lbi-qv-left-panel {
-    width: 300px;
-    flex: 0 0 300px;
-    align-self: flex-start;
-}
-
-.lbi-qv-opzioni {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 6px 8px;
-}
-
-.lbi-qv-anteprima {
-    min-height: 120px;
-    padding: 6px;
-}
-
-.lbi-qv-form-buttons {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-}
-
-/* ============================================
-   TEMA QLIK SENSE
-   Da aggiungere IN FONDO a themes/associa/styles.css, dopo tutti gli altri blocchi.
-   Per tornare al tema precedente basta togliere questo blocco.
-   ============================================ */
 
 :root {
     --lbi-font: "Source Sans Pro", "Source Sans 3", "Segoe UI", "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
@@ -1480,35 +1240,6 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     --lbi-qv-radius: 4px;
 }
 
-[theme~="dark"] {
-    --lbi-bg: #1f1f1f;
-    --lbi-surface: #2b2b2b;
-    --lbi-surface-2: #242424;
-    --lbi-border: #454545;
-    --lbi-text: #f2f2f2;
-    --lbi-text-muted: #bdbdbd;
-
-    --lbi-header-bg: #262626;
-    --lbi-header-fg: #f2f2f2;
-
-    --lbi-sidebar-bg: #262626;
-    --lbi-sidebar-bg-hover: #3a3a3a;
-    --lbi-sidebar-fg: #f2f2f2;
-    --lbi-sidebar-fg-muted: #bdbdbd;
-    --lbi-sidebar-border: #454545;
-
-    --lbi-state-selected-bg-soft: #12301f;
-    --lbi-excluded-bg: #5a5a5a;
-    --lbi-excluded-text: #e0e0e0;
-
-    --lbi-qv-bg: #1f1f1f;
-    --lbi-qv-border: #454545;
-    --lbi-qv-title-bg: #2b2b2b;
-    --lbi-qv-bar: #454545;
-}
-
-/* ---- barra in alto e menu laterale chiari ---- */
-
 .lbi-topmenu {
     border-bottom: 1px solid var(--lbi-border);
 }
@@ -1522,71 +1253,6 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
 .flyout-submenu {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
-
-vaadin-menu-bar-button:hover {
-    background: rgba(0, 0, 0, 0.06) !important;
-}
-
-[theme~="dark"] vaadin-menu-bar-button:hover {
-    background: rgba(255, 255, 255, 0.1) !important;
-}
-
-/* ---- pulsanti: neutri, verdi solo i principali ---- */
-
-vaadin-button {
-    background: var(--lbi-surface) !important;
-    color: var(--lbi-text) !important;
-    border: 1px solid #bfbfbf !important;
-    border-radius: var(--lbi-radius) !important;
-    --vaadin-icon-color: var(--lbi-text);
-}
-
-vaadin-button:hover {
-    background: var(--lbi-surface-2) !important;
-    border-color: #8c8c8c !important;
-}
-
-vaadin-button[theme~="primary"] {
-    background: var(--lbi-accent) !important;
-    border-color: var(--lbi-accent) !important;
-    color: #ffffff !important;
-    --vaadin-icon-color: #ffffff;
-}
-
-vaadin-button[theme~="primary"]:hover {
-    background: var(--lbi-accent-hover) !important;
-    border-color: var(--lbi-accent-hover) !important;
-}
-
-vaadin-button[disabled] {
-    background: var(--lbi-surface-2) !important;
-    color: #a6a6a6 !important;
-    border-color: var(--lbi-border) !important;
-}
-
-vaadin-button[theme~="icon"] {
-    background: var(--lbi-surface) !important;
-    --vaadin-icon-color: var(--lbi-text);
-}
-
-vaadin-button[theme~="icon"]:hover {
-    background: var(--lbi-surface-2) !important;
-}
-
-vaadin-confirm-dialog-overlay::part(confirm-button) {
-    background: var(--lbi-accent) !important;
-    border: 1px solid var(--lbi-accent) !important;
-    color: #ffffff !important;
-}
-
-vaadin-confirm-dialog-overlay::part(cancel-button),
-vaadin-confirm-dialog-overlay::part(reject-button) {
-    background: var(--lbi-surface) !important;
-    border: 1px solid #bfbfbf !important;
-    color: var(--lbi-text) !important;
-}
-
-/* ---- card e pannelli ---- */
 
 .lbi-qv-panel {
     border-radius: var(--lbi-qv-radius);
@@ -1616,12 +1282,6 @@ vaadin-confirm-dialog-overlay::part(reject-button) {
     border-radius: var(--lbi-qv-radius);
 }
 
-vaadin-notification-card {
-    border-radius: var(--lbi-qv-radius);
-}
-
-/* ---- stati dei valori in verde Qlik ---- */
-
 .lbi-qv-chip-selezionato,
 .lbi-qv-field-selected,
 vaadin-grid.lbi-qv-grid::part(lbi-qv-val-selezionato),
@@ -1649,8 +1309,6 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     color: var(--lbi-excluded-text);
 }
 
-/* ---- griglia dei risultati ---- */
-
 .lbi-results-grid {
     border: 1px solid var(--lbi-border);
     border-radius: var(--lbi-qv-radius);
@@ -1660,28 +1318,10 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     background: var(--lbi-state-selected-bg-soft) !important;
 }
 
-[theme~="dark"] .lbi-results-grid,
-[theme~="dark"] .lbi-results-grid::part(cell) {
-    background: var(--lbi-surface) !important;
-    color: var(--lbi-text) !important;
-}
-
-[theme~="dark"] .lbi-results-grid::part(header-cell) {
-    background: var(--lbi-surface-2) !important;
-    color: var(--lbi-text) !important;
-}
-
-/* ---- pivot: zone e chip più sobrie ---- */
-
 .lbi-pivot-zone {
     background: var(--lbi-surface-2);
     border-color: var(--lbi-border);
 }
-
-/* ============================================
-   Pagina Analisi: tutto nell'altezza della finestra, pivot e grafici affiancati.
-   Solo layout: l'aspetto resta quello dei blocchi sopra.
-   ============================================ */
 
 .lbi-qv-page-analisi {
     overflow: hidden;
@@ -1693,7 +1333,6 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     align-items: stretch;
 }
 
-/* colonna sinistra: i Campi riempiono lo spazio e scorrono dentro, le Selezioni correnti stanno in basso */
 .lbi-qv-page-analisi .lbi-qv-left {
     min-height: 0;
 }
@@ -1720,7 +1359,6 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
     overflow: auto;
 }
 
-/* centro: zone in alto, sotto pivot e grafici affiancati */
 .lbi-qv-page-analisi .lbi-qv-analisi-centro {
     min-height: 0;
     align-items: stretch;
@@ -1769,17 +1407,31 @@ vaadin-grid.lbi-qv-grid::part(lbi-qv-val-escluso-cell) {
 }
 
 .lbi-qv-field-row { display: flex; align-items: center; gap: 4px; }
+
 .lbi-qv-field-main { flex: 1 1 auto; display: flex; justify-content: space-between; gap: 8px; cursor: pointer; padding: 2px 6px; border-radius: 3px; border: 1px solid transparent; background: #fff; }
+
 .lbi-qv-field-main:hover { border-color: var(--lbi-accent); }
+
 .lbi-qv-field-count { font-size: 11px; color: #777; white-space: nowrap; }
+
 .lbi-qv-field-selected .lbi-qv-field-main { background: #009845; color: #fff; }
+
 .lbi-qv-field-selected .lbi-qv-field-count { color: #fff; }
+
 .lbi-qv-field-excluded .lbi-qv-field-main { background: #ccc; color: #666; }
+
 .lbi-qv-field-inuso .lbi-qv-field-name { font-weight: 600; }
+
 .lbi-qv-field-row vaadin-menu-bar { flex: 0 0 auto; }
+
 .lbi-qv-top { align-items: flex-start; }
+
 .lbi-qv-top .lbi-qv-zones { flex: 1 1 0; min-width: 0; display: flex; gap: 8px; }
+
 .lbi-qv-top .lbi-qv-zones > * { flex: 1 1 0; min-width: 0; }
+
 .lbi-qv-top .lbi-qv-zones .lbi-qv-panel-body { max-height: 76px; overflow: auto; }
+
 .lbi-qv-list { max-height: none; }
+
 .lbi-qv-pivot-box > :first-child:empty { display: none; }

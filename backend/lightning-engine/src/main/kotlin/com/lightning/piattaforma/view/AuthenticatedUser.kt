@@ -1,4 +1,4 @@
-package com.lightning.bi.view
+package com.lightning.piattaforma.view
 
 import com.vaadin.flow.server.VaadinSession
 import java.util.UUID

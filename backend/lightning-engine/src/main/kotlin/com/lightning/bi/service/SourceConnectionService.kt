@@ -2,6 +2,7 @@ package com.lightning.bi.service
 
 import com.lightning.bi.model.SourceConnection
 import com.lightning.bi.repository.SourceConnectionRepository
+import com.lightning.piattaforma.service.CryptoService
 import org.springframework.stereotype.Service
 import java.time.Instant
 import java.util.UUID

@@ -1,4 +1,4 @@
-package com.lightning.bi.service
+package com.lightning.piattaforma.service
 
 import com.lightning.piattaforma.model.User
 import com.lightning.piattaforma.repository.RoleRepository

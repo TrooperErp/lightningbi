@@ -2,7 +2,8 @@ package com.lightning.bi.service
 
 import com.lightning.bi.repository.CampoTestoRepository
 import com.lightning.bi.repository.RegistryRepository
-import com.lightning.bi.view.CurrentUserHolder
+import com.lightning.piattaforma.view.CurrentUserHolder
+import com.lightning.piattaforma.service.AdminGuard
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.util.UUID

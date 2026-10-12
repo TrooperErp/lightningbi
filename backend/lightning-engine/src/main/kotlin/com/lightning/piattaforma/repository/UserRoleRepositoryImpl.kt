@@ -1,4 +1,4 @@
-package com.lightning.bi.repository
+package com.lightning.piattaforma.repository
 
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.JdbcTemplate

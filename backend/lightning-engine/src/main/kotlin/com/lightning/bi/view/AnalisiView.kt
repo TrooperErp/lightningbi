@@ -7,9 +7,9 @@ import com.lightning.bi.model.TipoAggregazione
 import com.lightning.bi.model.UserPivotState
 import com.lightning.bi.repository.UserPivotStateRepository
 import com.lightning.bi.service.AccessoDatasetService
-import com.lightning.bi.service.AdminGuard
+import com.lightning.piattaforma.service.AdminGuard
 import com.lightning.bi.service.AnalisiService
-import com.lightning.bi.service.AuthService
+import com.lightning.piattaforma.service.AuthService
 import com.lightning.bi.service.CalendarioService
 import com.lightning.bi.service.CampoMisurabile
 import com.lightning.bi.service.ChartService
@@ -21,6 +21,10 @@ import com.lightning.bi.service.PoolQuery
 import com.lightning.bi.service.SezioneAccessoService
 import com.lightning.bi.service.StatoValore
 import com.lightning.bi.service.ValoreFiltro
+import com.lightning.piattaforma.view.AdminView
+import com.lightning.piattaforma.view.CurrentUserHolder
+import com.lightning.piattaforma.view.LbiAppShell
+import com.lightning.piattaforma.view.LbiSidebarMenu
 import com.vaadin.flow.component.Component
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant

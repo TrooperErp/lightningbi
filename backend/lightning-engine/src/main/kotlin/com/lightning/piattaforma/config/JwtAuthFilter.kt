@@ -1,7 +1,7 @@
-package com.lightning.bi.config
+package com.lightning.piattaforma.config
 
-import com.lightning.bi.service.JwtService
-import com.lightning.bi.service.SessionService
+import com.lightning.piattaforma.service.JwtService
+import com.lightning.piattaforma.service.SessionService
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse

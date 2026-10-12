@@ -3,10 +3,11 @@ package com.lightning.bi.service
 import com.lightning.bi.model.Area
 import com.lightning.bi.repository.AreaAccessoRepository
 import com.lightning.bi.repository.RegistryRepository
-import com.lightning.bi.repository.RoleRepository
-import com.lightning.bi.repository.UserRepository
-import com.lightning.bi.repository.UserRoleRepository
-import com.lightning.bi.view.CurrentUserHolder
+import com.lightning.piattaforma.repository.RoleRepository
+import com.lightning.piattaforma.repository.UserRepository
+import com.lightning.piattaforma.repository.UserRoleRepository
+import com.lightning.piattaforma.view.CurrentUserHolder
+import com.lightning.piattaforma.service.AdminGuard
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID

@@ -1,4 +1,4 @@
-package com.lightning.bi.view
+package com.lightning.piattaforma.view
 
 import com.vaadin.flow.component.Component
 import com.vaadin.flow.component.html.Div

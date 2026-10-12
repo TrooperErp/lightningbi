@@ -16,7 +16,7 @@ import com.lightning.bi.repository.ImportedTableRepository
 import com.lightning.bi.repository.SorgenteTabellaRepository
 import com.lightning.bi.repository.TableSyncRepository
 import com.lightning.bi.service.ColumnProposal
-import com.lightning.bi.service.EmailService
+import com.lightning.piattaforma.service.EmailService
 import com.lightning.bi.service.Naming
 import com.lightning.bi.service.SymbolLookupService
 import com.lightning.bi.service.SymbolTableService

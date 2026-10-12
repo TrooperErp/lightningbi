@@ -1,4 +1,4 @@
 // When this file is imported, global styles are automatically applied
 
-import 'themes/associa/styles.css';
+import '../../resources/META-INF/resources/styles/styles.css';
 
