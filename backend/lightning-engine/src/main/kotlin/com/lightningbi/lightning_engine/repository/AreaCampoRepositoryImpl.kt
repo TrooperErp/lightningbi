@@ -33,13 +33,14 @@ class AreaCampoRepositoryImpl(
     override fun save(campo: AreaCampo): AreaCampo {
         jdbcTemplate.update(
             """
-            INSERT INTO lbi_area_campo (area_tabella_id, colonna, nome_campo, escluso)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO lbi_area_campo (area_tabella_id, colonna, nome_campo, escluso, etichetta)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (area_tabella_id, colonna) DO UPDATE SET
                 nome_campo = EXCLUDED.nome_campo,
-                escluso = EXCLUDED.escluso
+                escluso = EXCLUDED.escluso,
+                etichetta = EXCLUDED.etichetta
             """.trimIndent(),
-            campo.areaTabellaId, campo.colonna, campo.nomeCampo, campo.escluso
+            campo.areaTabellaId, campo.colonna, campo.nomeCampo, campo.escluso, campo.etichetta
         )
         return campo
     }
@@ -61,6 +62,7 @@ class AreaCampoRepositoryImpl(
         areaTabellaId = UUID.fromString(rs.getString("area_tabella_id")),
         colonna = rs.getString("colonna"),
         nomeCampo = rs.getString("nome_campo"),
-        escluso = rs.getBoolean("escluso")
+        escluso = rs.getBoolean("escluso"),
+        etichetta = rs.getString("etichetta")
     )
 }
