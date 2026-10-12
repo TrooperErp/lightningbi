@@ -1,8 +1,5 @@
 import { injectGlobalWebcomponentCss } from 'Frontend/generated/jar-resources/theme-util.js';
 
-import { injectGlobalCss } from 'Frontend/generated/jar-resources/theme-util.js';
-
-import $cssFromFile_0 from '@vaadin/vaadin-lumo-styles/lumo.css?inline';
 import '@vaadin/vertical-layout/src/vaadin-vertical-layout.js';
 import '@vaadin/text-field/src/vaadin-text-field.js';
 import '@vaadin/tooltip/src/vaadin-tooltip.js';
@@ -51,23 +48,25 @@ import 'Frontend/generated/jar-resources/ReactRouterOutletElement.tsx';
 import 'react-router';
 import 'react';
 
-injectGlobalWebcomponentCss($cssFromFile_0.toString());
 const loadOnDemand = (key) => {
   const pending = [];
   if (key === '5eccde012ab3df3e1157a4fa9843b3759c529230285b1129dbba60233fb5a152') {
     pending.push(import('./chunks/chunk-1c7d2aed6991e3808e84b14e704e4656093347f41f4ea801bad8232b67a4e03e.js'));
   }
+  if (key === '080703f4ba1404f1f5aa47d3ca6c746d533cd0b39639b080ab49a209bec3c357') {
+    pending.push(import('./chunks/chunk-83a0e17b1634bbb2fcc9a19b2d0018f91f45cbd34bdebeedb82d24f5af50de93.js'));
+  }
   if (key === 'ff3cfb77135cede2c99a205d73e0c89b12e01b7f1aebcd8b6e1c78924d6eacc4') {
     pending.push(import('./chunks/chunk-5447f1d07dbd2890b3340bee8e5e490aeeeb342bf2ba4b2654d51f4630bc1acb.js'));
   }
+  if (key === '5e03fb938bb98c13bf814600406c23b60438fe5809bbb0fea645427a9549e02a') {
+    pending.push(import('./chunks/chunk-b124c8ebd51fa4f491b9fdf8cfe1b3c903b55682b7febadec508ab2a3dd8c994.js'));
+  }
   if (key === 'af552d47e732a0595519f76b6caa6597d3a85a1579bf516d8bc6dfead8790700') {
-    pending.push(import('./chunks/chunk-a74a01a1c8c3ca56ae57ba86c80565fdb79911af44433524b057e67a80debcde.js'));
+    pending.push(import('./chunks/chunk-1e80533d3890df410e47bc4fdb949cd325b2c302eb8a3a3ec77d8cb8d48e6c52.js'));
   }
   if (key === '89e048d437bcab14f5ec1ed479b7d806d73ea11559040cef7f18a17e2e5b529e') {
     pending.push(import('./chunks/chunk-b124c8ebd51fa4f491b9fdf8cfe1b3c903b55682b7febadec508ab2a3dd8c994.js'));
-  }
-  if (key === 'c7b58085b49e9839cd0ad4e1aa70d2850568d24b7094b1344ed0d626d16819e2') {
-    pending.push(import('./chunks/chunk-f23099b023c00e2acb7f4d19ec53ce594b1916f3950159b4f2db990fc14470b3.js'));
   }
   if (key === 'f76a41bdb8dbc9b33261cc5e110b67bebe9fca78bc402cc5c0f4cdd094c8e89f') {
     pending.push(import('./chunks/chunk-de1ec46e8713cf5b595df123c2f8807aa54052f9279ec02a9e2bfa0cc29ca4bc.js'));

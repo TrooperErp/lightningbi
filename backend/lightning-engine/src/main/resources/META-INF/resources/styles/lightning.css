@@ -230,3 +230,30 @@ html, body {
 .lt-elenco-voce:hover { background: var(--lt-surface-2); }
 .lt-elenco-voce vaadin-icon { width: 14px; height: 14px; color: var(--lt-muted); }
 .lt-elenco-voce.lt-attiva { background: var(--lt-accent-soft); color: var(--lt-accent-text); font-weight: 500; }
+
+/* ============================================================
+   Barra delle selezioni
+   ============================================================ */
+
+.lt-barra-sel {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 8px 12px;
+    background: var(--lt-surface);
+    border-bottom: 1px solid var(--lt-border);
+}
+.lt-separatore { width: 1px; height: 20px; background: var(--lt-border); margin: 0 4px; }
+.lt-sel-chips { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.lt-chip-sel {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 26px; padding: 0 2px 0 8px;
+    border-radius: 6px;
+    background: var(--lt-sel-soft);
+    border: 1px solid var(--lt-sel-border);
+    font-size: 12px;
+    max-width: 420px;
+}
+.lt-chip-campo { color: var(--lt-muted); white-space: nowrap; }
+.lt-chip-valori { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lt-chip-btn { min-width: 22px; width: 22px; height: 22px; padding: 0; margin: 0; }
+.lt-chip-btn vaadin-icon { width: 14px; height: 14px; }
+.lt-chip-sel.lt-bloccata { border-style: dashed; }
