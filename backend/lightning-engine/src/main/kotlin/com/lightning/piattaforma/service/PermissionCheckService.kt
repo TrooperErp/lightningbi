@@ -1,8 +1,8 @@
 package com.lightning.bi.service
 
-import com.lightning.bi.repository.PermissionRepository
-import com.lightning.bi.repository.RolePermissionRepository
-import com.lightning.bi.repository.RoleRepository
+import com.lightning.piattaforma.repository.PermissionRepository
+import com.lightning.piattaforma.repository.RolePermissionRepository
+import com.lightning.piattaforma.repository.RoleRepository
 import org.springframework.stereotype.Service
 
 /**

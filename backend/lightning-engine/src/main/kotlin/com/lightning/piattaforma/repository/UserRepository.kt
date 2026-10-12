@@ -1,6 +1,6 @@
 package com.lightning.bi.repository
 
-import com.lightning.bi.model.User
+import com.lightning.piattaforma.model.User
 import java.util.UUID
 
 interface UserRepository {

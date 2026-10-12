@@ -1,9 +1,9 @@
 package com.lightning.bi.service
 
-import com.lightning.bi.model.User
-import com.lightning.bi.repository.RoleRepository
-import com.lightning.bi.repository.UserRepository
-import com.lightning.bi.repository.UserRoleRepository
+import com.lightning.piattaforma.model.User
+import com.lightning.piattaforma.repository.RoleRepository
+import com.lightning.piattaforma.repository.UserRepository
+import com.lightning.piattaforma.repository.UserRoleRepository
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
 import org.springframework.stereotype.Service
 import java.time.LocalDateTime

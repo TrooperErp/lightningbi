@@ -1,6 +1,6 @@
 package com.lightning.bi.view
 
-import com.lightning.bi.repository.UserRepository
+import com.lightning.piattaforma.repository.UserRepository
 import com.lightning.bi.service.AuthService
 import com.lightning.bi.service.JwtService
 import com.lightning.bi.service.SessionService

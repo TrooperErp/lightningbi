@@ -1,6 +1,6 @@
 package com.lightning.bi.repository
 
-import com.lightning.bi.model.Permission
+import com.lightning.piattaforma.model.Permission
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper

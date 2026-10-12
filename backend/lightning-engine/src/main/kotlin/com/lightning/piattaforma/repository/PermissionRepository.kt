@@ -1,6 +1,6 @@
 package com.lightning.bi.repository
 
-import com.lightning.bi.model.Permission
+import com.lightning.piattaforma.model.Permission
 import java.util.UUID
 
 interface PermissionRepository {

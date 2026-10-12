@@ -1,6 +1,6 @@
 package com.lightning.bi.repository
 
-import com.lightning.bi.model.Role
+import com.lightning.piattaforma.model.Role
 import java.util.UUID
 
 interface RoleRepository {

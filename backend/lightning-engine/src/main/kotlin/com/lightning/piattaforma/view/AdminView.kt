@@ -1,10 +1,10 @@
 package com.lightning.bi.view
 
-import com.lightning.bi.model.Role
-import com.lightning.bi.model.User
-import com.lightning.bi.repository.PermissionRepository
-import com.lightning.bi.repository.RolePermissionRepository
-import com.lightning.bi.repository.RoleRepository
+import com.lightning.piattaforma.model.Role
+import com.lightning.piattaforma.model.User
+import com.lightning.piattaforma.repository.PermissionRepository
+import com.lightning.piattaforma.repository.RolePermissionRepository
+import com.lightning.piattaforma.repository.RoleRepository
 import com.lightning.bi.service.AuthService
 import com.lightning.bi.service.PermissionCheckService
 import com.lightning.bi.service.UserService

@@ -1,9 +1,9 @@
 package com.lightning.bi.service
 
-import com.lightning.bi.model.Session
-import com.lightning.bi.repository.SessionRepository
-import com.lightning.bi.repository.UserRepository
-import com.lightning.bi.repository.UserRoleRepository
+import com.lightning.piattaforma.model.Session
+import com.lightning.piattaforma.repository.SessionRepository
+import com.lightning.piattaforma.repository.UserRepository
+import com.lightning.piattaforma.repository.UserRoleRepository
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.time.LocalDateTime

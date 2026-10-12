@@ -1,6 +1,6 @@
 package com.lightning.bi.repository
 
-import com.lightning.bi.model.Session
+import com.lightning.piattaforma.model.Session
 import java.util.UUID
 
 interface SessionRepository {
