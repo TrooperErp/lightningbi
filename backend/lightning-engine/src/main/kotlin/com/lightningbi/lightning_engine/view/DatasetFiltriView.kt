@@ -19,6 +19,7 @@ import com.lightningbi.lightning_engine.service.DatasetBozza
 import com.lightningbi.lightning_engine.service.DatasetService
 import com.lightningbi.lightning_engine.service.FiltriService
 import com.lightningbi.lightning_engine.service.PivotViewService
+import com.lightningbi.lightning_engine.service.PoolQuery
 import com.lightningbi.lightning_engine.service.RiferimentoCampo
 import com.lightningbi.lightning_engine.service.SezioneAccessoService
 import com.lightningbi.lightning_engine.service.StatoValore
@@ -54,8 +55,8 @@ import java.util.UUID
  *   (possibili/totali). Un clic su un campo ne apre l'elenco dei valori.
  * - Valori: verde selezionato, bianco possibile, grigio escluso. Un clic aggiunge
  *   o toglie il valore; un valore grigio toglie le selezioni in conflitto.
- * - Selezioni correnti (con la X per togliere un campo), Cancella selezioni e
- *   Indietro / Avanti (cronologia condivisa con Analisi, come in Qlik).
+ * - Selezioni correnti (lucchetto e X per campo), Cancella selezioni, Indietro /
+ *   Avanti e Blocca / Sblocca, come in Qlik. Cronologia e blocchi sono condivisi con Analisi.
  * - Barra Anno / Mese / Giorno (derivati del campo data del calendario) e, per
  *   l'admin, Ditta. I Preferiti sono ancora da fare.
  *
@@ -75,7 +76,8 @@ class DatasetFiltriView(
     private val areaSourceRepository: AreaSourceRepository,
     private val adminGuard: AdminGuard,
     private val authService: AuthService,
-    private val sezioneAccessoService: SezioneAccessoService
+    private val sezioneAccessoService: SezioneAccessoService,
+    private val poolQuery: PoolQuery
 ) : VerticalLayout(), HasUrlParameter<String>, AfterNavigationObserver {
 
     private val log = LoggerFactory.getLogger(DatasetFiltriView::class.java)
@@ -85,6 +87,9 @@ class DatasetFiltriView(
     // Stato della pagina aperta.
     private var areaCorrente: Area? = null
     private val selezioni = mutableMapOf<UUID, Set<Long>>()
+
+    /** Campi con la selezione bloccata (Blocca di Qlik): i clic non la cambiano, Cancella non la toglie. */
+    private val bloccati = mutableSetOf<UUID>()
     private val campiUi = mutableListOf<CampoUi>()
     private val nomiCampi = mutableMapOf<UUID, String>()
     private val corpoSelezioni = Div()
@@ -99,6 +104,16 @@ class DatasetFiltriView(
         element.setAttribute("title", "Rifai la selezione annullata")
         addClickListener { avanti() }
     }
+    private val bloccaButton = Button("Blocca", Icon(VaadinIcon.LOCK)).apply {
+        addClassName("lbi-qv-clear")
+        element.setAttribute("title", "Blocca tutte le selezioni correnti")
+        addClickListener { bloccaTutto() }
+    }
+    private val sbloccaButton = Button("Sblocca", Icon(VaadinIcon.UNLOCK)).apply {
+        addClassName("lbi-qv-clear")
+        element.setAttribute("title", "Sblocca tutte le selezioni")
+        addClickListener { sbloccaTutto() }
+    }
 
     // Barra del calendario: componente ("anno", "mese", "giorno") -> dimensione del campo derivato.
     private val dimCalendario = mutableMapOf<String, UUID>()
@@ -108,10 +123,10 @@ class DatasetFiltriView(
 
     // Ditta (solo admin): la dimensione del campo azienda, se il dataset ce l'ha.
     private var dimDitta: UUID? = null
+    private val contenitoreDitte = Div().apply { className = "lbi-qv-chips lbi-qv-chips-anno" }
 
     // Campo azienda di un non-admin: forzato dal section access, quindi non si mostra.
     private var dimNascosta: UUID? = null
-    private val contenitoreDitte = Div().apply { className = "lbi-qv-chips lbi-qv-chips-anno" }
 
     override fun setParameter(event: BeforeEvent, @OptionalParameter parameter: String?) {
         parametro = parameter
@@ -140,6 +155,7 @@ class DatasetFiltriView(
         dimDitta = if (area != null && adminGuard.isAdmin()) sezioneAccessoService.dimensioneAzienda(area.id) else null
         dimNascosta = if (area != null && !adminGuard.isAdmin()) sezioneAccessoService.dimensioneAzienda(area.id) else null
         selezioni.clear()
+        bloccati.clear()
         areaCorrente = area
 
         val bozza = area?.let { datasetService.carica(it.id) }
@@ -209,7 +225,7 @@ class DatasetFiltriView(
                 addThemeVariants(ButtonVariant.LUMO_PRIMARY)
             }
 
-        val barra = Div(titolo, cancella, indietroButton, avantiButton)
+        val barra = Div(titolo, cancella, indietroButton, avantiButton, bloccaButton, sbloccaButton)
         // Come il Reload di Qlik: solo chi costruisce il modello (admin) ricarica i dati.
         if (adminGuard.isAdmin()) {
             barra.add(
@@ -303,7 +319,7 @@ class DatasetFiltriView(
         } else {
             campi.sortedBy { it.etichetta.lowercase() }.forEach { campo ->
                 val dimId = dimensioni[occorrenzaId to campo.colonna] ?: return@forEach
-                if (dimId in dimCalendario.values) return@forEach // sta nella barra in alto
+                if (dimId in dimCalendario.values) return@forEach  // sta nella barra in alto
                 if (dimId == dimNascosta) return@forEach  // azienda forzata: il non-admin non la vede
                 val ui = CampoUi(area.id, dimId, campo.etichetta)
                 campiUi += ui
@@ -357,11 +373,20 @@ class DatasetFiltriView(
 
     // ================= Selezioni =================
 
+    /**
+     * Le selezioni salvate dell'utente e i loro blocchi. Quelle su campi che il dataset non ha più
+     * (campo tolto o rinominato) si scartano e lo stato pulito si salva: niente più "?".
+     */
     private fun caricaSelezioni(area: Area) {
         val utente = CurrentUserHolder.get() ?: return
-        userPivotStateRepository.find(utente.userId, area.id)?.selections?.forEach { (dimId, valori) ->
-            if (valori.isNotEmpty()) selezioni[dimId] = valori
+        val stato = userPivotStateRepository.find(utente.userId, area.id) ?: return
+        val valide = registryRepository.findDimensioniByArea(area.id).map { it.dimensioneId }.toSet()
+        stato.selections.forEach { (dimId, valori) ->
+            if (valori.isNotEmpty() && dimId in valide) selezioni[dimId] = valori
         }
+        // Un blocco vale solo su un campo che ha una selezione.
+        bloccati.addAll(stato.bloccati.filter { it in selezioni })
+        if (stato.selections.filterValues { it.isNotEmpty() }.keys.any { it !in valide }) salvaSelezioni()
     }
 
     private fun salvaSelezioni() {
@@ -369,9 +394,10 @@ class DatasetFiltriView(
         val utente = CurrentUserHolder.get() ?: return
         val attuale = userPivotStateRepository.find(utente.userId, area.id)
         val nuove = selezioni.toMap()
+        val blocchi = bloccati.filter { it in selezioni }.toSet()
         userPivotStateRepository.save(
-            attuale?.copy(selections = nuove, updatedAt = java.time.Instant.now())
-                ?: UserPivotState(utente.userId, area.id, null, nuove)
+            attuale?.copy(selections = nuove, bloccati = blocchi, updatedAt = java.time.Instant.now())
+                ?: UserPivotState(utente.userId, area.id, null, nuove, blocchi)
         )
     }
 
@@ -379,9 +405,13 @@ class DatasetFiltriView(
      * Un clic su un valore lo aggiunge alla selezione del campo, un altro clic sullo stesso lo
      * toglie. Più valori dello stesso campo si combinano in OR, i campi diversi in AND.
      * Un valore ESCLUSO (grigio) si può selezionare: come in Qlik le selezioni in conflitto
-     * con quel valore si annullano.
+     * con quel valore si annullano, ma non quelle bloccate.
      */
     private fun alClic(dimId: UUID, valore: ValoreFiltro, @Suppress("UNUSED_PARAMETER") ctrl: Boolean) {
+        if (dimId in bloccati) {
+            Notification.show("La selezione di questo campo è bloccata: sbloccala per cambiarla", 3000, Notification.Position.BOTTOM_START)
+            return
+        }
         val nuove = selezioni.toMutableMap()
         val attuali = nuove[dimId].orEmpty()
         if (valore.id in attuali) {
@@ -398,6 +428,11 @@ class DatasetFiltriView(
                 log.warn("Calcolo dei conflitti fallito per la dimensione {}", dimId, e)
                 emptySet()
             }
+            // Come in Qlik: un valore in conflitto con una selezione bloccata non si può selezionare.
+            if (daTogliere.any { it in bloccati }) {
+                Notification.show("Valore in conflitto con una selezione bloccata", 3000, Notification.Position.BOTTOM_START)
+                return
+            }
             daTogliere.forEach { nuove.remove(it) }
         }
         nuove[dimId] = attuali + valore.id
@@ -410,10 +445,14 @@ class DatasetFiltriView(
         applicaSelezioni(nuove)
     }
 
-    /** Unico punto in cui cambiano le selezioni: cronologia (tranne Indietro/Avanti), salvataggio, aggiornamento. */
+    /**
+     * Unico punto in cui cambiano le selezioni: le bloccate restano com'erano, cronologia
+     * (tranne Indietro/Avanti), salvataggio, aggiornamento.
+     */
     private fun applicaSelezioni(nuove: Map<UUID, Set<Long>>, registra: Boolean = true) {
         val area = areaCorrente ?: return
-        val pulite = nuove.filterValues { it.isNotEmpty() }
+        val conBlocchi = nuove.toMutableMap().apply { bloccati.forEach { d -> selezioni[d]?.let { put(d, it) } } }
+        val pulite = conBlocchi.filterValues { it.isNotEmpty() }
         if (pulite == selezioni.toMap()) {
             aggiornaPulsantiCronologia()
             return
@@ -426,7 +465,7 @@ class DatasetFiltriView(
         aggiornaPulsantiCronologia()
     }
 
-    /** Come "Cancella selezioni" di Qlik: svuota le selezioni del dataset, condivise con Analisi e Grafici. */
+    /** Come "Cancella selezioni" di Qlik: svuota le selezioni (tranne le bloccate), condivise con Analisi e Grafici. */
     private fun cancellaSelezioni() {
         if (selezioni.isEmpty()) return
         applicaSelezioni(emptyMap())
@@ -445,31 +484,70 @@ class DatasetFiltriView(
         aggiornaPulsantiCronologia()
     }
 
+    /** Blocca tutte le selezioni correnti, come Blocca di Qlik. */
+    private fun bloccaTutto() {
+        if (selezioni.isEmpty()) return
+        bloccati.addAll(selezioni.keys)
+        dopoCambioBlocchi()
+    }
+
+    /** Toglie tutti i blocchi. */
+    private fun sbloccaTutto() {
+        if (bloccati.isEmpty()) return
+        bloccati.clear()
+        dopoCambioBlocchi()
+    }
+
+    /** Blocca o sblocca un solo campo (lucchetto in Selezioni correnti). */
+    private fun cambiaBlocco(dimId: UUID) {
+        if (!bloccati.remove(dimId) && dimId in selezioni) bloccati.add(dimId)
+        dopoCambioBlocchi()
+    }
+
+    /** I blocchi non cambiano i dati: si salvano e si aggiornano solo Selezioni correnti e pulsanti. */
+    private fun dopoCambioBlocchi() {
+        salvaSelezioni()
+        aggiornaSelezioniCorrenti()
+        aggiornaPulsantiCronologia()
+    }
+
     private fun aggiornaPulsantiCronologia() {
         val area = areaCorrente
         indietroButton.isEnabled = area != null && CronologiaSelezioni.puoIndietro(area.id)
         avantiButton.isEnabled = area != null && CronologiaSelezioni.puoAvanti(area.id)
+        bloccaButton.isEnabled = selezioni.keys.any { it !in bloccati }
+        sbloccaButton.isEnabled = bloccati.isNotEmpty()
     }
 
     // ================= Aggiornamento =================
 
+    /**
+     * Dopo ogni cambio: contatori dei campi e barra (Anno, Mese, Giorno, Ditta) partono tutti
+     * insieme, poi si mostrano. Il vincolo della ditta si calcola qui, nel thread della pagina:
+     * i thread del pool non hanno la sessione dell'utente.
+     */
     private fun aggiornaTutto() {
-        aggiornaContatori()
-        aggiornaCalendario()
-        campiUi.forEach { campo ->
-            try {
-                campo.lista?.takeIf { it.isVisible }?.aggiorna()
-            } catch (e: Exception) {
-                log.warn("Aggiornamento dell'elenco di '{}' fallito", campo.nome, e)
-            }
-        }
-        aggiornaSelezioniCorrenti()
-    }
-
-    private fun aggiornaContatori() {
         val area = areaCorrente ?: return
+        val sel = selezioni.toMap()
+        val vincolo = try {
+            sezioneAccessoService.vincolo(area.id)
+        } catch (e: SecurityException) {
+            Notification.show(e.message ?: "Accesso non consentito", 6000, Notification.Position.MIDDLE)
+            return
+        }
+        val dimContatori = campiUi.map { it.dimId }
+
+        val fContatori = poolQuery.avvia { filtriService.contatori(area.id, sel, dimContatori, vincolo) }
+        fun valori(dimId: UUID?) = dimId?.let { d ->
+            poolQuery.avvia { filtriService.valori(area.id, sel, d, null, 0, MAX_CHIP, vincolo) }
+        }
+        val fAnni = valori(dimCalendario["anno"])
+        val fMesi = valori(dimCalendario["mese"])
+        val fGiorni = valori(dimCalendario["giorno"])
+        val fDitte = valori(dimDitta)
+
         try {
-            val contatori = filtriService.contatori(area.id, selezioni, campiUi.map { it.dimId })
+            val contatori = poolQuery.attendi(fContatori)
             campiUi.forEach { it.mostra(contatori[it.dimId]) }
         } catch (e: Exception) {
             log.warn("Calcolo dei contatori fallito per il dataset {}", area.id, e)
@@ -479,29 +557,22 @@ class DatasetFiltriView(
                 8000, Notification.Position.MIDDLE
             )
         }
-    }
 
-    /** Rilegge Anno, Mese, Giorno (e Ditta per l'admin) dai dati: ogni valore ha il suo stato. */
-    private fun aggiornaCalendario() {
-        val area = areaCorrente ?: return
-        aggiornaDitte(area.id)
-        if (dimCalendario.isEmpty()) return
         try {
             dimCalendario["anno"]?.let { dimId ->
-                val valori = filtriService.valori(area.id, selezioni, dimId, null, 0, MAX_CHIP)
                 contenitoreAnni.removeAll()
-                valori.sortedBy { it.etichetta.toLongOrNull() ?: Long.MAX_VALUE }
+                poolQuery.attendi(fAnni!!).sortedBy { it.etichetta.toLongOrNull() ?: Long.MAX_VALUE }
                     .forEach { contenitoreAnni.add(chipValore(dimId, it)) }
             }
             dimCalendario["mese"]?.let { dimId ->
-                val perEtichetta = filtriService.valori(area.id, selezioni, dimId, null, 0, MAX_CHIP).associateBy { it.etichetta }
+                val perEtichetta = poolQuery.attendi(fMesi!!).associateBy { it.etichetta }
                 contenitoreMesi.removeAll()
                 calendarioService.nomiMesi().forEach { nome ->
                     contenitoreMesi.add(perEtichetta[nome]?.let { chipValore(dimId, it) } ?: chip(nome))
                 }
             }
             dimCalendario["giorno"]?.let { dimId ->
-                val perEtichetta = filtriService.valori(area.id, selezioni, dimId, null, 0, MAX_CHIP).associateBy { it.etichetta }
+                val perEtichetta = poolQuery.attendi(fGiorni!!).associateBy { it.etichetta }
                 contenitoreGiorni.removeAll()
                 (1..31).forEach { giorno ->
                     contenitoreGiorni.add(perEtichetta[giorno.toString()]?.let { chipValore(dimId, it) } ?: chip(giorno.toString()))
@@ -510,21 +581,28 @@ class DatasetFiltriView(
         } catch (e: Exception) {
             log.warn("Calcolo del calendario fallito per il dataset {}", area.id, e)
         }
-    }
 
-    /** Le ditte come chip, con il nome dell'azienda e il colore del loro stato. Solo admin. */
-    private fun aggiornaDitte(areaId: UUID) {
-        val dimId = dimDitta ?: return
-        try {
-            val valori = filtriService.valori(areaId, selezioni, dimId, null, 0, MAX_CHIP)
-            contenitoreDitte.removeAll()
-            valori.sortedBy { it.etichetta.toIntOrNull() ?: Int.MAX_VALUE }.forEach { v ->
-                val nome = v.etichetta.toIntOrNull()?.let { Azienda.fromCodice(it)?.label }
-                contenitoreDitte.add(chipValore(dimId, v).apply { text = nome ?: v.etichetta })
+        // Ditte (solo admin): nome dell'azienda e colore del loro stato.
+        dimDitta?.let { dimId ->
+            try {
+                contenitoreDitte.removeAll()
+                poolQuery.attendi(fDitte!!).sortedBy { it.etichetta.toIntOrNull() ?: Int.MAX_VALUE }.forEach { v ->
+                    val nome = v.etichetta.toIntOrNull()?.let { Azienda.fromCodice(it)?.label }
+                    contenitoreDitte.add(chipValore(dimId, v).apply { text = nome ?: v.etichetta })
+                }
+            } catch (e: Exception) {
+                log.warn("Calcolo delle ditte fallito per il dataset {}", area.id, e)
             }
-        } catch (e: Exception) {
-            log.warn("Calcolo delle ditte fallito per il dataset {}", areaId, e)
         }
+
+        campiUi.forEach { campo ->
+            try {
+                campo.lista?.takeIf { it.isVisible }?.aggiorna()
+            } catch (e: Exception) {
+                log.warn("Aggiornamento dell'elenco di '{}' fallito", campo.nome, e)
+            }
+        }
+        aggiornaSelezioniCorrenti()
     }
 
     /** Un valore del calendario come chip cliccabile, con il colore del suo stato. */
@@ -549,15 +627,23 @@ class DatasetFiltriView(
                 emptyList()
             }
             val testo = etichette.joinToString(", ") + if (valori.size > MAX_ETICHETTE) " … (${valori.size})" else ""
+            val bloccato = dimId in bloccati
+            val lucchetto = Button(Icon(if (bloccato) VaadinIcon.LOCK else VaadinIcon.UNLOCK)) { cambiaBlocco(dimId) }.apply {
+                addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL)
+                element.setAttribute("title", if (bloccato) "Sblocca questo campo" else "Blocca questo campo")
+            }
             val togli = Button(Icon(VaadinIcon.CLOSE_SMALL)) { impostaSelezione(dimId, emptySet()) }.apply {
                 addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL)
                 element.setAttribute("title", "Togli la selezione di questo campo")
+                // Una selezione bloccata non si toglie: prima si sblocca.
+                isEnabled = !bloccato
             }
             corpoSelezioni.add(
                 Div(
                     Span("●").apply { className = "lbi-qv-sel-dot" },
                     Span(nomiCampi[dimId] ?: "?").apply { className = "lbi-qv-sel-campo" },
                     Span(testo).apply { className = "lbi-qv-sel-valori" },
+                    lucchetto,
                     togli
                 ).apply { className = "lbi-qv-sel-row" }
             )

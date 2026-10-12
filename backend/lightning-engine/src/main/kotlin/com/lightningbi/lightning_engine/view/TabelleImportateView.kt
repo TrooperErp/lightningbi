@@ -264,7 +264,7 @@ class TabelleImportateView(
             return
         }
 
-        val avanzamento = Span("Avvio...")
+        val avanzamento = Span("Avvio...").apply { style.set("white-space", "pre-line") }
         val dialog = Dialog().apply {
             headerTitle = "Sincronizzazione di \"${info.tabella.nomeLogico}\""
             width = "520px"
@@ -323,7 +323,7 @@ class TabelleImportateView(
         }
         conferma(
             titolo = "Sincronizzare tutte le tabelle ($n)?",
-            messaggio = "Una dopo l'altra: prima le Dimensioni, poi i Fatti, in ordine alfabetico. " +
+            messaggio = "Più tabelle insieme; l'indice di ogni dataset si rifà una volta, alla fine delle sue tabelle. " +
                     "Può richiedere molto tempo. Una tabella in errore non ferma le altre.",
             etichetta = "Sincronizza tutto",
             pericolo = false
@@ -342,7 +342,8 @@ class TabelleImportateView(
         val ui = UI.getCurrent() ?: return
         inCorso.addAll(tabelle.map { it.id })
 
-        val avanzamento = Span("Avvio...")
+        // Con più tabelle insieme: una riga di stato per tabella.
+        val avanzamento = Span("Avvio...").apply { style.set("white-space", "pre-line") }
         val barra = ProgressBar().apply { min = 0.0; max = tabelle.size.toDouble(); value = 0.0 }
         val corpo = VerticalLayout(barra, avanzamento).apply { isPadding = false }
         val chiudi = Button("Chiudi").apply { isEnabled = false }
@@ -357,24 +358,33 @@ class TabelleImportateView(
         chiudi.addClickListener { dialog.close() }
         dialog.open()
 
+        val perId = tabelle.associateBy { it.id }
+        val stati = java.util.concurrent.ConcurrentHashMap<java.util.UUID, String>()
+        val finite = java.util.concurrent.atomic.AtomicInteger()
+
         val thread = Thread {
-            val rapporto = mutableListOf<RigaRapporto>()
-            tabelle.forEachIndexed { i, tabella ->
-                val ruolo = if (tabella.ruolo == RuoloTabella.FATTI) "Fatti" else "Dimensione"
-                val prefisso = "${i + 1} di ${tabelle.size} · ${tabella.nomeLogico}"
-                aggiornaUi(ui) { avanzamento.text = prefisso }
-                try {
-                    val esito = etlOrchestrator.syncTabella(tabella.id, false) { fase ->
-                        aggiornaUi(ui) { avanzamento.text = "$prefisso · $fase" }
+            // Più tabelle in parallelo; l'indice di ogni dataset si rifà una volta, appena finisce la sua ultima tabella.
+            val esiti = etlOrchestrator.sincronizzaTutte(
+                tabelle.map { it.id },
+                progresso = { id, fase ->
+                    stati[id] = "${perId[id]?.nomeLogico ?: "?"} · $fase"
+                    aggiornaUi(ui) { avanzamento.text = stati.values.sorted().joinToString("\n") }
+                },
+                fineTabella = { e ->
+                    stati.remove(e.tabellaId)
+                    val n = finite.incrementAndGet()
+                    aggiornaUi(ui) {
+                        inCorso.remove(e.tabellaId)
+                        barra.value = n.toDouble()
+                        avanzamento.text = stati.values.sorted().joinToString("\n")
                     }
-                    rapporto += RigaRapporto(tabella.nomeLogico, ruolo, "OK", descriviEsito(esito))
-                } catch (e: Exception) {
-                    rapporto += RigaRapporto(tabella.nomeLogico, ruolo, "Errore", e.message ?: e::class.simpleName.orEmpty())
                 }
-                aggiornaUi(ui) {
-                    inCorso.remove(tabella.id)
-                    barra.value = (i + 1).toDouble()
-                }
+            )
+            val rapporto = esiti.map { e ->
+                val tabella = perId.getValue(e.tabellaId)
+                val ruolo = if (tabella.ruolo == RuoloTabella.FATTI) "Fatti" else "Dimensione"
+                if (e.esito != null) RigaRapporto(tabella.nomeLogico, ruolo, "OK", descriviEsito(e.esito))
+                else RigaRapporto(tabella.nomeLogico, ruolo, "Errore", e.errore?.message ?: e.errore?.let { it::class.simpleName }.orEmpty())
             }
             aggiornaUi(ui) {
                 inCorso.removeAll(tabelle.map { it.id }.toSet())

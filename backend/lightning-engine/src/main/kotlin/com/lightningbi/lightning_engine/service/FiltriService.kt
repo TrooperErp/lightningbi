@@ -1,5 +1,7 @@
+// FILE: src/main/kotlin/com/lightningbi/lightning_engine/service/FiltriService.kt
 package com.lightningbi.lightning_engine.service
 
+import com.lightningbi.lightning_engine.repository.RegistryRepository
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
@@ -21,10 +23,13 @@ data class ValoreFiltro(val id: Long, val etichetta: String, val stato: StatoVal
  *
  * - [contatori]: per ogni campo (possibili/totali) calcolati dentro ClickHouse.
  * - [valori]: la finestra [offset, offset + limite) dell'elenco di un campo,
- *   ordinata come Qlik: selezionati, poi possibili, poi esclusi, e dentro ogni
- *   gruppo per valore (numeri prima, in ordine numerico) e poi alfabetico.
+ *   ordinata come Qlik: per valore (numeri prima, in ordine numerico) e poi alfabetico.
  *   Con [ricerca] si filtra per testo, senza distinguere maiuscole.
  * - [numeroValori]: quanti valori ha l'elenco (per la barra di scorrimento).
+ *
+ * Le varianti di [contatori] e [valori] con il parametro `vincolo` si possono
+ * chiamare da un thread senza la sessione dell'utente (query in parallelo): il
+ * vincolo del section access va calcolato prima, nel thread della pagina.
  *
  * Le selezioni arrivano per id di dimensione, come le salva UserPivotState; il
  * valore 0 è "non definito". Le date si mostrano come dd/MM/yyyy.
@@ -32,14 +37,23 @@ data class ValoreFiltro(val id: Long, val etichetta: String, val stato: StatoVal
 @Service
 class FiltriService(
     private val jdbcTemplate: JdbcTemplate,
-    private val registryRepository: com.lightningbi.lightning_engine.repository.RegistryRepository,
+    private val registryRepository: RegistryRepository,
     private val modelloDatasetCache: ModelloDatasetCache,
     private val versionService: VersionService,
     private val calendarioService: CalendarioService,
     private val sezioneAccessoService: SezioneAccessoService
-
 ) {
     private val log = LoggerFactory.getLogger(FiltriService::class.java)
+
+    /** Pool per i contatori: una query per tabella, in parallelo. Separato da PoolQuery per non attendere sullo stesso pool. */
+    private val poolContatori = java.util.concurrent.Executors.newFixedThreadPool(6) { r ->
+        Thread(r).apply { isDaemon = true; name = "contatori-${hashCode()}" }
+    }
+
+    @jakarta.annotation.PreDestroy
+    fun chiudi() {
+        poolContatori.shutdown()
+    }
 
     private class Contesto(
         val modello: ModelloDataset,
@@ -55,7 +69,15 @@ class FiltriService(
         val forzato: String?
     )
 
-    private fun contesto(areaId: UUID, selections: Map<UUID, Set<Long>>): Contesto {
+    private fun contesto(areaId: UUID, selections: Map<UUID, Set<Long>>): Contesto =
+        contesto(areaId, selections, sezioneAccessoService.vincolo(areaId))
+
+    /** Come sopra, con il vincolo del section access già calcolato (per le query in parallelo). */
+    private fun contesto(
+        areaId: UUID,
+        selections: Map<UUID, Set<Long>>,
+        vincolo: SezioneAccessoService.Vincolo?
+    ): Contesto {
         val versioni = versionService.snapshotVersions(areaId)
         val modello = modelloDatasetCache.get(areaId, versioni.registryVersion)
         val dims = registryRepository.findDimensioniByArea(areaId)
@@ -69,7 +91,6 @@ class FiltriService(
         val colonne = dims.filter { it.dimensioneId in campi }.associate { it.dimensioneId to it.colonnaFisica }
 
         // Section access: per un non-admin la selezione sull'azienda è forzata, qualunque cosa arrivi dalla vista.
-        val vincolo = sezioneAccessoService.vincolo(areaId)
         val forzato = vincolo?.let { v ->
             campi[v.dimensioneId] ?: throw SecurityException("Il campo azienda non è nell'indice del dataset")
         }
@@ -91,12 +112,41 @@ class FiltriService(
         areaId: UUID,
         selections: Map<UUID, Set<Long>>,
         dimensioni: Collection<UUID>? = null
+    ): Map<UUID, ContatoreCampo> = contatori(areaId, selections, dimensioni, sezioneAccessoService.vincolo(areaId))
+
+    /** Come sopra, con il vincolo già calcolato nel thread della pagina: si può chiamare da un altro thread. */
+    fun contatori(
+        areaId: UUID,
+        selections: Map<UUID, Set<Long>>,
+        dimensioni: Collection<UUID>?,
+        vincolo: SezioneAccessoService.Vincolo?
     ): Map<UUID, ContatoreCampo> {
-        val c = contesto(areaId, selections)
+        val c = contesto(areaId, selections, vincolo)
         val richieste = (dimensioni ?: c.campi.keys).filter { it in c.campi }
         if (richieste.isEmpty()) return emptyMap()
 
-        val sql = richieste.joinToString("\nUNION ALL\n") { dimId ->
+        // Una query per tabella di riferimento, in parallelo: ClickHouse calcola le sottoquery
+        // di una query una dopo l'altra, così il tempo è quello del gruppo più lento, non la somma.
+        val gruppi = richieste.groupBy { dimId -> c.modello.grafo.tabelleCon(c.campi.getValue(dimId)).firstOrNull() }
+        val futuri = gruppi.values.map { dims ->
+            java.util.concurrent.CompletableFuture.supplyAsync({ contaGruppo(c, dims) }, poolContatori)
+        }
+        val perCampo = HashMap<String, ContatoreCampo>()
+        futuri.forEach { f ->
+            try {
+                perCampo.putAll(f.join())
+            } catch (e: java.util.concurrent.CompletionException) {
+                throw e.cause ?: e
+            }
+        }
+        return richieste.mapNotNull { dimId ->
+            perCampo[c.campi.getValue(dimId)]?.let { dimId to it }
+        }.toMap()
+    }
+
+    /** I contatori di un gruppo di campi (della stessa tabella), in una query sola. */
+    private fun contaGruppo(c: Contesto, dims: List<UUID>): Map<String, ContatoreCampo> {
+        val sql = dims.joinToString("\nUNION ALL\n") { dimId ->
             val campo = c.campi.getValue(dimId)
             val scelti = c.selezioni[campo].orEmpty()
             val omesso = if (scelti.isNotEmpty()) campo else null
@@ -105,15 +155,12 @@ class FiltriService(
             "SELECT '$campo' AS campo, count() AS totali, countIf(verde = 1) AS possibili, $selezionati AS selezionati " +
                     "FROM (${c.modello.grafo.sqlStatoCampo(campo, c.selezioni, omesso, c.universo)})"
         }
-
-        val perCampo = mutableMapOf<String, ContatoreCampo>()
+        val risultato = HashMap<String, ContatoreCampo>()
         jdbcTemplate.query(sql) { rs ->
-            perCampo[rs.getString("campo")] =
+            risultato[rs.getString("campo")] =
                 ContatoreCampo(rs.getLong("possibili"), rs.getLong("totali"), rs.getLong("selezionati"))
         }
-        return richieste.mapNotNull { dimId ->
-            perCampo[c.campi.getValue(dimId)]?.let { dimId to it }
-        }.toMap()
+        return risultato
     }
 
     /** Una finestra dell'elenco dei valori di un campo. */
@@ -124,8 +171,20 @@ class FiltriService(
         ricerca: String?,
         offset: Int,
         limite: Int
+    ): List<ValoreFiltro> =
+        valori(areaId, selections, dimensioneId, ricerca, offset, limite, sezioneAccessoService.vincolo(areaId))
+
+    /** Come sopra, con il vincolo già calcolato nel thread della pagina: si può chiamare da un altro thread. */
+    fun valori(
+        areaId: UUID,
+        selections: Map<UUID, Set<Long>>,
+        dimensioneId: UUID,
+        ricerca: String?,
+        offset: Int,
+        limite: Int,
+        vincolo: SezioneAccessoService.Vincolo?
     ): List<ValoreFiltro> {
-        val c = contesto(areaId, selections)
+        val c = contesto(areaId, selections, vincolo)
         val campo = c.campi[dimensioneId] ?: return emptyList()
         val (stato, simboli, scelti) = parti(c, dimensioneId, campo)
         val selezionato = if (scelti.isEmpty()) "toUInt8(0)" else "toUInt8(st.valore_id IN (${scelti.joinToString(",")}))"

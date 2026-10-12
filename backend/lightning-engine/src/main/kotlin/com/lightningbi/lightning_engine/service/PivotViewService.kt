@@ -73,7 +73,8 @@ class PivotViewService(
                 userId = userId,
                 areaId = areaId,
                 activeViewId = viewId,
-                selections = current?.selections ?: emptyMap()
+                selections = current?.selections ?: emptyMap(),
+                bloccati = current?.bloccati ?: emptySet()
             )
         )
     }

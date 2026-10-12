@@ -150,6 +150,8 @@ class AdminView(
         val addUserButton = Button("+ Nuovo utente") { openCreateUserDialog() }
             .apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
 
+        val addRoleButton = Button("+ Nuovo ruolo") { openCreateRoleDialog() }
+
         return VerticalLayout(
             Span("Amministrazione").apply { className = "lbi-section-title" },
 
@@ -158,7 +160,8 @@ class AdminView(
             addUserButton,
 
             Span("Ruoli e permessi").apply { className = "lbi-section-title" },
-            rolesGrid
+            rolesGrid,
+            addRoleButton
         ).apply {
             className = "lbi-center"
             isPadding = true
@@ -290,6 +293,43 @@ class AdminView(
         } catch (e: Exception) {
             segnala(e)
         }
+    }
+
+    // ================= Dialog: nuovo ruolo =================
+
+    /**
+     * Crea un ruolo senza permessi: un utente con questo ruolo non è amministratore e vede solo
+     * i dataset assegnati (Accessi) e la propria azienda. I permessi si danno dopo, con "Permessi".
+     */
+    private fun openCreateRoleDialog() {
+        val dialog = Dialog().apply {
+            className = "lbi-wizard-dialog"
+            headerTitle = "Nuovo ruolo"
+            width = "440px"
+        }
+        val nomeField = TextField("Nome").apply { setWidthFull() }
+        val descrizioneField = TextField("Descrizione").apply { setWidthFull() }
+        dialog.add(VerticalLayout(nomeField, descrizioneField).apply { isPadding = false })
+
+        val cancelButton = Button("Annulla") { dialog.close() }
+        val createButton = Button("Crea") {
+            val nome = nomeField.value?.trim().orEmpty().uppercase()
+            if (nome.isEmpty()) {
+                Notification.show("Il nome del ruolo è obbligatorio")
+                return@Button
+            }
+            if (roleRepository.findByName(nome) != null) {
+                Notification.show("Esiste già un ruolo chiamato \"$nome\"", 5000, Notification.Position.MIDDLE)
+                return@Button
+            }
+            roleRepository.save(Role(UUID.randomUUID(), nome, descrizioneField.value?.trim().orEmpty()))
+            reloadRoles()
+            dialog.close()
+            Notification.show("Ruolo creato: assegna i permessi con \"Permessi\" se servono", 4000, Notification.Position.BOTTOM_END)
+        }.apply { addThemeVariants(ButtonVariant.LUMO_PRIMARY) }
+
+        dialog.footer.add(cancelButton, createButton)
+        dialog.open()
     }
 
     // ================= Dialog: permessi di un ruolo =================

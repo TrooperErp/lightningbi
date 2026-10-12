@@ -69,7 +69,8 @@ class NewDatasetView(
     private val datasetService: DatasetService,
     private val accessoDatasetService: AccessoDatasetService,
     private val adminGuard: AdminGuard,
-    private val authService: AuthService
+    private val authService: AuthService,
+    private val etlOrchestrator: com.lightningbi.lightning_engine.etl.EtlOrchestrator
 ) : VerticalLayout(), HasUrlParameter<String>, BeforeEnterObserver, BeforeLeaveObserver {
 
     private var parametroArea: String? = null
@@ -304,8 +305,23 @@ class NewDatasetView(
             height = "230px"
             addColumn { it.alias }.setHeader("Alias").setAutoWidth(true)
             addColumn { it.nomeLogico }.setHeader("Tabella").setAutoWidth(true)
-            addColumn { if (it.ruolo == RuoloTabella.FATTI) "Fatti" else "Dimensione" }
-                .setHeader("Ruolo").setAutoWidth(true)
+            addComponentColumn { o ->
+                ComboBox<RuoloTabella>().apply {
+                    isAllowCustomValue = false
+                    setItems(RuoloTabella.FATTI, RuoloTabella.DIMENSIONE)
+                    setItemLabelGenerator { r ->
+                        val nome = if (r == RuoloTabella.FATTI) "Fatti" else "Dimensione"
+                        // L'asterisco segnala un ruolo diverso da quello predefinito della tabella importata.
+                        if (r != o.ruoloPredefinito) "$nome *" else nome
+                    }
+                    value = o.ruolo
+                    width = "140px"
+                    element.setAttribute("title", "Ruolo della tabella in questo dataset")
+                    addValueChangeListener { ev ->
+                        if (ev.isFromClient && ev.value != null) modifica { b -> b.impostaRuolo(o.id, ev.value) }
+                    }
+                }
+            }.setHeader("Ruolo").setAutoWidth(true).setFlexGrow(0)
             addColumn { o ->
                 bozza.campi().count { it.occorrenzaId == o.id && !it.escluso }
             }.setHeader("Campi").setAutoWidth(true)
@@ -359,6 +375,7 @@ class NewDatasetView(
                     }
                 }
             }.setHeader("Campo").setAutoWidth(true)
+            addColumn { it.etichetta }.setHeader("Nome mostrato").setAutoWidth(true)
             addColumn { it.nomeOrigine }.setHeader("Colonna").setAutoWidth(true)
             addColumn { it.tipo }.setHeader("Tipo").setAutoWidth(true)
             addColumn { if (it.isChiave) "chiave" else "" }.setHeader("").setAutoWidth(true)
@@ -367,6 +384,9 @@ class NewDatasetView(
                 MenuBar().apply {
                     addThemeVariants(MenuBarVariant.LUMO_TERTIARY_INLINE)
                     val radice = addItem(Icon(VaadinIcon.ELLIPSIS_DOTS_V).apply { color = "black" })
+                    if (!campo.escluso) {
+                        radice.subMenu.addItem("Rinomina (nome mostrato)…") { apriEtichetta(campo) }
+                    }
 
                     if (campo.escluso) {
                         radice.subMenu.addItem("Ripristina") {
@@ -572,6 +592,17 @@ class NewDatasetView(
         }
     }
 
+    /** Etichetta di un campo: il nome mostrato in Dataset, Analisi e Grafici. Vuoto = nome di default. */
+    private fun apriEtichetta(campo: CampoEffettivo) {
+        val testo = TextField("Nome mostrato").apply {
+            setWidthFull()
+            value = campo.etichetta
+            helperText = "Cambia solo il nome visibile: collegamenti, analisi e selezioni non cambiano. Vuoto = nome originale."
+        }
+        finestra("Rinomina \"${campo.nomeOrigine}\"", testo, "Salva") {
+            modifica { it.impostaEtichetta(campo.occorrenzaId, campo.colonna, testo.value) }
+        }
+    }
 
 
     private fun confermaRimuoviTabella(o: OccorrenzaBozza) {
@@ -692,6 +723,7 @@ class NewDatasetView(
             val eraNuovo = bozza.areaId == null
             val id = datasetService.salva(bozza)
             modificato = false
+            aggiornaIndiceInBackground(id, bozza.nome.trim())
             Notification.show(
                 "Dataset \"${bozza.nome.trim()}\" salvato. Premi \"Sincronizza\" per caricare i dati.",
                 6000, Notification.Position.MIDDLE
@@ -714,5 +746,33 @@ class NewDatasetView(
         } catch (e: Exception) {
             Notification.show("Errore nel salvataggio: ${e.message}", 10000, Notification.Position.MIDDLE)
         }
+    }
+
+    /**
+     * Dopo il salvataggio l'indice del dataset si ricostruisce da solo, in background: il modello
+     * può aver cambiato campi, dimensioni o collegamenti. Se qualche tabella non è mai stata
+     * caricata l'indice non si fa (lo dice il messaggio): serve prima "Sincronizza dati".
+     */
+    private fun aggiornaIndiceInBackground(areaId: UUID, nome: String) {
+        val ui = com.vaadin.flow.component.UI.getCurrent() ?: return
+        Thread {
+            try {
+                etlOrchestrator.aggiornaIndice(areaId)
+                ui.access { Notification.show("Indice di \"$nome\" aggiornato", 3000, Notification.Position.BOTTOM_END) }
+            } catch (e: IllegalArgumentException) {
+                // Tabelle mai caricate: l'indice si farà con la prima sincronizzazione.
+                ui.access { Notification.show("Indice non aggiornato: ${e.message}", 6000, Notification.Position.MIDDLE) }
+            } catch (e: Exception) {
+                ui.access {
+                    Notification.show(
+                        "Aggiornamento dell'indice fallito: ${e.message ?: e::class.simpleName}",
+                        8000, Notification.Position.MIDDLE
+                    )
+                }
+            }
+        }.apply {
+            isDaemon = true
+            name = "indice-dopo-salvataggio-$areaId"
+        }.start()
     }
 }

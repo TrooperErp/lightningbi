@@ -20,5 +20,7 @@ data class UserPivotState(
     val areaId: UUID,
     val activeViewId: UUID?,
     val selections: Map<UUID, Set<Long>>,
+    /** Campi con la selezione bloccata (come Blocca di Qlik): i clic non la cambiano, Cancella non la toglie. */
+    val bloccati: Set<UUID> = emptySet(),
     val updatedAt: Instant = Instant.now()
 )

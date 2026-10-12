@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Etichetta di un campo in un dataset: il nome mostrato in Dataset, Analisi e Grafici.
+         Non cambia il nome del campo né le associazioni. Una riga con la sola etichetta è valida. -->
+    <changeSet id="041-etichetta-campo" author="lightningbi">
+        <sql>
+            ALTER TABLE lbi_area_campo ADD COLUMN etichetta VARCHAR(255) NULL;
+
+            ALTER TABLE lbi_area_campo DROP CONSTRAINT ck_area_campo_con_effetto;
+            ALTER TABLE lbi_area_campo ADD CONSTRAINT ck_area_campo_con_effetto
+                CHECK (escluso OR nome_campo IS NOT NULL OR etichetta IS NOT NULL);
+
+            ALTER TABLE lbi_area_campo ADD CONSTRAINT ck_area_campo_etichetta_non_vuota
+                CHECK (etichetta IS NULL OR length(btrim(etichetta)) > 0);
+            ALTER TABLE lbi_area_campo ADD CONSTRAINT ck_area_campo_escluso_etichetta
+                CHECK (NOT (escluso AND etichetta IS NOT NULL));
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

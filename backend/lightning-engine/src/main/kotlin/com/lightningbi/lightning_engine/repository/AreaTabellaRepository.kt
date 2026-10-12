@@ -33,4 +33,6 @@ interface AreaTabellaRepository {
     /** Toglie tutte le occorrenze di un dataset. Restituisce quante ne ha tolte. */
     fun deleteByArea(areaId: UUID): Int
     fun updateDisconnessa(id: UUID, disconnessa: Boolean)
+    /** Cambia il ruolo dell'occorrenza nel dataset; null = quello predefinito della tabella importata. */
+    fun updateRuolo(id: UUID, ruolo: com.lightningbi.lightning_engine.model.RuoloTabella?)
 }

@@ -244,9 +244,10 @@ class TableSyncRunner(
         val fisiche = colonne.map { Naming.column(it.nomeCampo) }
         val numeriche = colonne.filter { !it.isChiave && ColumnProposal.isNumerico(it.tipo) }.map { it.nomeCampo }
         val colonneCaricate = fisiche + numeriche.map { Naming.numericColumn(it) }
-        // ORDER BY: chiavi di JOIN e colonne dell'unità (le cancellazioni le usano).
-        val ordinamento = (colonne.filter { it.isChiave }.map { it.nomeCampo } +
-                config.colonneUnita.mapNotNull { campoDi(colonne, it) })
+
+        // ORDER BY: solo le colonne dell'unità (le cancellazioni dell'incrementale le usano);
+        // senza unità, l'ordine di arrivo (lbi_rid, vedi SymbolTableService.createImportedTable).
+        val ordinamento = config.colonneUnita.mapNotNull { campoDi(colonne, it) }
             .filter { Naming.column(it) in fisiche }
             .distinctBy { Naming.column(it) }
 

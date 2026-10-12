@@ -39,7 +39,9 @@ class EtlOrchestrator(
     private val etlCompletionService: EtlCompletionService,
     private val registryRepository: RegistryRepository,
     private val emailService: EmailService,
-    private val redisTemplate: StringRedisTemplate
+    private val redisTemplate: StringRedisTemplate,
+    /** Tabelle sincronizzate insieme in "Sincronizza tutto" (di giorno l'ERP è in uso; di notte anche 4). */
+    @org.springframework.beans.factory.annotation.Value("\${lbi.sync.tabelle-parallele:3}") private val tabelleParallele: Int
 ) {
     private val log = LoggerFactory.getLogger(EtlOrchestrator::class.java)
 
@@ -123,6 +125,66 @@ class EtlOrchestrator(
         return esito
     }
 
+    /**
+     * "Sincronizza tutto": le tabelle [ids] partono [tabelleParallele] alla volta. L'indice di un
+     * dataset si ricostruisce UNA volta, appena finisce l'ultima delle sue tabelle in questo giro
+     * (se tutte le sue tabelle sono state caricate almeno una volta): così la finestra in cui
+     * tabella e indice non coincidono resta breve.
+     *
+     * Una tabella in errore non ferma le altre. [progresso] riceve la tabella e la frase;
+     * [fineTabella] è chiamato appena una tabella termina, bene o male (da thread diversi).
+     */
+    fun sincronizzaTutte(
+        ids: List<UUID>,
+        progresso: (UUID, String) -> Unit = { _, _ -> },
+        fineTabella: (EsitoTabella) -> Unit = {}
+    ): List<EsitoTabella> {
+        if (ids.isEmpty()) return emptyList()
+
+        // Per ogni dataset: quante delle sue tabelle sono in questo giro.
+        val restanti = java.util.concurrent.ConcurrentHashMap<UUID, java.util.concurrent.atomic.AtomicInteger>()
+        ids.forEach { id ->
+            importedTableRepository.findAreaIdsUsing(id).forEach { areaId ->
+                restanti.computeIfAbsent(areaId) { java.util.concurrent.atomic.AtomicInteger() }.incrementAndGet()
+            }
+        }
+
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(tabelleParallele.coerceIn(1, ids.size)) { r ->
+            Thread(r).apply { isDaemon = true; name = "sync-tutto-${hashCode()}" }
+        }
+        try {
+            val futuri = ids.map { id ->
+                pool.submit(java.util.concurrent.Callable {
+                    val esito = try {
+                        EsitoTabella(id, tableSyncRunner.sync(id, false) { fase -> progresso(id, fase) }, null)
+                    } catch (e: Exception) {
+                        EsitoTabella(id, null, e)
+                    }
+                    fineTabella(esito)
+
+                    // Ultima tabella del dataset in questo giro: indice, una volta sola.
+                    importedTableRepository.findAreaIdsUsing(id).forEach { areaId ->
+                        if (restanti[areaId]?.decrementAndGet() == 0) {
+                            val area = registryRepository.findAreaById(areaId)
+                            if (area != null && tutteSincronizzate(areaId)) {
+                                try {
+                                    ricostruisciIndice(area) { fase -> progresso(id, fase) }
+                                } catch (e: Exception) {
+                                    // Già registrato e segnalato via email da ricostruisciIndice.
+                                    log.warn("Indice del dataset '{}' non ricostruito dopo Sincronizza tutto", area.nome)
+                                }
+                            }
+                        }
+                    }
+                    esito
+                })
+            }
+            return futuri.map { it.get() }
+        } finally {
+            pool.shutdown()
+        }
+    }
+
     private fun tutteSincronizzate(areaId: UUID): Boolean =
         importedTableRepository.findLinkedToArea(areaId).all { tabella ->
             tableSyncRepository.findByTable(tabella.id)?.ultimaSyncInizio != null
@@ -179,3 +241,6 @@ class EtlOrchestrator(
         )
     }
 }
+
+/** Esito di una tabella in "Sincronizza tutto": il risultato, oppure l'errore. */
+data class EsitoTabella(val tabellaId: UUID, val esito: EsitoSync?, val errore: Exception?)

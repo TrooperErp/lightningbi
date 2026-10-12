@@ -29,6 +29,7 @@ class UserPivotStateRepositoryImpl(
     @JsonIgnoreProperties(ignoreUnknown = true)
     private data class StateJson(
         val selections: Map<String, List<Long>> = emptyMap(),
+        val bloccati: List<String>? = null,
         val pivotRows: List<String>? = null,
         val pivotColumns: List<String>? = null,
         val pivotValues: List<String>? = null
@@ -57,6 +58,7 @@ class UserPivotStateRepositoryImpl(
             areaId = areaId,
             activeViewId = row.activeViewId,
             selections = parsed.selections.mapKeys { UUID.fromString(it.key) }.mapValues { it.value.toSet() },
+            bloccati = parsed.bloccati.orEmpty().map { UUID.fromString(it) }.toSet(),
             updatedAt = row.updatedAt
         )
     }
@@ -74,7 +76,10 @@ class UserPivotStateRepositoryImpl(
 
     override fun save(state: UserPivotState) {
         val json = objectMapper.writeValueAsString(
-            mapOf("selections" to state.selections.mapKeys { it.key.toString() }.mapValues { it.value.toList() })
+            mapOf(
+                "selections" to state.selections.mapKeys { it.key.toString() }.mapValues { it.value.toList() },
+                "bloccati" to state.bloccati.map { it.toString() }
+            )
         )
         jdbcTemplate.update(
             """

@@ -1,6 +1,7 @@
+// FILE: src/main/kotlin/com/lightningbi/lightning_engine/repository/AreaCampoRepositoryImpl.kt
 package com.lightningbi.lightning_engine.repository
 
-import com.lightningbi.lightning_engine.model.AreaTabella
+import com.lightningbi.lightning_engine.model.AreaCampo
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
@@ -8,53 +9,61 @@ import java.sql.ResultSet
 import java.util.UUID
 
 @Repository
-class AreaTabellaRepositoryImpl(
+class AreaCampoRepositoryImpl(
     @Qualifier("postgresJdbcTemplate") private val jdbcTemplate: JdbcTemplate
-) : AreaTabellaRepository {
+) : AreaCampoRepository {
 
-    override fun findByArea(areaId: UUID): List<AreaTabella> =
+    override fun findByArea(areaId: UUID): List<AreaCampo> =
         jdbcTemplate.query(
-            "SELECT id, area_id, imported_table_id, alias, disconnessa FROM lbi_area_imported_table WHERE area_id = ? ORDER BY ordine, lower(alias)",
+            """SELECT c.*
+               FROM lbi_area_campo c
+               JOIN lbi_area_imported_table t ON t.id = c.area_tabella_id
+               WHERE t.area_id = ?
+               ORDER BY lower(t.alias), c.colonna""",
             { rs, _ -> mapRow(rs) },
             areaId
         )
 
-    override fun findById(id: UUID): AreaTabella? =
+    override fun findByAreaTabella(areaTabellaId: UUID): List<AreaCampo> =
         jdbcTemplate.query(
-            "SELECT id, area_id, imported_table_id, alias, disconnessa FROM lbi_area_imported_table WHERE id = ?",
+            "SELECT * FROM lbi_area_campo WHERE area_tabella_id = ? ORDER BY colonna",
             { rs, _ -> mapRow(rs) },
-            id
-        ).firstOrNull()
-
-    override fun save(tabella: AreaTabella): AreaTabella {
-        jdbcTemplate.update(
-            """INSERT INTO lbi_area_imported_table (id, area_id, imported_table_id, alias, disconnessa, ordine)
-               VALUES (?, ?, ?, ?, ?,
-                       (SELECT COALESCE(MAX(ordine), 0) + 1 FROM lbi_area_imported_table WHERE area_id = ?))""",
-            tabella.id, tabella.areaId, tabella.importedTableId, tabella.alias, tabella.disconnessa, tabella.areaId
+            areaTabellaId
         )
-        return tabella
+
+    override fun save(campo: AreaCampo): AreaCampo {
+        jdbcTemplate.update(
+            """
+            INSERT INTO lbi_area_campo (area_tabella_id, colonna, nome_campo, escluso, etichetta)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (area_tabella_id, colonna) DO UPDATE SET
+                nome_campo = EXCLUDED.nome_campo,
+                escluso = EXCLUDED.escluso,
+                etichetta = EXCLUDED.etichetta
+            """.trimIndent(),
+            campo.areaTabellaId, campo.colonna, campo.nomeCampo, campo.escluso, campo.etichetta
+        )
+        return campo
     }
 
-    override fun updateAlias(id: UUID, alias: String) {
-        jdbcTemplate.update("UPDATE lbi_area_imported_table SET alias = ? WHERE id = ?", alias, id)
-    }
-
-    override fun updateDisconnessa(id: UUID, disconnessa: Boolean) {
-        jdbcTemplate.update("UPDATE lbi_area_imported_table SET disconnessa = ? WHERE id = ?", disconnessa, id)
-    }
-
-    override fun delete(id: UUID): Boolean =
-        jdbcTemplate.update("DELETE FROM lbi_area_imported_table WHERE id = ?", id) > 0
+    override fun delete(areaTabellaId: UUID, colonna: String): Boolean =
+        jdbcTemplate.update(
+            "DELETE FROM lbi_area_campo WHERE area_tabella_id = ? AND colonna = ?",
+            areaTabellaId, colonna
+        ) > 0
 
     override fun deleteByArea(areaId: UUID): Int =
-        jdbcTemplate.update("DELETE FROM lbi_area_imported_table WHERE area_id = ?", areaId)
+        jdbcTemplate.update(
+            """DELETE FROM lbi_area_campo
+               WHERE area_tabella_id IN (SELECT id FROM lbi_area_imported_table WHERE area_id = ?)""",
+            areaId
+        )
 
-    private fun mapRow(rs: ResultSet): AreaTabella = AreaTabella(
-        id = UUID.fromString(rs.getString("id")),
-        areaId = UUID.fromString(rs.getString("area_id")),
-        importedTableId = UUID.fromString(rs.getString("imported_table_id")),
-        alias = rs.getString("alias"),
-        disconnessa = rs.getBoolean("disconnessa")
+    private fun mapRow(rs: ResultSet): AreaCampo = AreaCampo(
+        areaTabellaId = UUID.fromString(rs.getString("area_tabella_id")),
+        colonna = rs.getString("colonna"),
+        nomeCampo = rs.getString("nome_campo"),
+        escluso = rs.getBoolean("escluso"),
+        etichetta = rs.getString("etichetta")
     )
 }

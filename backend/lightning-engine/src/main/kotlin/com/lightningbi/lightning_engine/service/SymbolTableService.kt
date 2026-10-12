@@ -79,7 +79,8 @@ class SymbolTableService(
 
         val ids = colonneId.map { Naming.column(it) }
         val numeriche = colonneNumeriche.map { Naming.column(it) }.distinct()
-        val ordinamento = colonneOrdinamento.map { Naming.column(it) }.ifEmpty { listOf(ids.first()) }
+        // Senza colonne di ordinamento: l'ordine di arrivo delle righe (lbi_rid).
+        val ordinamento = colonneOrdinamento.map { Naming.column(it) }.ifEmpty { listOf(Naming.RID_COLUMN) }
 
         val duplicati = ids.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
         require(duplicati.isEmpty()) {
@@ -89,7 +90,7 @@ class SymbolTableService(
         require(numericheFuori.isEmpty()) {
             "Colonne numeriche non presenti tra le colonne id di $tabellaFisica: ${numericheFuori.joinToString(", ")}"
         }
-        val fuori = ordinamento.filter { it !in ids }
+        val fuori = ordinamento.filter { it !in ids && it != Naming.RID_COLUMN }
         require(fuori.isEmpty()) {
             "Colonne di ordinamento non presenti tra le colonne id di $tabellaFisica: ${fuori.joinToString(", ")}"
         }

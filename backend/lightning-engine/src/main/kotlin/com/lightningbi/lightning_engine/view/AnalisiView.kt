@@ -73,6 +73,8 @@ class AnalisiView(
     private val adminGuard: AdminGuard,
     private val authService: AuthService,
     private val chartService: com.lightningbi.lightning_engine.service.ChartService,
+    private val sezioneAccessoService: com.lightningbi.lightning_engine.service.SezioneAccessoService,
+    private val poolQuery: com.lightningbi.lightning_engine.service.PoolQuery
 ) : VerticalLayout(), HasUrlParameter<String>, AfterNavigationObserver {
 
     private val log = LoggerFactory.getLogger(AnalisiView::class.java)
@@ -89,8 +91,11 @@ class AnalisiView(
     private val colonne = mutableListOf<UUID>()
     private val ordineMisure = mutableListOf<UUID>()
     private val selezioni = mutableMapOf<UUID, Set<Long>>()
-    private val dialoghiValori = mutableMapOf<UUID, Pair<Dialog, ListaValoriUi>>()
 
+    /** Campi con la selezione bloccata (Blocca di Qlik): i clic non la cambiano, Cancella non la toglie. */
+    private val bloccati = mutableSetOf<UUID>()
+    private val dialoghiValori = mutableMapOf<UUID, Pair<Dialog, ListaValoriUi>>()
+    private var generazione = 0
     private val nomiDimensioni: Map<UUID, String> get() = dimensioni.associate { it.dimensioneId to it.nome }
 
     private val risultato = ResultsGridUi { calendarioService.formatta(it) }.apply {
@@ -114,6 +119,16 @@ class AnalisiView(
         addClassName("lbi-qv-clear")
         element.setAttribute("title", "Rifai la selezione annullata")
         addClickListener { avanti() }
+    }
+    private val bloccaButton = Button("Blocca", Icon(VaadinIcon.LOCK)).apply {
+        addClassName("lbi-qv-clear")
+        element.setAttribute("title", "Blocca tutte le selezioni correnti")
+        addClickListener { bloccaTutto() }
+    }
+    private val sbloccaButton = Button("Sblocca", Icon(VaadinIcon.UNLOCK)).apply {
+        addClassName("lbi-qv-clear")
+        element.setAttribute("title", "Sblocca tutte le selezioni")
+        addClickListener { sbloccaTutto() }
     }
     private val elencoCampi = Div().apply { className = "lbi-qv-panel-body" }
     private val ricercaCampi = TextField().apply {
@@ -238,7 +253,8 @@ class AnalisiView(
                 addClassName("lbi-qv-clear")
                 addThemeVariants(ButtonVariant.LUMO_ERROR)
             }
-        return Div(titolo, cancella, indietroButton, avantiButton, rinomina, elimina, zone).apply { className = "lbi-qv-top" }
+        return Div(titolo, cancella, indietroButton, avantiButton, bloccaButton, sbloccaButton, rinomina, elimina, zone)
+            .apply { className = "lbi-qv-top" }
     }
 
     /** Le analisi del dataset come schede, come i fogli di Qlik. */
@@ -309,7 +325,7 @@ class AnalisiView(
 
     /** I campi del dataset raggruppati per tabella, con i pulsanti per metterli in Righe o in Colonne. */
     /** I campi del dataset per tabella: stato e contatore, clic per i valori, menu per Righe e Colonne. */
-    private fun aggiornaCampi() {
+    private fun aggiornaCampi(calcolati: Map<UUID, ContatoreCampo>? = null) {
         elencoCampi.removeAll()
         val filtro = ricercaCampi.value.orEmpty().trim().lowercase()
         val visibili = dimensioni.filter { filtro.isEmpty() || it.nome.lowercase().contains(filtro) }
@@ -317,7 +333,7 @@ class AnalisiView(
             elencoCampi.add(Span("Nessun campo").apply { className = "lbi-qv-empty" })
             return
         }
-        val contatori = contatoriCampi(visibili.map { it.dimensioneId })
+        val contatori = calcolati ?: contatoriCampi(visibili.map { it.dimensioneId })
         visibili.groupBy { it.tabella }.forEach { (tabella, campi) ->
             elencoCampi.add(Div(Span(tabella)).apply { className = "lbi-qv-group-title" })
             campi.forEach { campo ->
@@ -409,7 +425,12 @@ class AnalisiView(
 
     /** Come nella pagina Dataset: un clic aggiunge o toglie il valore; un valore grigio toglie le selezioni in conflitto. */
     /** Come nella pagina Dataset: un clic aggiunge o toglie il valore; un valore grigio toglie le selezioni in conflitto. */
+    /** Come nella pagina Dataset: un clic aggiunge o toglie il valore; un valore grigio toglie le selezioni in conflitto. */
     private fun alClic(dimId: UUID, valore: ValoreFiltro) {
+        if (dimId in bloccati) {
+            Notification.show("La selezione di questo campo è bloccata: sbloccala per cambiarla", 3000, Notification.Position.BOTTOM_START)
+            return
+        }
         val nuove = selezioni.toMutableMap()
         val attuali = nuove[dimId].orEmpty()
         if (valore.id in attuali) {
@@ -425,6 +446,11 @@ class AnalisiView(
             } catch (e: Exception) {
                 log.warn("Calcolo dei conflitti fallito per la dimensione {}", dimId, e)
                 emptySet()
+            }
+            // Come in Qlik: un valore in conflitto con una selezione bloccata non si può selezionare.
+            if (daTogliere.any { it in bloccati }) {
+                Notification.show("Valore in conflitto con una selezione bloccata", 3000, Notification.Position.BOTTOM_START)
+                return
             }
             daTogliere.forEach { nuove.remove(it) }
         }
@@ -445,6 +471,10 @@ class AnalisiView(
      */
     private fun selezionaDaGrafico(chiavi: Map<UUID, Long>) {
         if (chiavi.isEmpty()) return
+        if (chiavi.keys.any { it in bloccati }) {
+            Notification.show("La selezione di questo campo è bloccata: sbloccala per cambiarla", 3000, Notification.Position.BOTTOM_START)
+            return
+        }
         val giaSelezionato = chiavi.all { (dimId, valore) -> selezioni[dimId] == setOf(valore) }
         val nuove = selezioni.toMutableMap()
         if (giaSelezionato) chiavi.keys.forEach { nuove.remove(it) }
@@ -458,7 +488,9 @@ class AnalisiView(
      */
     private fun applicaSelezioni(nuove: Map<UUID, Set<Long>>, registra: Boolean = true) {
         val a = area ?: return
-        val pulite = nuove.filterValues { it.isNotEmpty() }
+        // Le selezioni bloccate restano com'erano, qualunque sia la strada (Cancella, X, Indietro/Avanti).
+        val conBlocchi = nuove.toMutableMap().apply { bloccati.forEach { d -> selezioni[d]?.let { put(d, it) } } }
+        val pulite = conBlocchi.filterValues { it.isNotEmpty() }
         if (pulite == selezioni.toMap()) {
             aggiornaPulsantiCronologia()
             return
@@ -468,10 +500,38 @@ class AnalisiView(
         selezioni.putAll(pulite)
         misura("salva selezioni") { salvaSelezioni() }
         misura("selezioni correnti") { aggiornaSelezioniCorrenti() }
-        misura("campi e contatori") { aggiornaCampi() }
-        misura("popup valori") { aggiornaDialoghi() }
+
+        // I contatori partono subito, in parallelo al pivot; il vincolo della ditta si calcola qui
+        // (i thread del pool non hanno la sessione). Il pivot si mostra appena pronto.
+        val gen = ++generazione
+        val sel = selezioni.toMap()
+        val ids = dimensioni.map { it.dimensioneId }
+        val vincolo = sezioneAccessoService.vincolo(a.id)
+        val futuro = poolQuery.avvia { filtriService.contatori(a.id, sel, ids, vincolo) }
+
         misura("ricalcolo pivot e grafici") { ricalcola() }
+        misura("popup valori") { aggiornaDialoghi() }
         aggiornaPulsantiCronologia()
+
+        // Contatori: se sono già pronti si mostrano ora, altrimenti arrivano con il push appena finiti.
+        if (futuro.isDone) {
+            mostraContatori(futuro, gen)
+        } else {
+            val ui = com.vaadin.flow.component.UI.getCurrent()
+            futuro.whenComplete { _, _ -> ui?.access { mostraContatori(futuro, gen) } }
+        }
+    }
+
+    /** Mostra i contatori dei campi, se nel frattempo non è arrivato un clic più recente. */
+    private fun mostraContatori(futuro: java.util.concurrent.CompletableFuture<Map<UUID, ContatoreCampo>>, gen: Int) {
+        if (gen != generazione) return
+        val contatori = try {
+            poolQuery.attendi(futuro)
+        } catch (e: Exception) {
+            log.warn("Calcolo dei contatori fallito", e)
+            emptyMap()
+        }
+        misura("campi e contatori") { aggiornaCampi(contatori) }
     }
 
     private fun cancellaSelezioni() {
@@ -496,6 +556,35 @@ class AnalisiView(
         val a = area
         indietroButton.isEnabled = a != null && CronologiaSelezioni.puoIndietro(a.id)
         avantiButton.isEnabled = a != null && CronologiaSelezioni.puoAvanti(a.id)
+        bloccaButton.isEnabled = selezioni.keys.any { it !in bloccati }
+        sbloccaButton.isEnabled = bloccati.isNotEmpty()
+    }
+
+    /** Blocca tutte le selezioni correnti, come Blocca di Qlik. */
+    private fun bloccaTutto() {
+        if (selezioni.isEmpty()) return
+        bloccati.addAll(selezioni.keys)
+        dopoCambioBlocchi()
+    }
+
+    /** Toglie tutti i blocchi. */
+    private fun sbloccaTutto() {
+        if (bloccati.isEmpty()) return
+        bloccati.clear()
+        dopoCambioBlocchi()
+    }
+
+    /** Blocca o sblocca un solo campo (lucchetto in Selezioni correnti). */
+    private fun cambiaBlocco(dimId: UUID) {
+        if (!bloccati.remove(dimId) && dimId in selezioni) bloccati.add(dimId)
+        dopoCambioBlocchi()
+    }
+
+    /** I blocchi non cambiano i dati: si salvano e si aggiornano solo Selezioni correnti e pulsanti. */
+    private fun dopoCambioBlocchi() {
+        salvaSelezioni()
+        aggiornaSelezioniCorrenti()
+        aggiornaPulsantiCronologia()
     }
 
 
@@ -761,15 +850,23 @@ class AnalisiView(
                 emptyList()
             }
             val testo = etichette.joinToString(", ") + if (valori.size > MAX_ETICHETTE) " … (${valori.size})" else ""
+            val bloccato = dimId in bloccati
+            val lucchetto = Button(Icon(if (bloccato) VaadinIcon.LOCK else VaadinIcon.UNLOCK)) { cambiaBlocco(dimId) }.apply {
+                addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL)
+                element.setAttribute("title", if (bloccato) "Sblocca questo campo" else "Blocca questo campo")
+            }
             val togli = Button("✕") { togliSelezione(dimId) }.apply {
                 addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL)
                 element.setAttribute("title", "Togli la selezione di questo campo")
+                // Una selezione bloccata non si toglie: prima si sblocca.
+                isEnabled = !bloccato
             }
             corpoSelezioni.add(
                 Div(
                     Span("●").apply { className = "lbi-qv-sel-dot" },
                     Span(nomiDimensioni[dimId] ?: "?").apply { className = "lbi-qv-sel-campo" },
                     Span(testo).apply { className = "lbi-qv-sel-valori" },
+                    lucchetto,
                     togli
                 ).apply { className = "lbi-qv-sel-row" }
             )

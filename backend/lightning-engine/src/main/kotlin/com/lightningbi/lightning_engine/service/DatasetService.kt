@@ -90,13 +90,15 @@ class DatasetService(
             val tabella = importedTableRepository.findById(at.importedTableId)
                 ?: error("Tabella importata ${at.importedTableId} non trovata")
             val eccezioni = areaCampoRepository.findByAreaTabella(at.id)
-                .associate { it.colonna to EccezioneCampo(it.nomeCampo, it.escluso) }
+                .associate { it.colonna to EccezioneCampo(it.nomeCampo, it.escluso, it.etichetta) }
             OccorrenzaBozza(
                 id = at.id,
                 importedTableId = tabella.id,
                 nomeLogico = tabella.nomeLogico,
                 alias = at.alias,
-                ruolo = tabella.ruolo,
+                // Ruolo in questo dataset: l'eccezione salvata, altrimenti quello predefinito della tabella.
+                ruolo = at.ruolo ?: tabella.ruolo,
+                ruoloPredefinito = tabella.ruolo,
                 colonne = importedTableRepository.findColumnsByTable(tabella.id),
                 eccezioni = eccezioni,
                 prefissiTecnici = prefissiTecniciDi(tabella),
@@ -127,7 +129,9 @@ class DatasetService(
      * occorrenze, eccezioni dei campi, dimensioni, metriche.
      */
     @Transactional("postgresTransactionManager")
-    fun salva(bozza: DatasetBozza): UUID {
+    fun salva(bozzaRicevuta: DatasetBozza): UUID {
+        // Su un dataset esistente si riprendono gli id di occorrenze e metriche tolte e rimesse.
+        val bozza = bozzaRicevuta.areaId?.let { riprendiIdEsistenti(it, bozzaRicevuta) } ?: bozzaRicevuta
         val esito = bozza.valida()
         if (!esito.valido) throw DatasetNonValidoException(esito)
 
@@ -162,6 +166,45 @@ class DatasetService(
 
         registryRepository.bumpVersion()
         return area.id
+    }
+
+    /**
+     * Riprende gli id già salvati, così niente si perde quando si toglie e si rimette una tabella:
+     * - un'occorrenza nuova della stessa tabella importata riprende l'id di quella tolta (prima con
+     *   lo stesso alias, poi qualunque): le misure delle analisi, legate all'occorrenza con
+     *   cancellazione in cascata, restano;
+     * - una metrica nuova con stessa occorrenza, colonna e aggregazione riprende l'id di quella tolta.
+     */
+    private fun riprendiIdEsistenti(areaId: UUID, bozza: DatasetBozza): DatasetBozza {
+        val esistenti = areaTabellaRepository.findByArea(areaId)
+        val idBozza = bozza.occorrenze.map { it.id }.toSet()
+        val libere = esistenti.filter { it.id !in idBozza }.toMutableList()
+        val mappaOccorrenze = mutableMapOf<UUID, UUID>()
+        bozza.occorrenze.filter { o -> esistenti.none { it.id == o.id } }.forEach { o ->
+            val vecchia = libere.firstOrNull { it.importedTableId == o.importedTableId && it.alias.equals(o.alias, ignoreCase = true) }
+                ?: libere.firstOrNull { it.importedTableId == o.importedTableId }
+            if (vecchia != null) {
+                mappaOccorrenze[o.id] = vecchia.id
+                libere.remove(vecchia)
+            }
+        }
+        val conOccorrenze = bozza.rimappaOccorrenze(mappaOccorrenze)
+
+        val metricheEsistenti = registryRepository.findMetricheByArea(areaId)
+            .filter { it.tipoMetrica == TipoMetrica.AGGREGAZIONE_COLONNA }
+        val idMetriche = conOccorrenze.metriche.map { it.id }.toSet()
+        val libereMetriche = metricheEsistenti.filter { it.id !in idMetriche }.toMutableList()
+        val mappaMetriche = mutableMapOf<UUID, UUID>()
+        conOccorrenze.metriche.filter { m -> metricheEsistenti.none { it.id == m.id } }.forEach { m ->
+            val vecchia = libereMetriche.firstOrNull {
+                it.areaTabellaId == m.areaTabellaId && it.colonnaFisica == m.colonna && it.tipoAggregazione == m.tipo
+            }
+            if (vecchia != null) {
+                mappaMetriche[m.id] = vecchia.id
+                libereMetriche.remove(vecchia)
+            }
+        }
+        return conOccorrenze.rimappaMetriche(mappaMetriche)
     }
 
     private fun salvaArea(areaId: UUID?, nome: String, tabellaFisica: String): Area {
@@ -231,10 +274,19 @@ class DatasetService(
         bozza.occorrenze
             .filter { o -> esistenti[o.id]?.let { it.disconnessa != o.disconnessa } == true }
             .forEach { areaTabellaRepository.updateDisconnessa(it.id, it.disconnessa) }
+        // Ruolo: si salva solo se diverso da quello predefinito della tabella (null = predefinito).
+        bozza.occorrenze
+            .filter { o -> esistenti[o.id]?.let { it.ruolo != ruoloDaSalvare(o) } == true }
+            .forEach { areaTabellaRepository.updateRuolo(it.id, ruoloDaSalvare(it)) }
         bozza.occorrenze.filter { it.id !in esistenti }.forEach {
-            areaTabellaRepository.save(AreaTabella(it.id, areaId, it.importedTableId, it.alias, it.disconnessa))
+            areaTabellaRepository.save(
+                AreaTabella(it.id, areaId, it.importedTableId, it.alias, it.disconnessa, ruoloDaSalvare(it))
+            )
         }
     }
+
+    private fun ruoloDaSalvare(o: OccorrenzaBozza): RuoloTabella? = if (o.ruolo == o.ruoloPredefinito) null else o.ruolo
+
 
     private fun sincronizzaCampi(bozza: DatasetBozza) {
         bozza.occorrenze.forEach { o ->
@@ -242,7 +294,7 @@ class DatasetService(
                 .filter { it.colonna !in o.eccezioni }
                 .forEach { areaCampoRepository.delete(o.id, it.colonna) }
             o.eccezioni.forEach { (colonna, ecc) ->
-                areaCampoRepository.save(AreaCampo(o.id, colonna, ecc.nomeCampo, ecc.escluso))
+                areaCampoRepository.save(AreaCampo(o.id, colonna, ecc.nomeCampo, ecc.escluso, ecc.etichetta))
             }
         }
     }

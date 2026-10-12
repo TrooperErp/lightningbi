@@ -22,7 +22,15 @@ import java.util.UUID
 enum class Confidenza { ALTA, MEDIA }
 
 /** Eccezione al nome di default di un campo, valida solo in questa bozza (AreaCampo). */
-data class EccezioneCampo(val nomeCampo: String? = null, val escluso: Boolean = false)
+data class EccezioneCampo(
+    val nomeCampo: String? = null,
+    val escluso: Boolean = false,
+    /** Nome mostrato all'utente; non cambia il campo né le associazioni. */
+    val etichetta: String? = null
+) {
+    /** Una eccezione senza effetto coincide con il default e non si salva. */
+    val senzaEffetto: Boolean get() = nomeCampo == null && !escluso && etichetta == null
+}
 
 /** Una colonna di un'occorrenza, per nome FISICO (Naming.column). */
 data class RiferimentoCampo(val occorrenzaId: UUID, val colonna: String)
@@ -39,8 +47,11 @@ data class OccorrenzaBozza(
     /** Prefissi dei campi tecnici (chiavi) della connessione della tabella, ad esempio "_KEY". */
     val prefissiTecnici: List<String> = emptyList(),
     /** Disconnessa logicamente a mano (come Qlik): le selezioni non entrano né escono da questa tabella. */
-    val disconnessa: Boolean = false
+    val disconnessa: Boolean = false,
+    /** Ruolo predefinito della tabella importata: se [ruolo] coincide, nel dataset non si salva nessuna eccezione. */
+    val ruoloPredefinito: RuoloTabella = ruolo
 )
+
 
 
 
@@ -174,7 +185,7 @@ data class DatasetBozza(
                     tecnico = Naming.column(c.nomeCampo) == Naming.column(c.nome) && ecc?.nomeCampo == null && (
                             c.isChiave || o.prefissiTecnici.any { c.nome.startsWith(it, ignoreCase = true) }
                             ),
-                    etichetta = ecc?.nomeCampo ?: if (qualificata) "${o.alias} ${c.nomeCampo}" else c.nomeCampo
+                    etichetta = ecc?.etichetta ?: ecc?.nomeCampo ?: if (qualificata) "${o.alias} ${c.nomeCampo}" else c.nomeCampo
 
 
                 )
@@ -244,6 +255,19 @@ data class DatasetBozza(
     fun ripristinaCampo(occorrenzaId: UUID, colonna: String): DatasetBozza = conEccezione(occorrenzaId, colonna, null)
 
     /**
+     * Cambia solo il nome MOSTRATO di un campo in questo dataset (etichetta), come l'etichetta di
+     * un oggetto in Qlik: il nome del campo, le associazioni e le dimensioni restano uguali.
+     * Testo vuoto o null = si torna al nome di default.
+     */
+    fun impostaEtichetta(occorrenzaId: UUID, colonna: String, testo: String?): DatasetBozza {
+        val o = occorrenza(occorrenzaId)
+        val attuale = o.eccezioni[colonna] ?: EccezioneCampo()
+        require(!attuale.escluso) { "Un campo escluso non ha etichetta: ripristinalo prima" }
+        val nuova = attuale.copy(etichetta = testo?.trim()?.ifEmpty { null })
+        return conEccezione(occorrenzaId, colonna, if (nuova.senzaEffetto) null else nuova)
+    }
+
+    /**
      * "Associa questi due campi" (come nel Data manager): il campo B prende il
      * nome del campo A. Se le colonne fisiche hanno nomi diversi l'associazione
      * è per valore (vedi [Associazione.perValore]).
@@ -262,6 +286,27 @@ data class DatasetBozza(
     fun aggiungiMetrica(metrica: MetricaBozza): DatasetBozza = copy(metriche = metriche + metrica)
 
     fun rimuoviMetrica(metricaId: UUID): DatasetBozza = copy(metriche = metriche.filterNot { it.id == metricaId })
+
+    /**
+     * Cambia gli id di alcune occorrenze ([mappa]: id attuale -> id da usare) in tutta la bozza:
+     * occorrenze, dimensioni, metriche. Serve al salvataggio per riprendere l'id di
+     * un'occorrenza tolta e rimessa, così le misure delle analisi che la usano non si perdono.
+     */
+    fun rimappaOccorrenze(mappa: Map<UUID, UUID>): DatasetBozza {
+        if (mappa.isEmpty()) return this
+        fun id(x: UUID) = mappa[x] ?: x
+        return copy(
+            occorrenze = occorrenze.map { it.copy(id = id(it.id)) },
+            dimensioni = dimensioni.map { it.copy(occorrenzaId = id(it.occorrenzaId)) }.toSet(),
+            metriche = metriche.map { it.copy(areaTabellaId = id(it.areaTabellaId)) }
+        )
+    }
+
+    /** Cambia gli id di alcune metriche ([mappa]: id attuale -> id da usare). */
+    fun rimappaMetriche(mappa: Map<UUID, UUID>): DatasetBozza {
+        if (mappa.isEmpty()) return this
+        return copy(metriche = metriche.map { it.copy(id = mappa[it.id] ?: it.id) })
+    }
 
     // ---------- calendario ----------
 
@@ -366,10 +411,25 @@ data class DatasetBozza(
     fun impostaDisconnessa(occorrenzaId: UUID, disconnessa: Boolean): DatasetBozza =
         copy(occorrenze = occorrenze.map { if (it.id == occorrenzaId) it.copy(disconnessa = disconnessa) else it })
 
+
+
+    /**
+     * Cambia il ruolo di una tabella in questo dataset (Fatti o Dimensione). Il ruolo predefinito
+     * della tabella importata non cambia. Una metrica su una tabella diventata Dimensione blocca
+     * il salvataggio (vedi [valida]).
+     */
+    fun impostaRuolo(occorrenzaId: UUID, ruolo: RuoloTabella): DatasetBozza {
+        occorrenza(occorrenzaId)
+        return copy(occorrenze = occorrenze.map { if (it.id == occorrenzaId) it.copy(ruolo = ruolo) else it })
+    }
+
     /**
      * Le tabelle disconnesse logicamente: quelle scelte a mano più quelle che il sistema disconnette
      * da solo per rompere i loop (come Qlik), una per loop.
      */
+
+
+
     fun disconnesse(): Set<UUID> = risolviLoop().disconnesse
 
     /** Le associazioni che contano per la propagazione: senza le tabelle disconnesse. */
