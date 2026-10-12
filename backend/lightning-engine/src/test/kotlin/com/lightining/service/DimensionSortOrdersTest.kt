@@ -1,7 +1,8 @@
 // src/test/kotlin/com/lightningbi/lightning/engine/service/DimensionSortOrdersTest.kt
-package com.lightningbi.lightning.engine.service
+package com.lightining.service
 
-import com.lightningbi.lightning_engine.service.DimensionSortOrders.confrontoNaturale
+import com.lightning.service.DimensionSortOrders
+import com.lightning.service.DimensionSortOrders.confrontoNaturale
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -68,5 +69,5 @@ class DimensionSortOrdersTest {
     }
 
     private fun DimensionSortOrders_usesNatural(c: String) =
-        com.lightningbi.lightning_engine.service.DimensionSortOrders.usesNaturalOrder(c)
+        DimensionSortOrders.usesNaturalOrder(c)
 }

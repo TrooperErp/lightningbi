@@ -14,7 +14,6 @@ import com.lightning.model.VersionSnapshot
 import com.lightning.repository.AreaChartRepository
 import com.lightning.repository.MisuraAnalisiRepository
 import com.lightning.repository.RegistryRepository
-import com.lightning.service.DimensionSortOrders
 import jakarta.annotation.PreDestroy
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value

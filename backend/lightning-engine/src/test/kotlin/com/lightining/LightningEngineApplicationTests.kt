@@ -1,4 +1,4 @@
-package com.lightningbi.lightning_engine
+package com.lightning
 
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest

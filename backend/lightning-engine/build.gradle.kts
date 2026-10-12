@@ -6,7 +6,7 @@ plugins {
 	id("com.vaadin") version "25.1.0"
 }
 
-group = "com.lightningbi"
+group = "com.lightning"
 version = "0.0.1-SNAPSHOT"
 
 java {

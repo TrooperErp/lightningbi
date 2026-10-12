@@ -1,6 +1,6 @@
 // src/test/kotlin/com/lightningbi/lightning/engine/service/PivotEngineTest.kt
 // (stessa cartella e stessa riga `package` di OrdinamentoValoriTest)
-package com.lightningbi.lightning.engine.service
+package com.lightining.service
 
 import com.lightning.model.AggregateRow
 import com.lightning.model.AreaMetrica

@@ -10,7 +10,6 @@ import com.lightning.model.TipoAggregazione
 import com.lightning.model.VersionSnapshot
 import com.lightning.repository.RegistryRepository
 import tools.jackson.databind.ObjectMapper
-import com.lightning.service.DimensionSortOrders
 import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.jdbc.core.JdbcTemplate

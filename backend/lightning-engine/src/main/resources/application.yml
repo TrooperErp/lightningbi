@@ -33,7 +33,7 @@ spring:
 # Vaadin: proprietà top-level, NON sotto spring
 vaadin:
   production-mode: false
-  whitelisted-packages: com.lightningbi
+  whitelisted-packages: com.lightning
 
 server:
   port: 8080
@@ -45,9 +45,9 @@ server:
 logging:
   level:
     root: WARN
-    com.lightningbi: INFO
+    com.lightning: INFO
     org.springframework.security: WARN
-    com.lightningbi.lightning_engine.timing: DEBUG
+    com.lightning.timing: DEBUG
 
 ---
 # ============ DEV ============
@@ -206,7 +206,7 @@ server:
 logging:
   level:
     root: WARN
-    com.lightningbi: INFO
+    com.lightning: INFO
     org.springframework.security: WARN
 
 lbi:

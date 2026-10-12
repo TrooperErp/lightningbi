@@ -5,7 +5,6 @@ import com.lightning.model.AreaMetrica
 import com.lightning.model.TipoAggregazione
 import java.math.BigDecimal
 import java.util.UUID
-import com.lightning.service.DimensionSortOrders
 
 /**
  * Motore di raggruppamento gerarchico generico, condiviso fra l'asse

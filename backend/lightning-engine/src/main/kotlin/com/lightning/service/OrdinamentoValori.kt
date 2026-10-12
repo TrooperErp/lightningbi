@@ -1,6 +1,5 @@
 package com.lightning.service
 
-import com.lightning.service.DimensionSortOrders
 import java.math.BigDecimal
 
 /**
