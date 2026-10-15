@@ -14,6 +14,7 @@ import com.lightning.bi.service.PoolQuery
 import com.lightning.bi.service.RiferimentoCampo
 import com.lightning.bi.service.SezioneAccessoService
 import com.lightning.piattaforma.service.AdminGuard
+import com.lightning.piattaforma.service.Cronometro
 import com.lightning.piattaforma.ui.LightningLayout
 import com.lightning.piattaforma.ui.Notifiche
 import com.lightning.piattaforma.ui.PaginaLightning
@@ -31,6 +32,8 @@ import com.vaadin.flow.router.Route
 import org.slf4j.LoggerFactory
 import java.util.Locale
 import java.util.UUID
+import com.lightning.bi.motore.ConfrontoMotori
+import com.lightning.bi.motore.Motore
 
 /**
  * Il foglio "Filtri" di un dataset (come "Impostazione filtri" di Qlik), dentro la shell:
@@ -52,7 +55,9 @@ class FiltriView(
     private val adminGuard: AdminGuard,
     private val fogliBi: FogliBi,
     private val etlOrchestrator: com.lightning.bi.etl.EtlOrchestrator,
-    private val areaSourceRepository: com.lightning.bi.repository.AreaSourceRepository
+    private val areaSourceRepository: com.lightning.bi.repository.AreaSourceRepository,
+    private val confrontoMotori: ConfrontoMotori,
+    private val motore: Motore
 ) : Div(), PaginaLightning, HasUrlParameter<String>, AfterNavigationObserver {
 
     override val moduloId = "bi"
@@ -83,7 +88,7 @@ class FiltriView(
             impostaPercorso(percorso())
             impostaPannello(pannello())
         }
-        aggiorna()
+        Cronometro.clic("apri filtri") { aggiorna() }
     }
 
     override fun percorso() = listOfNotNull(area?.nome, "Filtri")
@@ -109,7 +114,7 @@ class FiltriView(
         }
 
         fogli = fogliBi.di(scelta.id)
-        val st = StatoSelezioni(scelta.id, filtriService, userPivotStateRepository, registryRepository).also { it.carica() }
+        val st = StatoSelezioni(scelta.id, motore, userPivotStateRepository, registryRepository).also { it.carica() }
         stato = st
 
         val admin = adminGuard.isAdmin()
@@ -151,7 +156,7 @@ class FiltriView(
         val barraSelezioni = BarraSelezioni(st, filtriService) { nomiCampi[it] ?: "?" }
         val cal = BarraCalendario(
             scelta.id, dimCalendario, if (admin) dimAzienda else null,
-            st, filtriService, poolQuery, calendarioService
+            st, motore, poolQuery, calendarioService
         )
         calendario = cal
 
@@ -194,26 +199,27 @@ class FiltriView(
         val st = stato ?: return
         val sel = st.selezioni
         val vincolo = try {
-            sezioneAccessoService.vincolo(a.id)
+            Cronometro.pezzo("accesso") { sezioneAccessoService.vincolo(a.id) }
         } catch (e: SecurityException) {
             Notification.show(e.message ?: "Accesso non consentito", 6000, Notification.Position.MIDDLE)
             return
         }
         val inizio = System.nanoTime()
 
-        val fContatori = poolQuery.avvia { filtriService.contatori(a.id, sel, campi.map { it.dimId }, vincolo) }
-        val mostraCalendario = calendario?.avvia(sel, vincolo)
+        val fContatori = poolQuery.avvia { Cronometro.pezzo("contatori") { motore.contatori(a.id, sel, campi.map { it.dimId }, vincolo) } }
+        confrontoMotori.contatori(a.id, sel, campi.map { it.dimId }, vincolo, nomiCampi.toMap())
+        val mostraCalendario = Cronometro.pezzo("calendario avvio") { calendario?.avvia(sel, vincolo) }
 
         try {
-            val contatori = poolQuery.attendi(fContatori)
-            campi.forEach { it.mostra(contatori[it.dimId]) }
+            val contatori = Cronometro.pezzo("attesa contatori") { poolQuery.attendi(fContatori) }
+            Cronometro.pezzo("contatori a video") { campi.forEach { it.mostra(contatori[it.dimId]) } }
         } catch (e: Exception) {
             Notification.show(
                 Notifiche.testo(log, e, "calcolare i filtri") + ". Se il dataset non è mai stato sincronizzato, sincronizzalo.",
                 8000, Notification.Position.MIDDLE
             ).addThemeName("error")
         }
-        mostraCalendario?.invoke()
+        Cronometro.pezzo("calendario a video") { mostraCalendario?.invoke() }
         campi.forEach { c ->
             try {
                 c.lista?.takeIf { it.isVisible }?.aggiorna()
@@ -259,7 +265,7 @@ class FiltriView(
                 if (it.isVisible) it.aggiorna()
                 return
             }
-            val nuova = ListaValori(filtriService, areaId, dimId, { st.selezioni }, st) { valore ->
+            val nuova = ListaValori(motore, areaId, dimId, { st.selezioni }, st) { valore ->
                 st.clic(dimId, valore)?.let { Notification.show(it, 3000, Notification.Position.BOTTOM_START) }
             }
             lista = nuova

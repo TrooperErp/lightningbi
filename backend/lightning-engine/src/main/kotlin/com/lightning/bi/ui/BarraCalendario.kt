@@ -15,6 +15,8 @@ import org.slf4j.LoggerFactory
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import com.vaadin.flow.component.html.NativeButton
+import com.lightning.bi.motore.Motore
+import com.lightning.piattaforma.service.Cronometro
 
 /**
  * Anno / Mese / Giorno (i derivati del campo data scelto in Modello dati) e, per l'admin, Ditta.
@@ -31,7 +33,7 @@ class BarraCalendario(
     private val calendario: Map<String, UUID>,
     private val ditta: UUID?,
     private val stato: StatoSelezioni,
-    private val filtriService: FiltriService,
+    private val motore: Motore,
     private val poolQuery: PoolQuery,
     private val calendarioService: CalendarioService
 ) : Div() {
@@ -56,7 +58,7 @@ class BarraCalendario(
     /** Fa partire le query; la funzione restituita le aspetta e mostra i valori. */
     fun avvia(selezioni: Map<UUID, Set<Long>>, vincolo: SezioneAccessoService.Vincolo?): () -> Unit {
         fun valori(dimId: UUID?): CompletableFuture<List<ValoreFiltro>>? = dimId?.let { d ->
-            poolQuery.avvia { filtriService.valori(areaId, selezioni, d, null, 0, MAX_VALORI, vincolo) }
+            poolQuery.avvia { Cronometro.pezzo("calendario") { motore.valori(areaId, selezioni, d, null, 0, MAX_VALORI, vincolo) } }
         }
         val fAnni = valori(calendario["anno"])
         val fMesi = valori(calendario["mese"])

@@ -7,10 +7,12 @@ import com.lightning.bi.service.FiltriService
 import com.lightning.bi.service.StatoValore
 import com.lightning.bi.service.ValoreFiltro
 import com.lightning.bi.view.CronologiaSelezioni
+import com.lightning.piattaforma.service.Cronometro
 import com.lightning.piattaforma.view.CurrentUserHolder
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.UUID
+import com.lightning.bi.motore.Motore
 
 /**
  * Le selezioni dell'utente su un dataset, come in Qlik: valgono per tutti i fogli (Filtri,
@@ -23,7 +25,7 @@ import java.util.UUID
  */
 class StatoSelezioni(
     val areaId: UUID,
-    private val filtriService: FiltriService,
+    private val motore: Motore,
     private val userPivotStateRepository: UserPivotStateRepository,
     private val registryRepository: RegistryRepository
 ) {
@@ -72,7 +74,10 @@ class StatoSelezioni(
      *
      * @return null se fatto, altrimenti il motivo del rifiuto (da mostrare all'utente)
      */
-    fun clic(dimId: UUID, valore: ValoreFiltro): String? {
+    fun clic(dimId: UUID, valore: ValoreFiltro): String? =
+        Cronometro.clic("clic valore") { clicValore(dimId, valore) }
+
+    private fun clicValore(dimId: UUID, valore: ValoreFiltro): String? {
         if (dimId in blocchi) return MSG_BLOCCATO
         val nuove = correnti.toMutableMap()
         val attuali = nuove[dimId].orEmpty()
@@ -84,7 +89,7 @@ class StatoSelezioni(
         }
         if (valore.stato == StatoValore.ESCLUSO) {
             val daTogliere = try {
-                filtriService.conflitti(areaId, correnti, dimId, valore.id)
+                Cronometro.pezzo("conflitti") { motore.conflitti(areaId, correnti, dimId, valore.id) }
             } catch (e: Exception) {
                 log.warn("Calcolo dei conflitti fallito per la dimensione {}", dimId, e)
                 emptySet()
@@ -98,7 +103,10 @@ class StatoSelezioni(
     }
 
     /** Sostituisce la selezione di un campo (vuoto = la toglie). */
-    fun imposta(dimId: UUID, valori: Set<Long>): String? {
+    fun imposta(dimId: UUID, valori: Set<Long>): String? =
+        Cronometro.clic("imposta") { impostaValori(dimId, valori) }
+
+    private fun impostaValori(dimId: UUID, valori: Set<Long>): String? {
         if (dimId in blocchi) return MSG_BLOCCATO
         val nuove = correnti.toMutableMap()
         if (valori.isEmpty()) nuove.remove(dimId) else nuove[dimId] = valori
@@ -108,13 +116,15 @@ class StatoSelezioni(
 
     /**
      * "Seleziona tutti" i valori possibili di un campo, meno [tranne]: una lista esplicita, come in
-     * Qlik (se poi cambiano le altre selezioni, la lista resta quella). Oltre [MAX_TUTTI] valori si
-     * rifiuta: prima si restringe con altre selezioni.
+     * Qlik. Oltre [MAX_TUTTI] valori si rifiuta: prima si restringe con altre selezioni.
      */
-    fun tutti(dimId: UUID, tranne: Long? = null): String? {
+    fun tutti(dimId: UUID, tranne: Long? = null): String? =
+        Cronometro.clic("tutti") { tuttiValori(dimId, tranne) }
+
+    private fun tuttiValori(dimId: UUID, tranne: Long?): String? {
         if (dimId in blocchi) return MSG_BLOCCATO
         val possibili = try {
-            filtriService.idPossibili(areaId, correnti, dimId)
+            Cronometro.pezzo("possibili") { motore.idPossibili(areaId, correnti, dimId) }
         } catch (e: Exception) {
             log.warn("Lettura dei valori possibili fallita per la dimensione {}", dimId, e)
             return "Impossibile leggere i valori del campo"
@@ -124,14 +134,17 @@ class StatoSelezioni(
         }
         val scelti = if (tranne == null) possibili else possibili - tranne
         if (scelti.isEmpty()) return "Nessun altro valore possibile da selezionare"
-        return imposta(dimId, scelti)
+        return impostaValori(dimId, scelti)
     }
 
     /**
      * Clic su un grafico: ogni valore cliccato diventa la selezione del suo campo. Un secondo
      * clic sullo stesso valore, già unico selezionato, la toglie.
      */
-    fun daGrafico(chiavi: Map<UUID, Long>): String? {
+    fun daGrafico(chiavi: Map<UUID, Long>): String? =
+        Cronometro.clic("grafico") { daGraficoValori(chiavi) }
+
+    private fun daGraficoValori(chiavi: Map<UUID, Long>): String? {
         if (chiavi.isEmpty()) return null
         if (chiavi.keys.any { it in blocchi }) return MSG_BLOCCATO
         val giaSelezionato = chiavi.all { (dimId, valore) -> correnti[dimId] == setOf(valore) }
@@ -143,7 +156,7 @@ class StatoSelezioni(
     }
 
     /** Come "Cancella selezioni" di Qlik: tutte tranne le bloccate. */
-    fun cancella() = applica(emptyMap())
+    fun cancella() = Cronometro.clic("cancella") { applica(emptyMap()) }
 
     // ================= Cronologia =================
 
@@ -151,11 +164,15 @@ class StatoSelezioni(
     fun puoAvanti() = CronologiaSelezioni.puoAvanti(areaId)
 
     fun indietro() {
-        CronologiaSelezioni.indietro(areaId, correnti.toMap())?.let { applica(it, registra = false) }
+        Cronometro.clic("indietro") {
+            CronologiaSelezioni.indietro(areaId, correnti.toMap())?.let { applica(it, registra = false) }
+        }
     }
 
     fun avanti() {
-        CronologiaSelezioni.avanti(areaId, correnti.toMap())?.let { applica(it, registra = false) }
+        Cronometro.clic("avanti") {
+            CronologiaSelezioni.avanti(areaId, correnti.toMap())?.let { applica(it, registra = false) }
+        }
     }
 
     // ================= Blocchi =================

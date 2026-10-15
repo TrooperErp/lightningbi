@@ -22,6 +22,7 @@ import java.util.concurrent.Executors
 import kotlin.collections.plus
 import com.lightning.bi.service.setanalysis.SetAnalysisParser
 import com.lightning.bi.service.setanalysis.chiaveCampo
+import com.lightning.piattaforma.service.Cronometro
 
 /** Un'analisi con le sue misure. */
 data class AnalisiCompleta(val vista: PivotView, val misure: List<MisuraAnalisi>)
@@ -81,7 +82,7 @@ class AnalisiService(
 
     /** Esegue [blocco] sul pool; l'eccezione esce com'era (non avvolta), così la pagina la riconosce. */
     private fun <T> inParallelo(blocco: () -> T): CompletableFuture<T> =
-        CompletableFuture.supplyAsync(blocco, pool)
+        CompletableFuture.supplyAsync(Cronometro.avvolgi(blocco), pool)
 
     private fun <T> attendi(f: CompletableFuture<T>): T =
         try {

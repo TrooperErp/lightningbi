@@ -8,24 +8,29 @@ import com.lightning.bi.model.AreaDimensione
 import com.lightning.bi.model.AreaMetrica
 import com.lightning.bi.model.TipoAggregazione
 import com.lightning.bi.model.VersionSnapshot
+import com.lightning.bi.motore.memoria.AggregatiMemoria
+import com.lightning.bi.motore.memoria.AggregatoNonSupportato
+import com.lightning.bi.motore.memoria.MotoreMemoria
 import com.lightning.bi.repository.RegistryRepository
-import tools.jackson.databind.ObjectMapper
+import com.lightning.bi.service.setanalysis.CampoSet
+import com.lightning.bi.service.setanalysis.SelezioneMisura
+import com.lightning.bi.service.setanalysis.SetAnalysisClickHouse
+import com.lightning.bi.service.setanalysis.SetAnalysisParser
+import com.lightning.bi.service.setanalysis.chiaveCampo
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.context.annotation.Lazy
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Service
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.security.MessageDigest
 import java.time.Duration
 import java.util.HexFormat
 import java.util.UUID
-import org.springframework.jdbc.core.RowMapper
-import com.lightning.bi.service.setanalysis.CampoSet
-import com.lightning.bi.service.setanalysis.SelezioneMisura
-import com.lightning.bi.service.setanalysis.SetAnalysisClickHouse
-import com.lightning.bi.service.setanalysis.SetAnalysisParser
-import com.lightning.bi.service.setanalysis.chiaveCampo
 
 @Service
 class AggregateService(
@@ -37,7 +42,12 @@ class AggregateService(
     private val symbolLookupService: SymbolLookupService,
     private val starQueryBuilder: StarQueryBuilder,
     private val modelloDatasetCache: ModelloDatasetCache,
-    private val sezioneAccessoService: SezioneAccessoService
+    private val sezioneAccessoService: SezioneAccessoService,
+    /** false = niente cache Redis dei risultati: si misura il calcolo pieno (Motore 2.0, collaudo). */
+    @Value("\${lbi.aggregati.cache:true}") private val cacheAttiva: Boolean,
+    /** @Lazy: MotoreMemoria dipende (tramite MotoreClickHouse) da questo servizio. */
+    @Lazy private val motoreMemoria: MotoreMemoria,
+    private val aggregatiMemoria: AggregatiMemoria
 ) {
 
     private val log = LoggerFactory.getLogger(AggregateService::class.java)
@@ -207,23 +217,12 @@ class AggregateService(
             nomi[dimId]?.takeIf { modello.grafo.tabelleCon(it).isNotEmpty() }?.let { it to valori }
         }.toMap()
 
+        val nomeForzato = forzata?.let { nomi[it] }
         if (forzata != null) {
-            val nomeForzato = nomi[forzata]
             if (nomeForzato == null || nomeForzato !in selezioniPerCampo) {
                 throw SecurityException("Il campo azienda non è nell'indice del dataset")
             }
         }
-        // Set analysis: per ogni misura con condizione, la selezione con cui calcolarla.
-        val condizioniTesto = metriche.mapNotNull { m -> m.condizione?.let { m.id to it } }.toMap()
-        val selezioniMisure: Map<UUID, SelezioneMisura> =
-            if (condizioniTesto.isEmpty()) emptyMap()
-            else {
-                val campi = campiSetAnalysis(areaId, modello)
-                val nomeForzato = forzata?.let { nomi[it] }
-                condizioniTesto.mapValues { (_, testo) ->
-                    SetAnalysisClickHouse.traduci(SetAnalysisParser.analizza(testo), selezioniPerCampo, campi, nomeForzato)
-                }
-            }
 
         // Ogni metrica si calcola sul PROPRIO Fatti; i risultati dei vari Fatti
         // si affiancano sulle dimensioni in comune, senza mai sommare righe di Fatti diversi.
@@ -233,11 +232,28 @@ class AggregateService(
         val unico = perFatti.size == 1
         val tetto = if (unico) limit else maxRigheUnione
 
+        // Set analysis per ClickHouse: si calcola solo se serve (un Fatti che il motore in memoria non copre).
+        val selezioniMisure: Map<UUID, SelezioneMisura> by lazy {
+            val condizioniTesto = metriche.mapNotNull { m -> m.condizione?.let { m.id to it } }.toMap()
+            if (condizioniTesto.isEmpty()) emptyMap()
+            else {
+                val campi = campiSetAnalysis(areaId, modello)
+                condizioniTesto.mapValues { (_, testo) ->
+                    SetAnalysisClickHouse.traduci(SetAnalysisParser.analizza(testo), selezioniPerCampo, campi, nomeForzato)
+                }
+            }
+        }
+
         var troncato = false
         val parziali = perFatti.map { (fattiId, metricheFatti) ->
-            val righe = aggregaFatti(
+            val ordineFatti = if (unico) order else null
+            val metricaOrdineFatti = if (unico) orderMetrica else null
+            val righe = aggregaInMemoria(
+                areaId, fattiId, metricheFatti, allGroupDims, dimById, nomi, selezioniPerCampo,
+                ordineFatti, metricaOrdineFatti, tetto, nomeForzato
+            ) ?: aggregaFatti(
                 modello, fattiId, metricheFatti, allGroupDims, dimById, nomi, selezioniPerCampo, selezioniMisure,
-                if (unico) order else null, if (unico) orderMetrica else null, tetto
+                ordineFatti, metricaOrdineFatti, tetto
             )
             if (righe.size > tetto) troncato = true
             righe.take(tetto)
@@ -263,7 +279,51 @@ class AggregateService(
         return AggregateResult(righe.take(limit), troncato || righe.size > limit)
     }
 
-    /** Aggrega le metriche di UN Fatti sulle sue righe vive; restituisce fino a limit + 1 righe. */
+    /** Le dimensioni di raggruppamento come le usano StarQueryBuilder e il motore in memoria. */
+    private fun dimensioniUsate(
+        allGroupDims: List<UUID>,
+        nomi: Map<UUID, String>,
+        dimById: Map<UUID, AreaDimensione>
+    ): List<StarQueryBuilder.DimensioneUsata> =
+        allGroupDims.map { dimId ->
+            StarQueryBuilder.DimensioneUsata(
+                dimId, nomi[dimId] ?: error("Dimensione $dimId senza nome"), dimById[dimId]?.areaTabellaId
+            )
+        }
+
+    /**
+     * Gli aggregati di UN Fatti dal motore in memoria (set analysis compresa), se il dataset è
+     * caricato; altrimenti null e risponde ClickHouse (solo all'avvio, finché il dataset si carica,
+     * o per un caso che il motore in memoria non copre: il motivo va nel log).
+     */
+    private fun aggregaInMemoria(
+        areaId: UUID,
+        fattiId: UUID,
+        metriche: List<AreaMetrica>,
+        allGroupDims: List<UUID>,
+        dimById: Map<UUID, AreaDimensione>,
+        nomi: Map<UUID, String>,
+        selezioniPerCampo: Map<String, Set<Long>>,
+        order: AggregateOrder?,
+        orderMetrica: AreaMetrica?,
+        limit: Int,
+        forzato: String?
+    ): List<AggregateRow>? {
+        if (!motoreMemoria.caricato(areaId)) {
+            log.info("Aggregato del dataset {} su ClickHouse: dataset non ancora in memoria", areaId)
+            return null
+        }
+        return try {
+            aggregatiMemoria.aggregaFatti(
+                motoreMemoria.dataset(areaId), fattiId, metriche,
+                dimensioniUsate(allGroupDims, nomi, dimById), selezioniPerCampo, order, orderMetrica, limit, forzato
+            )
+        } catch (e: AggregatoNonSupportato) {
+            log.info("Aggregato del dataset {} su ClickHouse: {}", areaId, e.message)
+            null
+        }
+    }
+
     /**
      * Aggrega le metriche di UN Fatti sulle sue righe vive; restituisce fino a limit + 1 righe.
      *
@@ -284,11 +344,7 @@ class AggregateService(
         orderMetrica: AreaMetrica?,
         limit: Int
     ): List<AggregateRow> {
-        val usate = allGroupDims.map { dimId ->
-            StarQueryBuilder.DimensioneUsata(
-                dimId, nomi[dimId] ?: error("Dimensione $dimId senza nome"), dimById[dimId]?.areaTabellaId
-            )
-        }
+        val usate = dimensioniUsate(allGroupDims, nomi, dimById)
         val plan = starQueryBuilder.plan(modello, fattiId, usate, selezioniPerCampo)
 
         val groupCols = allGroupDims.map { plan.dimColumn(it) }
@@ -632,15 +688,18 @@ class AggregateService(
     private fun deserialize(json: String): AggregateResult =
         objectMapper.readValue(json, AggregateResult::class.java)
 
-    private fun safeGet(key: String): String? =
-        try {
+    private fun safeGet(key: String): String? {
+        if (!cacheAttiva) return null
+        return try {
             redisTemplate.opsForValue().get(key)
         } catch (e: Exception) {
             log.warn("Redis GET failed for key $key, falling back to compute", e)
             null
         }
+    }
 
     private fun safeSet(key: String, value: String) {
+        if (!cacheAttiva) return
         try {
             redisTemplate.opsForValue().set(key, value, cacheTtl)
         } catch (e: Exception) {

@@ -1,6 +1,7 @@
 package com.lightning.bi.ui
 
 import com.lightning.bi.service.FiltriService
+import com.lightning.piattaforma.service.Cronometro
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.html.Div
 import com.vaadin.flow.component.html.Span
@@ -40,7 +41,9 @@ class BarraSelezioni(
         aggiorna()
     }
 
-    fun aggiorna() {
+    fun aggiorna() = Cronometro.pezzo("barra selezioni") { disegna() }
+
+    private fun disegna() {
         indietro.isEnabled = stato.puoIndietro()
         avanti.isEnabled = stato.puoAvanti()
         val sel = stato.selezioni

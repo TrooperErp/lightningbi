@@ -47,7 +47,7 @@ logging:
     root: WARN
     com.lightning: INFO
     org.springframework.security: WARN
-    com.lightning.timing: DEBUG
+    com.lightning.timing: INFO
 
 ---
 # ============ DEV ============

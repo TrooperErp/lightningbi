@@ -7,6 +7,7 @@ import com.lightning.bi.model.ChartResult
 import com.lightning.bi.model.ChartType
 import com.lightning.bi.model.MisuraAnalisi
 import com.lightning.bi.model.PivotView
+import com.lightning.bi.motore.Motore
 import com.lightning.bi.repository.RegistryRepository
 import com.lightning.bi.repository.UserPivotStateRepository
 import com.lightning.bi.service.AccessoDatasetService
@@ -62,7 +63,8 @@ class GraficiView(
     private val userPivotStateRepository: UserPivotStateRepository,
     private val filtriService: FiltriService,
     private val sezioneAccessoService: SezioneAccessoService,
-    private val poolQuery: PoolQuery
+    private val poolQuery: PoolQuery,
+    private val motore: Motore
 ) : Div(), PaginaLightning, HasUrlParameter<String>, AfterNavigationObserver {
 
     override val moduloId = "bi"
@@ -177,9 +179,9 @@ class GraficiView(
         dimensioni = analisiService.dimensioniDisponibili(scelta.id)
         misure = analisiService.carica(v.id)?.misure ?: emptyList()
 
-        val st = StatoSelezioni(scelta.id, filtriService, userPivotStateRepository, registryRepository).also { it.carica() }
+        val st = StatoSelezioni(scelta.id, motore, userPivotStateRepository, registryRepository).also { it.carica() }
         stato = st
-        campi = PannelloCampi(scelta.id, filtriService, st, dimensioni, ::zonaDi, ::metti)
+        campi = PannelloCampi(scelta.id, motore, st, dimensioni, ::zonaDi, ::metti)
 
         add(
             barra(scelta, v),
@@ -549,7 +551,7 @@ class GraficiView(
             val vincolo = sezioneAccessoService.vincolo(a.id)
             val sel = st.selezioni
             val ids = dimensioni.map { it.dimensioneId }
-            campi?.mostraContatori(poolQuery.attendi(poolQuery.avvia { filtriService.contatori(a.id, sel, ids, vincolo) }))
+            campi?.mostraContatori(poolQuery.attendi(poolQuery.avvia { motore.contatori(a.id, sel, ids, vincolo) }))
         } catch (e: Exception) {
             log.warn("Calcolo dei contatori fallito per il dataset {}", a.id, e)
         }

@@ -24,6 +24,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.Executors
 import kotlin.collections.plusAssign
+import com.lightning.piattaforma.service.Cronometro
 
 @Service
 class ChartService(
@@ -106,10 +107,12 @@ class ChartService(
         val versioni = versionService.snapshotVersions(areaId)
 
         val futuri = grafici.map { chart ->
-            chart to CompletableFuture.supplyAsync({
+            // Il clic si prende qui, nel thread della pagina; il calcolo gira nel pool.
+            val compito = Cronometro.avvolgi {
                 val metricaIds = areaChartRepository.findMetricheByChart(chart.id).map { it.metricaId }
                 computeChartData(chart, metricaIds, campiAmmessi, selections, versioni, vincolo)
-            }, pool)
+            }
+            chart to CompletableFuture.supplyAsync({ compito() }, pool)
         }
         return futuri.map { (chart, futuro) ->
             try {

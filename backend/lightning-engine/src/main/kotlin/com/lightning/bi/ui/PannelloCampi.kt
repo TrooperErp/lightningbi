@@ -1,5 +1,6 @@
 package com.lightning.bi.ui
 
+import com.lightning.bi.motore.Motore
 import com.lightning.bi.service.ContatoreCampo
 import com.lightning.bi.service.DimensioneAnalisi
 import com.lightning.bi.service.FiltriService
@@ -29,7 +30,7 @@ enum class Zona(val etichetta: String) { RIGHE("Righe"), COLONNE("Colonne") }
  */
 class PannelloCampi(
     private val areaId: UUID,
-    private val filtriService: FiltriService,
+    private val motore: Motore,
     private val stato: StatoSelezioni,
     dimensioni: List<DimensioneAnalisi>,
     private val zonaDi: (UUID) -> Zona?,
@@ -172,7 +173,7 @@ class PannelloCampi(
                 if (it.isVisible) it.aggiorna()
                 return
             }
-            val nuova = ListaValori(filtriService, areaId, dimId, { stato.selezioni }, stato) { valore ->
+            val nuova = ListaValori(motore, areaId, dimId, { stato.selezioni }, stato) { valore ->
                 stato.clic(dimId, valore)?.let { Notification.show(it, 3000, Notification.Position.BOTTOM_START) }
             }
             lista = nuova

@@ -23,7 +23,7 @@ class DataSourceConfig {
     @Bean
     @Primary
     fun clickHouseDataSource(): DataSource =
-        HikariDataSource(clickHouseDataSourceProperties())
+        DataSourceMisurato(HikariDataSource(clickHouseDataSourceProperties()), "CH")
 
     @Bean
     @Primary
@@ -36,7 +36,7 @@ class DataSourceConfig {
 
     @Bean(name = ["postgresDataSource"])
     fun postgresDataSource(): DataSource =
-        HikariDataSource(postgresDataSourceProperties())
+        DataSourceMisurato(HikariDataSource(postgresDataSourceProperties()), "PG")
 
     @Bean(name = ["postgresJdbcTemplate"])
     fun postgresJdbcTemplate(@Qualifier("postgresDataSource") postgresDataSource: DataSource): JdbcTemplate =

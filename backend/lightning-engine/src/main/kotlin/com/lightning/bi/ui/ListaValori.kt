@@ -3,6 +3,7 @@ package com.lightning.bi.ui
 import com.lightning.bi.service.FiltriService
 import com.lightning.bi.service.StatoValore
 import com.lightning.bi.service.ValoreFiltro
+import com.lightning.piattaforma.service.Cronometro
 import com.vaadin.flow.component.contextmenu.ContextMenu
 import com.vaadin.flow.component.grid.Grid
 import com.vaadin.flow.component.html.Div
@@ -14,6 +15,7 @@ import com.vaadin.flow.component.textfield.TextField
 import com.vaadin.flow.data.provider.DataProvider
 import com.vaadin.flow.data.value.ValueChangeMode
 import java.util.UUID
+import com.lightning.bi.motore.Motore
 
 /**
  * L'elenco dei valori di un campo, come il list box di Qlik: legge solo le righe visibili
@@ -23,7 +25,7 @@ import java.util.UUID
  * valore, "Seleziona tutti tranne questo".
  */
 class ListaValori(
-    private val filtri: FiltriService,
+    private val motore: Motore,
     private val areaId: UUID,
     private val dimensioneId: UUID,
     private val selezioni: () -> Map<UUID, Set<Long>>,
@@ -57,8 +59,8 @@ class ListaValori(
         className = "lt-lista"
         griglia.setItems(
             DataProvider.fromCallbacks<ValoreFiltro>(
-                { q -> filtri.valori(areaId, selezioni(), dimensioneId, ricerca.value, q.offset, q.limit).stream() },
-                { _ -> filtri.numeroValori(areaId, selezioni(), dimensioneId, ricerca.value) }
+                { q -> Cronometro.clic("lista valori") { motore.valori(areaId, selezioni(), dimensioneId, ricerca.value, q.offset, q.limit) }.stream() },
+                { _ -> Cronometro.clic("lista conta") { motore.numeroValori(areaId, selezioni(), dimensioneId, ricerca.value) } }
             )
         )
         griglia.addItemClickListener { alClic(it.item) }

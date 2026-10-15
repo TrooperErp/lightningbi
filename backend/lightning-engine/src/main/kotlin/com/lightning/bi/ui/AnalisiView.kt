@@ -4,6 +4,7 @@ import com.lightning.bi.model.Area
 import com.lightning.bi.model.MisuraAnalisi
 import com.lightning.bi.model.PivotView
 import com.lightning.bi.model.TipoAggregazione
+import com.lightning.bi.motore.Motore
 import com.lightning.bi.repository.RegistryRepository
 import com.lightning.bi.repository.UserPivotStateRepository
 import com.lightning.bi.service.AccessoDatasetService
@@ -54,6 +55,7 @@ import com.lightning.bi.service.setanalysis.chiaveCampo
 import com.vaadin.flow.component.textfield.TextArea
 import com.lightning.bi.service.setanalysis.Operatore
 import com.lightning.piattaforma.ui.Notifiche
+import com.lightning.piattaforma.service.Cronometro
 
 /**
  * Un foglio pivot del dataset (come un foglio di Qlik con una tabella pivot), dentro la shell:
@@ -74,7 +76,8 @@ class AnalisiView(
     private val calendarioService: CalendarioService,
     private val sezioneAccessoService: SezioneAccessoService,
     private val poolQuery: PoolQuery,
-    private val fogliBi: FogliBi
+    private val fogliBi: FogliBi,
+    private val motore: Motore
 ) : Div(), PaginaLightning, HasUrlParameter<String>, AfterNavigationObserver {
 
     override val moduloId = "bi"
@@ -142,7 +145,7 @@ class AnalisiView(
             impostaPercorso(percorso())
             impostaPannello(pannello())
         }
-        ricalcolaTutto()
+        Cronometro.clic("apri analisi") { ricalcolaTutto() }
     }
 
     override fun percorso() = listOfNotNull(area?.nome, vista?.nome)
@@ -186,9 +189,9 @@ class AnalisiView(
         dimensioni = analisiService.dimensioniDisponibili(scelta.id)
         caricaAnalisi()
 
-        val st = StatoSelezioni(scelta.id, filtriService, userPivotStateRepository, registryRepository).also { it.carica() }
+        val st = StatoSelezioni(scelta.id, motore, userPivotStateRepository, registryRepository).also { it.carica() }
         stato = st
-        campi = PannelloCampi(scelta.id, filtriService, st, dimensioni, ::zonaDi, ::metti)
+        campi = PannelloCampi(scelta.id, motore, st, dimensioni, ::zonaDi, ::metti)
 
         val barraFogli = BarraFogli(scelta.id, fogli, v.id.toString(), fogliBi).apply {
 
@@ -365,7 +368,7 @@ class AnalisiView(
         }
         caricaAnalisi()
         aggiornaZone()
-        ricalcola()
+        Cronometro.clic("disposizione") { ricalcola() }
     }
 
     /** Rilegge righe, colonne e misure del foglio. */
@@ -447,23 +450,21 @@ class AnalisiView(
         val gen = ++generazione
         val sel = st.selezioni
         val vincolo = try {
-            sezioneAccessoService.vincolo(a.id)
+            Cronometro.pezzo("accesso") { sezioneAccessoService.vincolo(a.id) }
         } catch (e: SecurityException) {
             Notification.show(e.message ?: "Accesso non consentito", 6000, Notification.Position.MIDDLE)
             return
         }
         val ids = dimensioni.map { it.dimensioneId }
-        val futuro = poolQuery.avvia { filtriService.contatori(a.id, sel, ids, vincolo) }
-
+        val futuro = poolQuery.avvia { Cronometro.pezzo("contatori") { motore.contatori(a.id, sel, ids, vincolo) } }
         ricalcola()
         campi?.aggiornaListe()
 
-        if (futuro.isDone) {
-            mostraContatori(futuro, gen)
-        } else {
-            val ui = UI.getCurrent()
-            futuro.whenComplete { _, _ -> ui?.access { mostraContatori(futuro, gen) } }
-        }
+        // Anche i contatori mostrati col push contano nel clic.
+        val ui = UI.getCurrent()
+        val mostra = Cronometro.avvolgi { Cronometro.pezzo("contatori a video") { mostraContatori(futuro, gen) } }
+        if (futuro.isDone || ui == null) mostra()
+        else futuro.whenComplete { _, _ -> ui.access { mostra() } }
     }
 
     private fun mostraContatori(futuro: CompletableFuture<Map<UUID, ContatoreCampo>>, gen: Int) {
@@ -489,15 +490,15 @@ class AnalisiView(
         espanso = false
         espandi.text = "Espandi tutto"
 
-        if (!graficiNascosti) aggiornaGrafici(v, sel)
+        if (!graficiNascosti) Cronometro.pezzo("grafici") { aggiornaGrafici(v, sel) }
         var righeMostrate = 0
         if (ordineMisure.isEmpty()) {
             risultato.clearAll()
             avvisa("Aggiungi almeno una misura per vedere la pivot.")
         } else {
             try {
-                val esito = analisiService.calcola(v.id, sel)
-                risultato.render(esito.risultato, esito.gerarchia, righe.toList(), nomi)
+                val esito = Cronometro.pezzo("pivot query") { analisiService.calcola(v.id, sel) }
+                Cronometro.pezzo("pivot render") { risultato.render(esito.risultato, esito.gerarchia, righe.toList(), nomi) }
                 righeMostrate = esito.gerarchia.size
                 if (righe.isEmpty() && colonne.isEmpty()) avvisa("Totali sul dataset: metti un campo nelle Righe per scomporli.")
             } catch (e: IllegalArgumentException) {

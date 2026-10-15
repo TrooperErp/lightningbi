@@ -1,6 +1,7 @@
 // FILE: src/main/kotlin/com/lightningbi/lightning_engine/service/PoolQuery.kt
 package com.lightning.bi.service
 
+import com.lightning.piattaforma.service.Cronometro
 import jakarta.annotation.PreDestroy
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
@@ -17,6 +18,7 @@ import java.util.concurrent.Executors
 class PoolQuery(
     @Value("\${lbi.query.thread:8}") thread: Int
 ) {
+
     private val pool = Executors.newFixedThreadPool(thread.coerceAtLeast(1)) { r ->
         Thread(r).apply { isDaemon = true; name = "query-pagina-${hashCode()}" }
     }
@@ -26,7 +28,8 @@ class PoolQuery(
         pool.shutdown()
     }
 
-    fun <T> avvia(blocco: () -> T): CompletableFuture<T> = CompletableFuture.supplyAsync(blocco, pool)
+    fun <T> avvia(blocco: () -> T): CompletableFuture<T> =
+        CompletableFuture.supplyAsync(Cronometro.avvolgi(blocco), pool)
 
     /** Aspetta il risultato; l'eccezione esce com'era, non avvolta. */
     fun <T> attendi(futuro: CompletableFuture<T>): T =
