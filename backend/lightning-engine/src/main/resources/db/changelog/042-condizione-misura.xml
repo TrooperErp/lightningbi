@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Condizione di una misura, in sintassi set analysis di Qlik, per esempio
+         {$<Codice_Articolo -= {"TRASP*"}>}. NULL = nessuna condizione: la misura segue le
+         selezioni correnti. Il testo si analizza a ogni calcolo (SetAnalysisParser), quindi un
+         livello nuovo del linguaggio non richiede migrazioni. -->
+    <changeSet id="042-condizione-misura" author="lightningbi">
+        <sql>
+            ALTER TABLE lbi_pivot_view_misura ADD COLUMN cond_espressione TEXT NULL;
+
+            ALTER TABLE lbi_pivot_view_misura ADD CONSTRAINT ck_misura_condizione_non_vuota
+                CHECK (cond_espressione IS NULL OR length(btrim(cond_espressione)) > 0);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

@@ -103,7 +103,7 @@ html, body {
     background: var(--lt-bg);
     color: var(--lt-text);
     font-family: var(--lt-font);
-    font-size: 13px;
+    font-size: 14px;
 }
 
 .lt-corpo { flex: 1; display: flex; min-height: 0; }
@@ -120,7 +120,7 @@ html, body {
     background: var(--lt-surface);
     border-bottom: 1px solid var(--lt-border);
 }
-.lt-logo { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; color: var(--lt-text); }
+.lt-logo { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; color: var(--lt-text); }
 .lt-logo svg { color: var(--lt-accent); }
 .lt-badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; }
 .lt-badge-accento { background: var(--lt-accent-soft); color: var(--lt-accent-text); }
@@ -130,11 +130,12 @@ html, body {
 .lt-ricerca-box { flex: 1 1 200px; display: flex; justify-content: center; min-width: 0; }
 .lt-ricerca { width: 100%; max-width: 420px; }
 .lt-tasto { font-family: var(--lt-mono); font-size: 10px; padding: 1px 5px; border: 1px solid var(--lt-border); border-radius: 4px; color: var(--lt-muted); }
-.lt-stato-dati { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--lt-muted); white-space: nowrap; }
+.lt-stato-dati { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--lt-muted); white-space: nowrap; }
 .lt-stato-dati::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--lt-ok); }
 .lt-stato-dati.lt-errore::before { background: var(--lt-down); }
-.lt-utente { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.lt-utente { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .lt-avatar { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 600; background: var(--lt-accent-soft); color: var(--lt-accent-text); }
+.lt-menu-utente { flex: none; min-width: max-content; }
 
 /* ---- barra dei moduli ---- */
 .lt-barra-moduli {
@@ -154,6 +155,7 @@ html, body {
     background: transparent;
     color: var(--lt-muted);
 }
+.lt-modulo vaadin-icon { width: 20px; height: 20px; }
 .lt-modulo[disabled] { color: var(--lt-faint); }
 .lt-modulo.lt-attivo { background: var(--lt-accent-soft); color: var(--lt-accent-text); }
 
@@ -187,20 +189,21 @@ html, body {
     padding: 0 12px;
     background: var(--lt-surface);
     border-top: 1px solid var(--lt-border);
-    font-size: 11px;
+    font-size: 12px;
     color: var(--lt-muted);
 }
 .lt-stato-pagina { display: flex; gap: 16px; }
 
 /* ---- pulsanti icona ---- */
 .lt-icona-btn { min-width: 30px; width: 30px; height: 30px; padding: 0; }
+.lt-icona-btn vaadin-icon { width: 18px; height: 18px; }
 
 /* ============================================================
    Elementi comuni delle pagine
    ============================================================ */
 
 .lt-pagina { padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; }
-.lt-titolo-pagina { margin: 0; font-size: 18px; font-weight: 600; }
+.lt-titolo-pagina { margin: 0; font-size: 19px; font-weight: 600; }
 .lt-vuoto { color: var(--lt-muted); font-style: italic; }
 
 .lt-griglia-schede { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
@@ -245,15 +248,317 @@ html, body {
 .lt-sel-chips { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
 .lt-chip-sel {
     display: inline-flex; align-items: center; gap: 6px;
-    height: 26px; padding: 0 2px 0 8px;
+    height: 30px; padding: 0 2px 0 8px;
     border-radius: 6px;
     background: var(--lt-sel-soft);
     border: 1px solid var(--lt-sel-border);
-    font-size: 12px;
+    font-size: 13px;
     max-width: 420px;
 }
 .lt-chip-campo { color: var(--lt-muted); white-space: nowrap; }
 .lt-chip-valori { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lt-chip-btn { min-width: 22px; width: 22px; height: 22px; padding: 0; margin: 0; }
-.lt-chip-btn vaadin-icon { width: 14px; height: 14px; }
+.lt-chip-btn { min-width: 26px; width: 26px; height: 26px; padding: 0; margin: 0; }
+.lt-chip-btn vaadin-icon { width: 18px; height: 18px; }
 .lt-chip-sel.lt-bloccata { border-style: dashed; }
+
+/* ============================================================
+   BI: pannello dei dataset e barra dei fogli
+   ============================================================ */
+
+.lt-elenco-nota { padding: 4px 8px; }
+.lt-elenco-testo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lt-elenco-tag { font-size: 10px; color: var(--lt-muted); }
+.lt-elenco-voce.lt-aperta { background: var(--lt-surface-2); font-weight: 500; }
+.lt-elenco-foglio { height: 26px; margin-left: 14px; font-size: 13px; color: var(--lt-muted); }
+.lt-elenco-foglio vaadin-icon { width: 12px; height: 12px; }
+
+.lt-barra-fogli {
+    display: flex; align-items: flex-end; gap: 2px;
+    height: 38px; padding: 0 12px;
+    background: var(--lt-surface);
+    border-bottom: 1px solid var(--lt-border);
+    flex: 0 0 auto;
+}
+.lt-scheda-foglio {
+    height: 32px; margin: 0; padding: 0 14px;
+    border-radius: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--lt-muted);
+    font-size: 13px;
+}
+.lt-scheda-foglio.lt-attiva { color: var(--lt-text); font-weight: 600; border-bottom-color: var(--lt-accent); }
+.lt-scheda-nuova { padding: 0 10px; }
+.lt-fogli-azioni { display: flex; gap: 6px; align-items: center; margin-bottom: 5px; }
+
+/* ============================================================
+   Stati dei valori (verde / bianco / grigio) e barra calendario
+   ============================================================ */
+
+.lt-chip-valore {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 24px; min-height: 24px; margin: 0; padding: 0 5px;
+    border: 1px solid var(--lt-border);
+    border-radius: 4px;
+    font: inherit; font-size: 12px;
+    box-sizing: border-box;
+    cursor: pointer;
+}
+.lt-chip-valore:hover { filter: brightness(0.95); }
+.lt-sel { background: var(--lt-sel); color: var(--lt-sel-text); font-weight: 600; }
+.lt-pos { background: var(--lt-pos); color: var(--lt-pos-text); }
+.lt-esc { background: var(--lt-esc); color: var(--lt-esc-text); }
+span.lt-chip-valore { cursor: default; }
+span.lt-chip-valore:hover { filter: none; }
+
+.lt-barra-cal {
+    display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start;
+    padding: 8px 12px;
+    background: var(--lt-bg);
+    border-bottom: 1px solid var(--lt-border);
+    flex: 0 0 auto;
+}
+.lt-cal-gruppo { display: flex; flex-direction: column; gap: 4px; }
+.lt-cal-titolo { font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--lt-muted); }
+.lt-cal-valori { display: flex; gap: 2px; flex-wrap: wrap; }
+.lt-cal-giorni { display: grid; grid-template-columns: repeat(16, 26px); }
+
+/* ============================================================
+   BI: pagina Filtri
+   ============================================================ */
+
+.lt-pagina-bi { display: flex; flex-direction: column; min-height: 100%; }
+
+.lt-box-griglia {
+    flex: 1; padding: 12px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px; align-content: start;
+}
+.lt-box {
+    align-self: start;
+    background: var(--lt-surface);
+    border: 1px solid var(--lt-border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.lt-box-testa {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 32px; padding: 0 10px;
+    border-bottom: 1px solid var(--lt-border);
+}
+.lt-box-nome { font-weight: 600; }
+.lt-box-nota { display: block; padding: 8px 10px; }
+.lt-badge-neutro { background: var(--lt-surface-2); color: var(--lt-muted); font-weight: 500; font-size: 10px; }
+
+.lt-campo {
+    width: 100%;
+    display: flex; align-items: center; gap: 8px;
+    height: 30px; margin: 0; padding: 0 10px;
+    border: 0; border-bottom: 1px solid var(--lt-border);
+    background: transparent; color: var(--lt-text);
+    font: inherit; font-size: 13px;
+    cursor: pointer;
+}
+.lt-campo:hover { background: var(--lt-surface-2); }
+.lt-campo-nome { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lt-campo-conta { font-size: 12px; color: var(--lt-muted); }
+.lt-campo-barra { width: 48px; height: 4px; flex: none; border-radius: 2px; background: var(--lt-esc); overflow: hidden; }
+.lt-campo-barra > span { display: block; height: 4px; background: var(--lt-accent); }
+.lt-campo.lt-campo-sel { background: var(--lt-sel-soft); font-weight: 600; }
+.lt-campo.lt-campo-sel .lt-campo-barra > span { background: var(--lt-sel); }
+.lt-campo.lt-campo-esc { background: var(--lt-esc); color: var(--lt-esc-text); }
+.lt-campo.lt-campo-esc .lt-campo-conta { color: var(--lt-esc-text); }
+
+.lt-lista { padding: 6px 10px 8px; background: var(--lt-surface-2); border-bottom: 1px solid var(--lt-border); }
+.lt-lista-cerca { width: 100%; }
+vaadin-grid.lt-lista-griglia { font-size: 13px; }
+vaadin-grid.lt-lista-griglia::part(lt-val-sel) { background: var(--lt-sel); color: var(--lt-sel-text); font-weight: 600; }
+vaadin-grid.lt-lista-griglia::part(lt-val-pos) { background: var(--lt-pos); color: var(--lt-pos-text); }
+vaadin-grid.lt-lista-griglia::part(lt-val-esc) { background: var(--lt-esc); color: var(--lt-esc-text); }
+
+/* ============================================================
+   BI: foglio Analisi
+   ============================================================ */
+
+/* ---- pannello Campi (a sinistra) ---- */
+.lt-campi-cerca { margin: 0 2px 6px; }
+/* un box per tabella, uno sotto l'altro (come i box di Filtri, in versione compatta) */
+.lt-campi-gruppo {
+    display: flex; flex-direction: column;
+    margin: 0 2px 8px;
+    background: var(--lt-surface);
+    border: 1px solid var(--lt-border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.lt-campi-testa {
+    display: flex; align-items: center; gap: 6px;
+    width: 100%; height: 30px; margin: 0; padding: 0 8px 0 4px;
+    border: 0; border-bottom: 1px solid var(--lt-border);
+    background: var(--lt-surface-2); color: var(--lt-text);
+    font: inherit; font-size: 13px; text-align: left;
+    cursor: pointer;
+}
+.lt-campi-testa:hover { background: var(--lt-border); }
+.lt-campi-freccia { width: 16px; height: 16px; flex: none; color: var(--lt-muted); transition: transform .12s; }
+.lt-campi-gruppo.lt-chiuso .lt-campi-freccia { transform: rotate(-90deg); }
+.lt-campi-gruppo.lt-chiuso .lt-campi-testa { border-bottom: 0; }
+.lt-campi-tabella { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lt-campi-numero { font-size: 11px; color: var(--lt-muted); }
+.lt-campi-corpo { display: flex; flex-direction: column; }
+.lt-campi-riga { display: flex; align-items: center; border-bottom: 1px solid var(--lt-border); }
+.lt-campi-corpo > div:last-child .lt-campi-riga { border-bottom: 0; }
+.lt-campi-riga:hover { background: var(--lt-surface-2); }
+.lt-campi-nome {
+    flex: 1; min-width: 0;
+    display: flex; align-items: center; gap: 6px;
+    height: 28px; margin: 0; padding: 0 4px 0 8px;
+    border: 0; background: transparent; color: var(--lt-text);
+    font: inherit; font-size: 13px; text-align: left;
+    cursor: pointer;
+}
+.lt-campi-zona { font-size: 10px; padding: 0 5px; border-radius: 3px; background: var(--lt-accent-soft); color: var(--lt-accent-text); }
+.lt-campi-azioni {
+    width: 24px; height: 24px; flex: none; margin: 0 2px; padding: 0;
+    display: grid; place-items: center;
+    border: 0; border-radius: 4px; background: transparent; color: var(--lt-muted);
+    cursor: pointer;
+}
+.lt-campi-azioni:hover { background: var(--lt-border); color: var(--lt-text); }
+.lt-campi-azioni vaadin-icon { width: 14px; height: 14px; }
+.lt-campi-riga.lt-in-uso .lt-campi-nome { font-weight: 600; }
+.lt-campi-riga.lt-campo-sel { background: var(--lt-sel-soft); }
+.lt-campi-riga.lt-campo-sel .lt-campi-nome { font-weight: 600; }
+.lt-campi-riga.lt-campo-esc { background: var(--lt-esc); }
+.lt-campi-riga.lt-campo-esc .lt-campi-nome { color: var(--lt-esc-text); }
+.lt-campi .lt-lista { margin: 0; border-radius: 0; border: 0; border-bottom: 1px solid var(--lt-border); }
+
+/* ---- disposizione: Righe, Colonne, Misure ---- */
+.lt-disposizione {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    padding: 8px 12px;
+    background: var(--lt-bg);
+    border-bottom: 1px solid var(--lt-border);
+    flex: 0 0 auto;
+}
+.lt-zona {
+    flex: 1 1 240px;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    min-height: 34px; padding: 3px 6px;
+    border: 1px dashed var(--lt-border);
+    border-radius: 6px;
+    background: var(--lt-surface);
+}
+.lt-zona-titolo { width: 64px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--lt-muted); }
+.lt-zona-voci { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; flex: 1; }
+.lt-zona-vuota { font-size: 12px; }
+.lt-zona-aggiungi {
+    height: 26px; padding: 0 10px; margin: 0;
+    border: 1px solid var(--lt-border); border-radius: 4px;
+    background: transparent; color: var(--lt-accent-text);
+    font: inherit; font-size: 12px; cursor: pointer;
+}
+.lt-zona-aggiungi:hover { background: var(--lt-accent-soft); }
+
+.lt-voce {
+    display: inline-flex; align-items: center;
+    height: 26px; border-radius: 4px; overflow: hidden;
+    font-size: 12px;
+}
+.lt-voce-dim { background: light-dark(#EEF0F4, #232731); color: light-dark(#2A2F38, #D3D7DE); }
+.lt-voce-misura { background: var(--lt-sel-soft); color: light-dark(#145C38, #7FD9A6); }
+.lt-voce-testo, .lt-voce-togli {
+    height: 26px; margin: 0; border: 0; background: transparent; color: inherit;
+    font: inherit; cursor: pointer;
+}
+.lt-voce-testo { padding: 0 4px 0 9px; }
+.lt-voce-togli { width: 24px; padding: 0; font-size: 15px; line-height: 1; opacity: .7; }
+.lt-voce-togli:hover, .lt-voce-testo:hover { background: rgb(0 0 0 / .06); opacity: 1; }
+
+/* ---- area di lavoro: pivot e grafici ---- */
+.lt-area-lavoro {
+    flex: 1;
+    display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start;
+    padding: 12px;
+}
+.lt-box-pivot { flex: 3 1 560px; min-width: 0; }
+.lt-box-grafici { flex: 2 1 360px; min-width: 0; }
+.lt-box-info { color: var(--lt-muted); font-size: 12px; margin-left: 6px; }
+.lt-box-testa vaadin-button { height: 26px; margin: 0; font-size: 12px; }
+.lt-pivot-corpo { height: calc(100vh - 330px); min-height: 280px; }
+.lt-grafici-corpo { padding: 8px; }
+/* il pannello grafici vecchio ha un suo titolo: qui c'è già quello del box */
+.lt-grafici-corpo .lbi-qv-panel-title { display: none; }
+
+/* ---- barra dei fogli: Esporta e azioni ---- */
+.lt-menu-esporta, .lt-menu-foglio { flex: none; }
+
+/* ---- finestre ---- */
+.lt-finestra { display: flex; flex-direction: column; gap: 8px; }
+.lt-modulo-campi { display: flex; flex-direction: column; gap: 4px; }
+
+/* ============================================================
+   BI: grafici del foglio
+   ============================================================ */
+
+.lt-barra-grafici { align-items: center; gap: 12px; }
+.lt-barra-titolo { font-weight: 600; }
+
+.lt-box-largo { margin: 12px 12px 0; }
+.lt-box-corpo { padding: 10px; }
+.lt-box-piede { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--lt-border); }
+
+.lt-tipi { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; }
+.lt-tipo {
+    width: 96px; height: 76px; margin: 0; padding: 6px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    border: 1px solid var(--lt-border); border-radius: 8px;
+    background: var(--lt-surface); color: var(--lt-text);
+    font: inherit; font-size: 12px; cursor: pointer;
+}
+.lt-tipo:hover { border-color: var(--lt-accent); }
+.lt-tipo.lt-attiva { border-color: var(--lt-accent); background: var(--lt-accent-soft); color: var(--lt-accent-text); font-weight: 600; }
+.lt-tipo-nome { white-space: nowrap; }
+
+.lt-editor-grafico { margin-top: 12px; border-top: 1px solid var(--lt-border); }
+.lt-box-opzioni { flex: 1 1 320px; min-width: 0; }
+.lt-box-anteprima { flex: 2 1 480px; min-width: 0; }
+.lt-anteprima { min-height: 340px; padding: 8px; }
+
+.lt-grafici-elenco { display: flex; flex-direction: column; }
+.lt-grafico-riga {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--lt-border);
+}
+.lt-grafico-riga:last-child { border-bottom: 0; }
+.lt-grafico-riga.lt-attiva { background: var(--lt-accent-soft); }
+.lt-grafico-icona { flex: none; width: 44px; display: grid; place-items: center; }
+.lt-grafico-testo { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.lt-grafico-titolo { font-weight: 600; }
+.lt-grafico-riga vaadin-button { height: 28px; margin: 0; font-size: 13px; }
+
+
+/* ---- grafici nascosti: striscia verticale, la pivot prende lo spazio ---- */
+.lt-box-grafici { transition: flex-basis .15s; }
+.lt-box-grafici.lt-nascosto { flex: 0 0 44px; align-self: stretch; min-height: 200px; }
+.lt-box-grafici.lt-nascosto .lt-grafici-corpo,
+.lt-box-grafici.lt-nascosto .lt-grafici-titolo,
+.lt-box-grafici.lt-nascosto .lt-grafici-gestisci,
+.lt-box-grafici.lt-nascosto .lt-spazio { display: none; }
+.lt-box-grafici.lt-nascosto .lt-box-testa { justify-content: center; padding: 0; border-bottom: 0; }
+.lt-box-grafici.lt-nascosto::after {
+    content: "Grafici";
+    display: block;
+    margin: 8px auto 0;
+    writing-mode: vertical-rl;
+    font-weight: 600;
+    color: var(--lt-muted);
+}
+.lt-grafici-toggle { min-width: 28px; width: 28px; padding: 0; }
+.lt-lista-testa { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+.lt-lista-testa .lt-lista-cerca { flex: 1; }
+/* ---- finestra della misura: condizione ---- */
+.lt-modulo-sezione { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--lt-border); font-weight: 600; font-size: 13px; }
+.lt-cond-costruttore { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; align-items: end; }
+.lt-cond-costruttore vaadin-button { justify-self: start; }

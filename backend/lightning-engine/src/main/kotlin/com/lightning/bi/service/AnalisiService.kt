@@ -20,6 +20,8 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.Executors
 import kotlin.collections.plus
+import com.lightning.bi.service.setanalysis.SetAnalysisParser
+import com.lightning.bi.service.setanalysis.chiaveCampo
 
 /** Un'analisi con le sue misure. */
 data class AnalisiCompleta(val vista: PivotView, val misure: List<MisuraAnalisi>)
@@ -164,21 +166,18 @@ class AnalisiService(
 
     // ================= Misure =================
 
-    /**
-     * Aggiunge una misura all'analisi e la mette tra i valori della pivot.
-     * [areaTabellaId] è sempre il Fatti su cui si calcola; [colonna] manca solo per il
-     * conteggio di righe.
-     */
     @Transactional("postgresTransactionManager")
     fun aggiungiMisura(
         vistaId: UUID,
         nome: String,
         tipo: TipoAggregazione,
         areaTabellaId: UUID,
-        colonna: String?
+        colonna: String?,
+        condizione: String? = null
     ): MisuraAnalisi {
         val vista = pivotViewService.findById(vistaId) ?: error("Analisi $vistaId non trovata")
         val misura = costruisciMisura(UUID.randomUUID(), vista, nome, tipo, areaTabellaId, colonna)
+            .copy(condizione = validaCondizione(vista.areaId, condizione))
         misuraAnalisiRepository.save(misura)
         pivotViewService.updatePivot(vista, vista.pivotRows, vista.pivotColumns, vista.pivotValues + misura.id)
         return misura
@@ -190,14 +189,39 @@ class AnalisiService(
         nome: String,
         tipo: TipoAggregazione,
         areaTabellaId: UUID,
-        colonna: String?
+        colonna: String?,
+        condizione: String? = null
     ): MisuraAnalisi {
         val esistente = misuraAnalisiRepository.findByIds(listOf(misuraId)).firstOrNull()
             ?: error("Misura $misuraId non trovata")
         val vista = pivotViewService.findById(esistente.pivotViewId) ?: error("Analisi non trovata")
         val misura = costruisciMisura(misuraId, vista, nome, tipo, areaTabellaId, colonna)
+            .copy(condizione = validaCondizione(vista.areaId, condizione))
         misuraAnalisiRepository.update(misura.copy(posizione = esistente.posizione))
         return misura
+    }
+
+    /**
+     * Controlla la condizione di una misura (sintassi e campi del dataset) e la restituisce nel
+     * testo canonico, quello che si salva; null se vuota. I campi si riconoscono per nome, senza
+     * badare a maiuscole, spazi e simboli.
+     *
+     * @throws IllegalArgumentException con un messaggio da mostrare all'utente
+     */
+    fun validaCondizione(areaId: UUID, testo: String?): String? {
+        val t = testo?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val espressione = SetAnalysisParser.analizza(t)
+        val chiavi = registryRepository.findDimensioniByIds(
+            registryRepository.findDimensioniByArea(areaId).map { it.dimensioneId }
+        ).groupingBy { chiaveCampo(it.nome) }.eachCount()
+        espressione.campi().forEach { campo ->
+            when (chiavi[chiaveCampo(campo)] ?: 0) {
+                0 -> throw IllegalArgumentException("Il campo '$campo' non è nel dataset")
+                1 -> {}
+                else -> throw IllegalArgumentException("Il nome '$campo' corrisponde a più campi del dataset")
+            }
+        }
+        return espressione.testo()
     }
 
     @Transactional("postgresTransactionManager")

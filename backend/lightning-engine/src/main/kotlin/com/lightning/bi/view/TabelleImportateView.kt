@@ -83,7 +83,7 @@ class TabelleImportateView(
 
     override fun beforeEnter(event: BeforeEnterEvent) {
         if (!adminGuard.isAdmin()) {
-            event.forwardTo(DatasetFiltriView::class.java)
+            event.forwardTo("bi")
             return
         }
         if (!paginaCostruita) {
@@ -102,7 +102,7 @@ class TabelleImportateView(
                 label = "Analisi",
                 entries = listOf(
                     LbiSidebarMenu.MenuEntry("Torna alle analisi", icon = VaadinIcon.ARROW_LEFT) {
-                        getUI().ifPresent { it.navigate(DatasetFiltriView::class.java) }
+                        getUI().ifPresent { it.navigate("bi") }
                     }
                 ),
                 icon = VaadinIcon.CHART

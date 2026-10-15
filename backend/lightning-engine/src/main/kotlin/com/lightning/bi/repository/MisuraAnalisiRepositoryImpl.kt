@@ -33,11 +33,11 @@ class MisuraAnalisiRepositoryImpl(
     override fun save(misura: MisuraAnalisi): MisuraAnalisi {
         jdbcTemplate.update(
             """INSERT INTO lbi_pivot_view_misura
-               (id, pivot_view_id, nome, tipo_aggregazione, area_tabella_id, colonna_fisica, posizione)
-               VALUES (?, ?, ?, ?, ?, ?,
+               (id, pivot_view_id, nome, tipo_aggregazione, area_tabella_id, colonna_fisica, cond_espressione, posizione)
+               VALUES (?, ?, ?, ?, ?, ?, ?,
                        (SELECT COALESCE(MAX(posizione), 0) + 1 FROM lbi_pivot_view_misura WHERE pivot_view_id = ?))""",
             misura.id, misura.pivotViewId, misura.nome, misura.tipo.name,
-            misura.areaTabellaId, misura.colonna, misura.pivotViewId
+            misura.areaTabellaId, misura.colonna, misura.condizione, misura.pivotViewId
         )
         return misura
     }
@@ -45,9 +45,9 @@ class MisuraAnalisiRepositoryImpl(
     override fun update(misura: MisuraAnalisi) {
         jdbcTemplate.update(
             """UPDATE lbi_pivot_view_misura
-               SET nome = ?, tipo_aggregazione = ?, area_tabella_id = ?, colonna_fisica = ?
+               SET nome = ?, tipo_aggregazione = ?, area_tabella_id = ?, colonna_fisica = ?, cond_espressione = ?
                WHERE id = ?""",
-            misura.nome, misura.tipo.name, misura.areaTabellaId, misura.colonna, misura.id
+            misura.nome, misura.tipo.name, misura.areaTabellaId, misura.colonna, misura.condizione, misura.id
         )
     }
 
@@ -61,6 +61,7 @@ class MisuraAnalisiRepositoryImpl(
         tipo = TipoAggregazione.valueOf(rs.getString("tipo_aggregazione")),
         areaTabellaId = rs.getString("area_tabella_id")?.let { UUID.fromString(it) },
         colonna = rs.getString("colonna_fisica"),
-        posizione = rs.getInt("posizione")
+        posizione = rs.getInt("posizione"),
+        condizione = rs.getString("cond_espressione")
     )
 }

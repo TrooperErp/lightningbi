@@ -33,7 +33,7 @@ spring:
 # Vaadin: proprietà top-level, NON sotto spring
 vaadin:
   production-mode: false
-  whitelisted-packages: com.lightning
+  allowed-packages: com.lightning
 
 server:
   port: 8080

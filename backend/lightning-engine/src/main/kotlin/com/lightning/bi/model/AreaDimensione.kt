@@ -110,5 +110,11 @@ data class AreaMetrica(
      * Occorrenza dei Fatti (AreaTabella.id) su cui la metrica si calcola.
      * Null solo per i dati precedenti alla migrazione 030.
      */
-    val areaTabellaId: UUID? = null
+    val areaTabellaId: UUID? = null,
+    /**
+     * Condizione della misura in sintassi set analysis di Qlik, ad esempio
+     * {$<Codice_Articolo -= {"TRASP*"}>}. Null = segue le selezioni correnti.
+     * La traduce il motore (AggregateService), non chi la crea.
+     */
+    val condizione: String? = null
 )

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Condizione di una misura (set analysis semplice): un campo, un modo, dei valori.
+         ESCLUDI = le selezioni meno le righe legate ai valori; SOLO = le selezioni e le righe legate
+         ai valori; SOLO_SOSTITUISCI = come SOLO, ma la selezione dell'utente su quel campo si ignora.
+         I valori sono id della symbol table del campo (stabili tra un sync e l'altro), separati da virgola.
+         Tutte e tre nulle = nessuna condizione. -->
+    <changeSet id="042-condizione-misura" author="lightningbi">
+        <sql>
+            ALTER TABLE lbi_pivot_view_misura ADD COLUMN cond_dimensione_id UUID NULL;
+            ALTER TABLE lbi_pivot_view_misura ADD COLUMN cond_modo VARCHAR(20) NULL;
+            ALTER TABLE lbi_pivot_view_misura ADD COLUMN cond_valori TEXT NULL;
+
+            ALTER TABLE lbi_pivot_view_misura ADD CONSTRAINT ck_misura_condizione_completa
+                CHECK ((cond_dimensione_id IS NULL AND cond_modo IS NULL AND cond_valori IS NULL)
+                    OR (cond_dimensione_id IS NOT NULL AND cond_modo IS NOT NULL
+                        AND cond_valori IS NOT NULL AND length(btrim(cond_valori)) > 0));
+            ALTER TABLE lbi_pivot_view_misura ADD CONSTRAINT ck_misura_condizione_modo
+                CHECK (cond_modo IS NULL OR cond_modo IN ('ESCLUDI', 'SOLO', 'SOLO_SOSTITUISCI'));
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

@@ -21,6 +21,11 @@ import java.time.Duration
 import java.util.HexFormat
 import java.util.UUID
 import org.springframework.jdbc.core.RowMapper
+import com.lightning.bi.service.setanalysis.CampoSet
+import com.lightning.bi.service.setanalysis.SelezioneMisura
+import com.lightning.bi.service.setanalysis.SetAnalysisClickHouse
+import com.lightning.bi.service.setanalysis.SetAnalysisParser
+import com.lightning.bi.service.setanalysis.chiaveCampo
 
 @Service
 class AggregateService(
@@ -208,6 +213,17 @@ class AggregateService(
                 throw SecurityException("Il campo azienda non è nell'indice del dataset")
             }
         }
+        // Set analysis: per ogni misura con condizione, la selezione con cui calcolarla.
+        val condizioniTesto = metriche.mapNotNull { m -> m.condizione?.let { m.id to it } }.toMap()
+        val selezioniMisure: Map<UUID, SelezioneMisura> =
+            if (condizioniTesto.isEmpty()) emptyMap()
+            else {
+                val campi = campiSetAnalysis(areaId, modello)
+                val nomeForzato = forzata?.let { nomi[it] }
+                condizioniTesto.mapValues { (_, testo) ->
+                    SetAnalysisClickHouse.traduci(SetAnalysisParser.analizza(testo), selezioniPerCampo, campi, nomeForzato)
+                }
+            }
 
         // Ogni metrica si calcola sul PROPRIO Fatti; i risultati dei vari Fatti
         // si affiancano sulle dimensioni in comune, senza mai sommare righe di Fatti diversi.
@@ -220,7 +236,7 @@ class AggregateService(
         var troncato = false
         val parziali = perFatti.map { (fattiId, metricheFatti) ->
             val righe = aggregaFatti(
-                modello, fattiId, metricheFatti, allGroupDims, dimById, nomi, selezioniPerCampo,
+                modello, fattiId, metricheFatti, allGroupDims, dimById, nomi, selezioniPerCampo, selezioniMisure,
                 if (unico) order else null, if (unico) orderMetrica else null, tetto
             )
             if (righe.size > tetto) troncato = true
@@ -248,6 +264,13 @@ class AggregateService(
     }
 
     /** Aggrega le metriche di UN Fatti sulle sue righe vive; restituisce fino a limit + 1 righe. */
+    /**
+     * Aggrega le metriche di UN Fatti sulle sue righe vive; restituisce fino a limit + 1 righe.
+     *
+     * Misure con condizione (set analysis): ognuna ha le sue righe (bitmap), calcolate in WITH una
+     * volta sola. La query legge l'unione delle righe di tutte le misure e ogni misura somma solo
+     * le sue (sumIf, countIf…). Senza condizioni la query è quella di sempre.
+     */
     private fun aggregaFatti(
         modello: ModelloDataset,
         fattiId: UUID,
@@ -256,6 +279,7 @@ class AggregateService(
         dimById: Map<UUID, AreaDimensione>,
         nomi: Map<UUID, String>,
         selezioniPerCampo: Map<String, Set<Long>>,
+        selezioniMisure: Map<UUID, SelezioneMisura>,
         order: AggregateOrder?,
         orderMetrica: AreaMetrica?,
         limit: Int
@@ -270,14 +294,38 @@ class AggregateService(
         val groupCols = allGroupDims.map { plan.dimColumn(it) }
         val groupAliases = groupCols.indices.map { "g_$it" }
         val groupSelect = groupCols.mapIndexed { i, c -> "$c AS g_$i" }
+        val rid = "f.${Naming.RID_COLUMN}"
 
         // Righe del Fatti compatibili con le selezioni (propagate lungo il grafo).
         val viva = modello.grafo.righeVive(fattiId, selezioniPerCampo)
-        val whereClause = if (viva == null) "" else "WHERE bitmapContains($viva, f.${Naming.RID_COLUMN})"
+
+        // Le righe di ogni misura: quelle delle selezioni, oppure quelle della sua condizione.
+        val righeMisura: Map<UUID, String?> = metriche.associate { m ->
+            m.id to (selezioniMisure[m.id]?.let { s ->
+                modello.grafo.righeVive(fattiId, s.selezioni, condizioni = s.condizioni)
+            } ?: viva)
+        }
+        val conCondizioni = metriche.any { it.id in selezioniMisure }
+
+        val withClause: String
+        val whereClause: String
+        val filtroMisura: Map<UUID, String?>
+        if (!conCondizioni) {
+            withClause = ""
+            whereClause = if (viva == null) "" else "WHERE bitmapContains($viva, $rid)"
+            filtroMisura = emptyMap()
+        } else {
+            val alias = righeMisura.values.filterNotNull().distinct().withIndex().associate { (i, b) -> b to "b_$i" }
+            withClause = if (alias.isEmpty()) "" else "WITH " + alias.entries.joinToString(", ") { (b, a) -> "$b AS $a" } + " "
+            // Una misura senza vincoli (null) legge tutte le righe: allora niente WHERE.
+            whereClause = if (righeMisura.values.any { it == null } || alias.isEmpty()) ""
+            else "WHERE bitmapContains(${alias.values.drop(1).fold(alias.values.first()) { acc, a -> "bitmapOr($acc, $a)" }}, $rid)"
+            filtroMisura = righeMisura.mapValues { (_, b) -> b?.let { "bitmapContains(${alias.getValue(it)}, $rid)" } }
+        }
 
         val metricAliases = metriche.mapIndexed { i, m -> m to "m_$i" }
         val selectCols = groupSelect +
-                metricAliases.map { (m, alias) -> "${sqlExpression(m, plan)} AS $alias" }
+                metricAliases.map { (m, alias) -> "${sqlExpression(m, plan, filtroMisura[m.id])} AS $alias" }
         val groupClause = if (groupAliases.isEmpty()) "" else "GROUP BY ${groupAliases.joinToString(",")}"
         val orderClause = when (order) {
             AggregateOrder.METRIC_DESC -> "ORDER BY ${aliasOf(metricAliases, orderMetrica)} DESC"
@@ -285,7 +333,7 @@ class AggregateService(
             else -> ""
         }
 
-        val sql = "SELECT ${selectCols.joinToString(",")} FROM ${plan.fromClause} $whereClause $groupClause $orderClause LIMIT ${limit + 1}"
+        val sql = "${withClause}SELECT ${selectCols.joinToString(",")} FROM ${plan.fromClause} $whereClause $groupClause $orderClause LIMIT ${limit + 1}"
 
         return jdbcTemplate.query(sql, RowMapper<AggregateRow> { rs, _ ->
             val groupKeys = allGroupDims.zip(groupAliases).associate { (dimId, col) -> dimId to rs.getLong(col) }
@@ -294,6 +342,19 @@ class AggregateService(
             }
             AggregateRow(groupKeys, values)
         })
+    }
+
+    /** I campi del dataset che stanno nell'indice, per la set analysis: chiave del nome → campo. */
+    private fun campiSetAnalysis(areaId: UUID, modello: ModelloDataset): Map<String, CampoSet> {
+        val colonne = registryRepository.findDimensioniByArea(areaId)
+            .groupBy { it.dimensioneId }
+            .mapValues { it.value.first().colonnaFisica }
+        return registryRepository.findDimensioniByIds(colonne.keys.toList()).mapNotNull { d ->
+            val nome = Naming.column(d.nome)
+            val colonna = colonne[d.id] ?: return@mapNotNull null
+            if (modello.grafo.tabelleCon(nome).isEmpty()) null
+            else chiaveCampo(d.nome) to CampoSet(nome, Naming.symbolTable(colonna))
+        }.toMap()
     }
 
     private fun pivotByColumns(
@@ -442,7 +503,8 @@ class AggregateService(
         }
     }
 
-    private fun sqlExpression(m: AreaMetrica, plan: StarQueryBuilder.Plan): String {
+    /** L'aggregazione di una metrica; con [filtro] (set analysis) solo sulle righe della sua condizione. */
+    private fun sqlExpression(m: AreaMetrica, plan: StarQueryBuilder.Plan, filtro: String? = null): String {
         val colonna = m.colonnaFisica
         // Somma, media, minimo e massimo lavorano sulla copia NUMERICA del campo
         // (i valori mancanti sono null e le aggregazioni li ignorano). I
@@ -450,13 +512,18 @@ class AggregateService(
         // testo; l'id 0 è "non definito" e non si conta.
         val numerica = colonna?.let { plan.metricColumn(Naming.numericColumn(it)) }
         val id = colonna?.let { plan.metricColumn(it) }
+        val e = if (filtro == null) "" else " AND $filtro"
         return when (m.tipoAggregazione) {
-            TipoAggregazione.COUNT -> if (id != null) "countIf($id != 0)" else "COUNT(*)"
-            TipoAggregazione.COUNT_DISTINCT -> "uniqExactIf($id, $id != 0)"
-            TipoAggregazione.SUM -> "SUM($numerica)"
-            TipoAggregazione.AVG -> "toDecimal64(AVG($numerica), 4)"
-            TipoAggregazione.MIN -> "MIN($numerica)"
-            TipoAggregazione.MAX -> "MAX($numerica)"
+            TipoAggregazione.COUNT -> when {
+                id != null -> "countIf($id != 0$e)"
+                filtro != null -> "countIf($filtro)"
+                else -> "COUNT(*)"
+            }
+            TipoAggregazione.COUNT_DISTINCT -> "uniqExactIf($id, $id != 0$e)"
+            TipoAggregazione.SUM -> if (filtro == null) "SUM($numerica)" else "sumIf($numerica, $filtro)"
+            TipoAggregazione.AVG -> if (filtro == null) "toDecimal64(AVG($numerica), 4)" else "toDecimal64(avgIf($numerica, $filtro), 4)"
+            TipoAggregazione.MIN -> if (filtro == null) "MIN($numerica)" else "minIf($numerica, $filtro)"
+            TipoAggregazione.MAX -> if (filtro == null) "MAX($numerica)" else "maxIf($numerica, $filtro)"
         }
     }
 
@@ -538,7 +605,7 @@ class AggregateService(
         val canonicalColumnBy = columnBy.joinToString(",")
         // Per le misure di un'analisi conta la definizione, non solo l'id: se si cambia campo o aggregazione l'id resta.
         val canonicalMetrics = metriche
-            .map { "${it.id}:${it.tipoAggregazione}:${it.colonnaFisica}:${it.areaTabellaId}" }
+            .map { "${it.id}:${it.tipoAggregazione}:${it.colonnaFisica}:${it.areaTabellaId}:${it.condizione}" }
             .sorted().joinToString(",")
 
         val raw = buildString {

@@ -1,6 +1,6 @@
 package com.lightning.bi.model
 
-import java.util.UUID
+import java.util.*
 
 /**
  * Una MISURA di un'analisi: come in Qlik si scrive nell'oggetto (campo,
@@ -22,7 +22,10 @@ data class MisuraAnalisi(
     val tipo: TipoAggregazione,
     val areaTabellaId: UUID?,
     val colonna: String?,
-    val posizione: Int = 0
+
+    val posizione: Int = 0,
+    /** Condizione in sintassi set analysis (vedi AreaMetrica.condizione); null = nessuna. */
+    val condizione: String? = null
 ) {
     init {
         require(nome.isNotBlank()) { "Il nome della misura non può essere vuoto" }
@@ -35,6 +38,8 @@ data class MisuraAnalisi(
                 "La misura '$nome' (${tipo.name}) richiede un campo"
             }
         }
+
+        require(condizione == null || condizione.isNotBlank()) { "La condizione della misura '$nome' è vuota" }
     }
 
     /**
@@ -51,6 +56,7 @@ data class MisuraAnalisi(
         tipoMetrica = TipoMetrica.AGGREGAZIONE_COLONNA,
         espressione = null,
         importedTableId = null,
-        areaTabellaId = areaTabellaId
+        areaTabellaId = areaTabellaId,
+        condizione = condizione
     )
 }

@@ -42,6 +42,7 @@ class StatoSelezioni(
         ascoltatori += ascoltatore
     }
 
+
     // ================= Caricamento =================
 
     /**
@@ -103,6 +104,27 @@ class StatoSelezioni(
         if (valori.isEmpty()) nuove.remove(dimId) else nuove[dimId] = valori
         applica(nuove)
         return null
+    }
+
+    /**
+     * "Seleziona tutti" i valori possibili di un campo, meno [tranne]: una lista esplicita, come in
+     * Qlik (se poi cambiano le altre selezioni, la lista resta quella). Oltre [MAX_TUTTI] valori si
+     * rifiuta: prima si restringe con altre selezioni.
+     */
+    fun tutti(dimId: UUID, tranne: Long? = null): String? {
+        if (dimId in blocchi) return MSG_BLOCCATO
+        val possibili = try {
+            filtriService.idPossibili(areaId, correnti, dimId)
+        } catch (e: Exception) {
+            log.warn("Lettura dei valori possibili fallita per la dimensione {}", dimId, e)
+            return "Impossibile leggere i valori del campo"
+        }
+        if (possibili.size > MAX_TUTTI) {
+            return "Troppi valori possibili (${possibili.size}): restringi prima con altre selezioni"
+        }
+        val scelti = if (tranne == null) possibili else possibili - tranne
+        if (scelti.isEmpty()) return "Nessun altro valore possibile da selezionare"
+        return imposta(dimId, scelti)
     }
 
     /**
@@ -197,5 +219,6 @@ class StatoSelezioni(
 
     private companion object {
         const val MSG_BLOCCATO = "La selezione di questo campo è bloccata: sbloccala per cambiarla"
+        const val MAX_TUTTI = 500
     }
 }

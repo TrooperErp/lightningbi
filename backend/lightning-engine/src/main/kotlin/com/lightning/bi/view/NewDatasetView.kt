@@ -16,6 +16,7 @@ import com.lightning.bi.service.DatasetService
 import com.lightning.bi.service.MetricaBozza
 import com.lightning.bi.service.OccorrenzaBozza
 import com.lightning.bi.service.RiferimentoCampo
+import com.lightning.bi.ui.RotteBi
 import com.lightning.piattaforma.view.AdminView
 import com.lightning.piattaforma.view.LbiAppShell
 import com.lightning.piattaforma.view.LbiSidebarMenu
@@ -101,7 +102,7 @@ class NewDatasetView(
 
     override fun beforeEnter(event: BeforeEnterEvent) {
         if (!adminGuard.isAdmin()) {
-            event.forwardTo(DatasetFiltriView::class.java)
+            event.forwardTo("bi")
             return
         }
         bozza = DatasetBozza()
@@ -190,7 +191,7 @@ class NewDatasetView(
     }
 
     private fun tornaAiDataset() {
-        getUI().ifPresent { it.navigate(DatasetFiltriView::class.java) }
+        getUI().ifPresent { it.navigate("bi") }
     }
 
     private fun buildContent(): Component {
@@ -732,7 +733,7 @@ class NewDatasetView(
                 "Dataset \"${bozza.nome.trim()}\" salvato. Premi \"Sincronizza\" per caricare i dati.",
                 6000, Notification.Position.MIDDLE
             )
-            val vai = { getUI().ifPresent { it.navigate(DatasetFiltriView::class.java, id.toString()) } }
+            val vai = { getUI().ifPresent { it.navigate(RotteBi.filtri(id)) } }
             if (eraNuovo) {
                 // Un dataset nuovo non lo vede nessuno tranne l'admin: si assegnano subito gli accessi.
                 AccessiDatasetDialog(accessoDatasetService, id, bozza.nome.trim()).apply {

@@ -116,12 +116,27 @@ class GrafoDataset private constructor(
      * collegamenti, oppure null se non ha vincoli. Serve anche alle
      * aggregazioni: si usa come filtro bitmapContains(espressione, lbi_rid).
      */
-    fun righeVive(tabella: UUID, selezioni: Map<String, Set<Long>>, omesso: String? = null): String? =
-        vive(tabella, selezioni, omesso, null, 0)
+    /**
+     * Espressione SQL (bitmap) delle righe vive di [tabella], con tutti i
+     * collegamenti, oppure null se non ha vincoli. Serve anche alle
+     * aggregazioni: si usa come filtro bitmapContains(espressione, lbi_rid).
+     *
+     * [condizioni]: vincoli in più su dei campi, scritti come condizione SQL sulla colonna
+     * valore_id dell'indice (es. "valore_id NOT IN (SELECT value_id FROM …)"). Valgono come
+     * selezioni e si combinano in AND con quelle sullo stesso campo. Servono alla set analysis
+     * delle misure: insiemi grandi senza scrivere liste di id nella query.
+     */
+    fun righeVive(
+        tabella: UUID,
+        selezioni: Map<String, Set<Long>>,
+        omesso: String? = null,
+        condizioni: Map<String, String> = emptyMap()
+    ): String? = vive(tabella, selezioni, condizioni, omesso, null, 0)
 
     private fun vive(
         tabella: UUID,
         selezioni: Map<String, Set<Long>>,
+        condizioni: Map<String, String>,
         omesso: String?,
         escludi: Collegamento?,
         profondita: Int
@@ -137,10 +152,17 @@ class GrafoDataset private constructor(
                         "AND campo = '${nome(campo)}' AND valore_id IN (${valori.joinToString(",")}))"
             }
         }
+        // Condizioni (set analysis): come le selezioni, ma con una condizione SQL al posto della lista.
+        condizioni.forEach { (campo, condizione) ->
+            if (campo != omesso && campo in campiTabella) {
+                termini += "(SELECT groupBitmapOrState(righe) FROM $INDICE WHERE area_id = $area AND tabella_id = ${uuid(tabella)} " +
+                        "AND campo = '${nome(campo)}' AND ($condizione))"
+            }
+        }
 
         // Messaggi dei collegamenti (tranne quello da escludere): dalla colonna della tabella.
         collegamentiDi(tabella).filter { it != escludi }.forEach { c ->
-            val ammessi = valoriAmmessi(c, tabella, selezioni, omesso, profondita + 1) ?: return@forEach
+            val ammessi = valoriAmmessi(c, tabella, selezioni, condizioni, omesso, profondita + 1) ?: return@forEach
             termini += "(SELECT groupBitmapState(${Naming.RID_COLUMN}) FROM ${fisica(tabella)} " +
                     "WHERE ${chiave(c, tabella)} IN ($ammessi))"
         }
@@ -155,11 +177,12 @@ class GrafoDataset private constructor(
         c: Collegamento,
         per: UUID,
         selezioni: Map<String, Set<Long>>,
+        condizioni: Map<String, String>,
         omesso: String?,
         profondita: Int
     ): String? {
         val insiemi = c.occorrenze.filter { it != per }.mapNotNull { altra ->
-            insiemeDi(c, altra, selezioni, omesso, profondita)
+            insiemeDi(c, altra, selezioni, condizioni, omesso, profondita)
         }
         return when (insiemi.size) {
             0 -> null
@@ -173,10 +196,11 @@ class GrafoDataset private constructor(
         c: Collegamento,
         tabella: UUID,
         selezioni: Map<String, Set<Long>>,
+        condizioni: Map<String, String>,
         omesso: String?,
         profondita: Int
     ): String? {
-        val viva = vive(tabella, selezioni, omesso, c, profondita) ?: return null
+        val viva = vive(tabella, selezioni, condizioni, omesso, c, profondita) ?: return null
         return "SELECT ${chiave(c, tabella)} FROM ${fisica(tabella)} " +
                 "WHERE bitmapContains($viva, ${Naming.RID_COLUMN})"
     }
@@ -200,10 +224,10 @@ class GrafoDataset private constructor(
     ): String {
         val semplice = collegamentoSemplice(campo)
         if (semplice != null) {
-            val insiemi = semplice.occorrenze.mapNotNull { t -> insiemeDi(semplice, t, selezioni, omesso, 0) }
+            val insiemi = semplice.occorrenze.mapNotNull { t -> insiemeDi(semplice, t, selezioni, emptyMap(), omesso, 0) }
             val condizione = if (insiemi.isEmpty()) "1" else insiemi.joinToString(" AND ") { "valore_id IN ($it)" }
             val inUniverso = if (universo.isEmpty()) "" else {
-                val perTabella = semplice.occorrenze.map { t -> insiemeDi(semplice, t, universo, null, 0) }
+                val perTabella = semplice.occorrenze.map { t -> insiemeDi(semplice, t, universo, emptyMap(), null, 0) }
                 if (perTabella.any { it == null }) ""
                 else " AND (" + perTabella.joinToString(" OR ") { "valore_id IN ($it)" } + ")"
             }

@@ -27,3 +27,4 @@ replay_pid*
 *.iml
 *.hprof
 backend/lightning-engine/src/main/bundles/prod.bundle
+backend/lightning-engine/src/main/frontend/generated/

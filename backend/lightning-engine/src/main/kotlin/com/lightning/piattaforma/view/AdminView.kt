@@ -1,6 +1,6 @@
 package com.lightning.piattaforma.view
 
-import com.lightning.bi.view.DatasetFiltriView
+
 import com.lightning.bi.view.TabelleImportateView
 import com.lightning.piattaforma.model.Role
 import com.lightning.piattaforma.model.User
@@ -61,7 +61,7 @@ class AdminView(
     override fun beforeEnter(event: BeforeEnterEvent) {
         val user = CurrentUserHolder.get()
         if (user == null || !permissionCheckService.hasPermission(user.roleName, "MANAGE_USERS")) {
-            event.forwardTo(DatasetFiltriView::class.java)
+            event.forwardTo("bi")
             return
         }
         if (!paginaCostruita) {
@@ -82,7 +82,7 @@ class AdminView(
                 label = "Analisi",
                 entries = listOf(
                     LbiSidebarMenu.MenuEntry("Torna alle analisi", icon = VaadinIcon.ARROW_LEFT) {
-                        getUI().ifPresent { it.navigate(DatasetFiltriView::class.java) }
+                        getUI().ifPresent { it.navigate("bi") }
                     }
                 ),
                 icon = VaadinIcon.CHART

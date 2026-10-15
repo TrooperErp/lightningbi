@@ -251,6 +251,19 @@ class FiltriService(
     }
 
     /**
+     * Gli id dei valori possibili di un campo, calcolati senza la sua selezione (come i colori
+     * dell'elenco): per "Seleziona tutti" e "Seleziona tutti tranne questo", come in Qlik.
+     */
+    fun idPossibili(areaId: UUID, selections: Map<UUID, Set<Long>>, dimensioneId: UUID): Set<Long> {
+        val c = contesto(areaId, selections)
+        val campo = c.campi[dimensioneId] ?: return emptySet()
+        val (stato, _, _) = parti(c, dimensioneId, campo)
+        val ids = HashSet<Long>()
+        jdbcTemplate.query("SELECT valore_id FROM ($stato) WHERE verde = 1") { rs -> ids.add(rs.getLong(1)) }
+        return ids
+    }
+
+    /**
      * Selezionare un valore ESCLUSO (grigio): come in Qlik, le selezioni in conflitto con il
      * valore si annullano e il valore diventa selezionato. Restituisce le dimensioni di cui
      * togliere la selezione: il minimo necessario perché il valore diventi possibile (si provano

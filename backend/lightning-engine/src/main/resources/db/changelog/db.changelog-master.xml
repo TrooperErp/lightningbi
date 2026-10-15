@@ -41,4 +41,5 @@
 <include file="db/changelog/039-sorgenti-tabella.xml"/>
 <include file="db/changelog/040-ruolo-occorrenza.xml"/>
 <include file="db/changelog/041-etichetta-campo.xml"/>
+    <include file="db/changelog/042-condizione-misura.xml"/>
 </databaseChangeLog>

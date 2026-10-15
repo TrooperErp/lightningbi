@@ -1,6 +1,6 @@
 package com.lightning.piattaforma.view
 
-import com.lightning.bi.view.DatasetFiltriView
+
 import com.lightning.piattaforma.repository.UserRepository
 import com.lightning.piattaforma.service.AuthService
 import com.lightning.piattaforma.service.JwtService
@@ -122,6 +122,6 @@ class LoginView(
             )
         )
         SessioneCookie.imposta(sessionId, sessionService.durataSecondi)
-        ui.ifPresent { it.navigate(DatasetFiltriView::class.java) }
+        ui.ifPresent { it.navigate("bi") }
     }
 }

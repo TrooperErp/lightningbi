@@ -5,7 +5,7 @@ import com.lightning.piattaforma.repository.UserRepository
 import com.lightning.piattaforma.service.SessionService
 import com.lightning.piattaforma.view.AuthenticatedUser
 import com.lightning.piattaforma.view.CurrentUserHolder
-import com.lightning.bi.view.DatasetFiltriView
+import com.lightning.bi.ui.RotteBi
 import com.lightning.piattaforma.view.LoginView
 import com.lightning.piattaforma.view.SessioneCookie
 import com.vaadin.flow.router.BeforeEnterEvent
@@ -52,7 +52,7 @@ class LbiServiceInitListener(
                 SessioneCookie.cancella()
                 if (!versoLogin) evento.forwardTo(LoginView::class.java)
             } else if (versoLogin) {
-                evento.forwardTo(DatasetFiltriView::class.java)
+                evento.forwardTo("bi")
             }
             return
         }
@@ -63,7 +63,7 @@ class LbiServiceInitListener(
         if (ripristinato != null) {
             CurrentUserHolder.set(ripristinato)
             log.info("Sessione {} ripristinata dal cookie per '{}'", ripristinato.sessionId, ripristinato.username)
-            if (versoLogin) evento.forwardTo(DatasetFiltriView::class.java)
+            if (versoLogin) evento.forwardTo("bi")
             return
         }
 
