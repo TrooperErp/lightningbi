@@ -1,8 +1,8 @@
 package com.lightning.bi.view
 
-import com.lightning.bi.connector.ConnectionOrchestrator
-import com.lightning.bi.connector.JdbcSourceConnector
-import com.lightning.bi.model.SourceConnection
+import com.lightning.piattaforma.connessioni.ConnectionOrchestrator
+import com.lightning.piattaforma.connessioni.JdbcSourceConnector
+import com.lightning.piattaforma.connessioni.SourceConnection
 import com.lightning.bi.service.ColumnProposal
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant

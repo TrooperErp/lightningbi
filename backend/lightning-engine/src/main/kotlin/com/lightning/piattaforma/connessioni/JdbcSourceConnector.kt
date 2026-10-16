@@ -1,14 +1,5 @@
-package com.lightning.bi.connector
+package com.lightning.piattaforma.connessioni
 
-import com.lightning.bi.model.SourceConnection
-import com.lightning.bi.service.ColumnInfo
-import com.lightning.bi.service.KeyQueryProbe
-import com.lightning.bi.service.KeyQueryResult
-import com.lightning.bi.service.QueryNonValidaException
-import com.lightning.bi.service.QueryScadutaException
-import com.lightning.bi.service.SourceConnectionService
-import com.lightning.bi.service.TableInfo
-import com.lightning.bi.service.TroppeChiaviException
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.sql.Connection

@@ -17,7 +17,7 @@ import com.lightning.bi.repository.AreaSourceRepository
 import com.lightning.bi.repository.AreaTabellaRepository
 import com.lightning.bi.repository.ImportedTableRepository
 import com.lightning.bi.repository.RegistryRepository
-import com.lightning.bi.repository.SourceConnectionRepository
+import com.lightning.piattaforma.connessioni.SourceConnectionRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant

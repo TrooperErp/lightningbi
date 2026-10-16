@@ -1,7 +1,5 @@
-package com.lightning.bi.service
+package com.lightning.piattaforma.connessioni
 
-import com.lightning.bi.model.SourceConnection
-import com.lightning.bi.repository.SourceConnectionRepository
 import com.lightning.piattaforma.service.CryptoService
 import org.springframework.stereotype.Service
 import java.time.Instant

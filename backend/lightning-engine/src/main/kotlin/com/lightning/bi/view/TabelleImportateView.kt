@@ -1,13 +1,13 @@
 package com.lightning.bi.view
 
-import com.lightning.bi.connector.ConnectionOrchestrator
-import com.lightning.bi.connector.JdbcSourceConnector
+import com.lightning.piattaforma.connessioni.ConnectionOrchestrator
+import com.lightning.piattaforma.connessioni.JdbcSourceConnector
 import com.lightning.bi.etl.EsitoSync
 import com.lightning.bi.etl.EtlOrchestrator
 import com.lightning.bi.model.ImportedTable
 import com.lightning.bi.model.ModalitaSync
 import com.lightning.bi.model.RuoloTabella
-import com.lightning.bi.model.SourceConnection
+import com.lightning.piattaforma.connessioni.SourceConnection
 import com.lightning.piattaforma.service.AdminGuard
 import com.lightning.piattaforma.service.AuthService
 import com.lightning.bi.service.ColumnProposal

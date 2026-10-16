@@ -1,0 +1,194 @@
+campo_qlik;tipo;viste;colonna;condizione;nota
+$Field;ignora;;;;campo di sistema Qlik
+$FieldNo;ignora;;;;campo di sistema Qlik
+$Rows;ignora;;;;campo di sistema Qlik
+$Table;ignora;;;;campo di sistema Qlik
+Anno;calendario;;{calendario} Anno;;{calendario} = campo data del dataset
+Anno Mese;calendario;;;;manca in LBI: da aggiungere al calendario
+CAP Cliente;campo;QLK_CLIENTICOAN;CAP Cliente;;solo in QLK_CLIENTICOAN che non ha _KEYCLIENTE: da collegare (CODICE_DITTA + Codice Cliente)
+CAP Fornitore;campo;QLK_FORNITORICOAN;CAP Fornitore;;
+COLLI Vendite;misura;QLK_VISTADOCUMENTICLIENTI;Colli Fatturati;;
+Citta Cliente;campo;QLK_CLIENTICOAN;Citta Cliente;;solo in QLK_CLIENTICOAN che non ha _KEYCLIENTE: da collegare (CODICE_DITTA + Codice Cliente)
+Citta Fornitore;campo;QLK_FORNITORICOAN;Citta Fornitore;;
+Codice Articolo;campo;QLK_VISTADOCUMENTICLIENTI, QLK_VISTADOCUMENTIFORNITORI, QLK_DOCUMENTICOAN;Codice Articolo;;
+Codice Cliente;campo;QLK_VISTADOCUMENTICLIENTI, QLK_CLIENTICOAN;Codice Cliente;;
+Codice Deposito;campo;QLK_VISTADOCUMENTICLIENTI, QLK_VISTADOCUMENTIFORNITORI;Codice Deposito;;
+Codice Sottofamiglia;campo;QLK_VISTAARTICOLI;Codice Sottofamiglia;;
+Data Documento;campo;QLK_VISTADOCUMENTICLIENTI, QLK_VISTADOCUMENTIFORNITORI, QLK_AGENTIDOCUMENTI, QLK_VISTAMOVIMENTICONTABILI, QLK_VISTASCADENZE, QLK_VISTASCADENZEFINANZIARIA;Data Documento;;
+Data Registrazione;campo;QLK_DOCUMENTICOAN;Data Registrazione;;
+Descrizione Area Clienti;campo;QLK_VISTACLIENTI;Descrizione Area;;
+Descrizione Area Fornitori;campo;QLK_VISTAFORNITORI;Descrizione Area;;
+Descrizione Articolo;campo;QLK_VISTAARTICOLI;Descrizione Articolo;;
+Descrizione Categoria Clienti;campo;QLK_VISTACLIENTI;Descrizione Categoria;;
+Descrizione Categoria Fornitori;campo;QLK_VISTAFORNITORI;Descrizione Categoria;;
+Descrizione Causale Magazzino;da_definire;;;;non trovato in nessuna vista QLK_
+Descrizione Deposito;campo;QLK_DEPOSITICOAN;Descrizione Deposito;;
+Descrizione Documento;campo;QLK_ELABSTAT;VST01_DESCRDOC;;
+Descrizione Famiglia;campo;QLK_VISTAARTICOLI;Descrizione Famiglia;;
+Descrizione Gruppo;campo;QLK_VISTAARTICOLI;Descrizione Gruppo;;
+Descrizione Gruppo Fiscale;campo;QLK_VISTAARTICOLI;Descrizione Gruppo Fiscale;;
+Descrizione Gruppo Statistico 1;campo;QLK_VISTAARTICOLI;Descrizione Gruppo Statistico 1;;
+Descrizione Gruppo Statistico 2;campo;QLK_VISTAARTICOLI;Descrizione Gruppo Statistico 2;;
+Descrizione Gruppo Statistico 3;campo;QLK_VISTAARTICOLI;Descrizione Gruppo Statistico 3;;
+Descrizione Gruppo Statistico 4;campo;QLK_VISTAARTICOLI;Descrizione Gruppo Statistico 4;;
+Descrizione Macroarea Clienti;campo;QLK_CLIENTICOAN;Descrizione Macroarea Clienti;;solo in QLK_CLIENTICOAN che non ha _KEYCLIENTE: da collegare (CODICE_DITTA + Codice Cliente)
+Descrizione Macroarea Fornitori;campo;QLK_FORNITORICOAN;Descrizione Macroarea Fornitori;;
+Descrizione Macrocategoria Clienti;campo;QLK_VISTACLIENTI;Descrizione Macrocategoria;;
+Descrizione Macrocategoria Fornitori;campo;QLK_VISTAFORNITORI;Descrizione Macrocategoria;;
+Descrizione Marca;campo;QLK_VISTAARTICOLI;Descrizione Marca;;
+Descrizione Mese;calendario;;{calendario} Mese;;{calendario} = campo data del dataset
+Descrizione Operatore;da_definire;;;;non trovato in nessuna vista QLK_
+Descrizione Raggruppamento 1 Clienti;campo;QLK_VISTACLIENTI;Descrizione Raggruppamento 1;;
+Descrizione Raggruppamento 1 Fornitori;campo;QLK_VISTAFORNITORI;Descrizione Raggruppamento 1;;
+Descrizione Raggruppamento 2 Clienti;campo;QLK_VISTACLIENTI;Descrizione Raggruppamento 2;;
+Descrizione Raggruppamento 2 Fornitori;campo;QLK_VISTAFORNITORI;Descrizione Raggruppamento 2;;
+Descrizione Raggruppamento 3 Clienti;campo;QLK_VISTACLIENTI;Descrizione Raggruppamento 3;;
+Descrizione Raggruppamento 3 Fornitori;campo;QLK_VISTAFORNITORI;Descrizione Raggruppamento 3;;
+Descrizione Sezionale;campo;QLK_SEZIONALI;Descrizione Sezionale;;
+Descrizione Sottocategoria Clienti;campo;QLK_VISTACLIENTI;Descrizione Sottocategoria;;
+Descrizione Sottocategoria Fornitori;campo;QLK_VISTAFORNITORI;Descrizione Sottocategoria;;
+Descrizione Sottofamiglia;campo;QLK_VISTAARTICOLI;Descrizione Sottofamiglia;;
+Descrizione Sottogruppo;campo;QLK_VISTAARTICOLI;Descrizione Sottogruppo;;
+Descrizione Valuta;da_definire;;;;non trovato in nessuna vista QLK_
+Descrizione Zona Clienti;campo;QLK_VISTACLIENTI;Descrizione Zona;;
+Descrizione Zona Fornitori;campo;QLK_VISTAFORNITORI;Descrizione Zona;;
+Imponibile Provvigioni Riga Documento;campo;QLK_AGENTIDOCUMENTI;Imponibile Provvigioni Riga Documento;;
+Importo Acquisti Lordo ScontoPiede EURO;misura;QLK_VISTADOCUMENTIFORNITORI;Importo Netto Fatturato;;
+Importo Acquisti Netto ScontoPiede EURO;misura;QLK_VISTADOCUMENTIFORNITORI;Importo Nettissimo Fatturato;;
+Importo Costo Venduto;da_definire;;;;Costo Unitario x Qta Fatturata (misura calcolata riga per riga)
+Importo Ordini Cliente Consegnato;da_definire;;;;Importo Nettissimo Ordinato - Importo Nettissimo Residuo Ordine (misura calcolata)
+Importo Ordini Cliente Netto ScontoPiede EURO;misura;QLK_VISTADOCUMENTICLIENTI;Importo Nettissimo Ordinato;;
+Importo Ordini Cliente Residuo;misura;QLK_VISTADOCUMENTICLIENTI;Importo Nettissimo Residuo Ordine;;
+Importo Ordini Fornitore Consegnato;da_definire;;;;idem su documenti fornitori (misura calcolata)
+Importo Ordini Fornitore Netto ScontoPiede EURO;misura;QLK_VISTADOCUMENTIFORNITORI;Importo Nettissimo Ordinato;;
+Importo Ordini Fornitore Residuo;misura;QLK_VISTADOCUMENTIFORNITORI;Importo Nettissimo Residuo Ordine;;
+Importo Provvigioni Riga Documento;campo;QLK_AGENTIDOCUMENTI;Importo Provvigioni Riga Documento;;
+Importo Resi Cliente Lordo ScontoPiede EURO;da_definire;;;;nessuna colonna corrispondente nelle viste documenti
+Importo Resi Cliente Netto ScontoPiede EURO;da_definire;;;;nessuna colonna corrispondente nelle viste documenti
+Importo Resi Fornitore Netto ScontoPiede EURO;da_definire;;;;nessuna colonna corrispondente nelle viste documenti
+Importo Resi Netto Associazioni ScontoPiede EURO;da_definire;;;;nessuna colonna corrispondente nelle viste documenti
+Importo Vendite Lordo ScontoPiede EURO;misura;QLK_VISTADOCUMENTICLIENTI;Importo Netto Fatturato;;
+Importo Vendite Netto Associazioni ScontoPiede EURO;da_definire;;;;nessuna colonna corrispondente nelle viste documenti
+Importo Vendite Netto ScontoPiede EURO;misura;QLK_VISTADOCUMENTICLIENTI;Importo Nettissimo Fatturato;;
+Indirizzo Cliente;campo;QLK_CLIENTICOAN;Indirizzo Cliente;;solo in QLK_CLIENTICOAN che non ha _KEYCLIENTE: da collegare (CODICE_DITTA + Codice Cliente)
+Indirizzo Fornitore;campo;QLK_FORNITORICOAN;Indirizzo Fornitore;;
+Numero Documento;campo;QLK_VISTADOCUMENTICLIENTI, QLK_VISTADOCUMENTIFORNITORI, QLK_DOCUMENTICOAN, QLK_VISTAMOVIMENTICONTABILI, QLK_VISTASCADENZEFINANZIARIA;Numero Documento;;
+Numero Documento Origine;campo;QLK_DOCUMENTICOAN, QLK_VISTASCADENZEFINANZIARIA;Numero Documento Origine;;
+Partita Iva Cliente;campo;QLK_CLIENTICOAN;Partita Iva Cliente;;solo in QLK_CLIENTICOAN che non ha _KEYCLIENTE: da collegare (CODICE_DITTA + Codice Cliente)
+Prezzo Lordo;da_definire;;;;nessuna colonna corrispondente nelle viste documenti
+ProgDepQta Codice Deposito;da_definire;;;;non trovato in nessuna vista QLK_
+ProgDepQta Disponibile;da_definire;;;;non trovato in nessuna vista QLK_
+ProgDepQta Giacenza Attuale;da_definire;;;;non trovato in nessuna vista QLK_
+ProgDepQta Giacenza Effettiva;da_definire;;;;non trovato in nessuna vista QLK_
+ProgDepQta Giacenza Fiscale;da_definire;;;;non trovato in nessuna vista QLK_
+ProgDepQta Giacenza Iniziale;da_definire;;;;non trovato in nessuna vista QLK_
+Provincia;campo;QLK_VISTACLIENTI, QLK_VISTAFORNITORI, QLK_CLIENTICOAN, QLK_VISTACLIFOR;Provincia;;
+Provincia Fornitore;campo;QLK_FORNITORICOAN;Provincia Fornitore;;
+QTA 1 Acquisti;misura;QLK_VISTADOCUMENTIFORNITORI;Qta Fatturata;;
+QTA 1 Ordini Cliente;misura;QLK_VISTADOCUMENTICLIENTI;Qta Ordinata;;
+QTA 1 Ordini Cliente da evadere;misura;QLK_VISTADOCUMENTICLIENTI;Qta Residuo Ordine;;
+QTA 1 Ordini Cliente evasi;da_definire;;;;Qta Ordinata - Qta Residuo Ordine (misura calcolata)
+QTA 1 Ordini Fornitore;misura;QLK_VISTADOCUMENTIFORNITORI;Qta Ordinata;;
+QTA 1 Ordini Fornitore da evadere;misura;QLK_VISTADOCUMENTIFORNITORI;Qta Residuo Ordine;;
+QTA 1 Ordini Fornitore evasi;da_definire;;;;idem su documenti fornitori (misura calcolata)
+QTA 1 Resi Cliente;da_definire;;;;nessuna colonna corrispondente nelle viste documenti
+QTA 1 Resi Fornitore;da_definire;;;;nessuna colonna corrispondente nelle viste documenti
+QTA 1 Vendite;misura;QLK_VISTADOCUMENTICLIENTI;Qta Fatturata;;
+QTA 2 Vendite;da_definire;;;;nessuna colonna corrispondente nelle viste documenti
+QTA Libera 1;da_definire;;;;non trovato in nessuna vista QLK_
+QTA Libera 2;da_definire;;;;non trovato in nessuna vista QLK_
+QTA Libera 3;da_definire;;;;non trovato in nessuna vista QLK_
+QTA Libera 4;da_definire;;;;non trovato in nessuna vista QLK_
+Ragione Sociale Agente Cliente;campo;QLK_VISTAAGENTI;Descrizione Agente;;agente del cliente: seconda occorrenza di QLK_VISTAAGENTI con alias, chiave _KEYAG1_ANAG
+Ragione Sociale Agente Documento;campo;QLK_VISTAAGENTI;Descrizione Agente;;agente del documento (_KEYAGENTE)
+Ragione Sociale Cliente;campo;QLK_VISTACLIENTI;Ragione Sociale;;
+Ragione Sociale Destinatario;da_definire;;;;non trovato in nessuna vista QLK_
+Ragione Sociale Fornitore;campo;QLK_VISTAFORNITORI;Ragione Sociale;;
+Regione;campo;QLK_VISTACLIENTI, QLK_VISTAFORNITORI, QLK_VISTACLIFOR;Regione;;
+Rischio Cliente A Scadere Incassati;campo;QLK_VISTARISCHIO;Rischio A Scadere Incassati;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente A Scadere Insoluto;campo;QLK_VISTARISCHIO;Rischio A Scadere Insoluto;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente A Scadere Non Insoluto;campo;QLK_VISTARISCHIO;Rischio A Scadere Non Insoluto;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente A Scadere Totale;campo;QLK_VISTARISCHIO;Rischio A Scadere Totale;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Documenti Da Evadere;campo;QLK_VISTARISCHIO;Rischio Documenti Da Evadere;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Documenti Da Fatturare;campo;QLK_VISTARISCHIO;Rischio Documenti Da Fatturare;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Effetti Da Liberalizzare;campo;QLK_VISTARISCHIO;Rischio Effetti Da Liberalizzare;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Fido Assegnato;campo;QLK_VISTARISCHIO;Rischio Fido Assegnato;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Fido Calcolato;campo;QLK_VISTARISCHIO;Rischio Fido Calcolato;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Fido Residuo;campo;QLK_VISTARISCHIO;Rischio Fido Residuo;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Giorni Dilazione Azienda;campo;QLK_VISTARISCHIO;Rischio Giorni Dilazione Azienda;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Giorni Dilazione Effettivi;campo;QLK_VISTARISCHIO;Rischio Giorni Dilazione Effettivi;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Giorni Ritardo Pagamento;campo;QLK_VISTARISCHIO;Rischio Giorni Ritardo Pagamento;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Importo Effetti Insoluti;campo;QLK_VISTARISCHIO;Rischio Importo Effetti Insoluti;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Importo Effetti Presentati;campo;QLK_VISTARISCHIO;Rischio Importo Effetti Presentati;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Movimenti Contabili Consolidati;campo;QLK_VISTARISCHIO;Rischio Movimenti Contabili Consolidati;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Movimenti Contabili Da Consolidare;campo;QLK_VISTARISCHIO;Rischio Movimenti Contabili Da Consolidare;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Movimenti Contabili Previsionali;campo;QLK_VISTARISCHIO;Rischio Movimenti Contabili Previsionali;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Numero Effetti Insoluti;campo;QLK_VISTARISCHIO;Rischio Numero Effetti Insoluti;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Numero Effetti Presentati;campo;QLK_VISTARISCHIO;Rischio Numero Effetti Presentati;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Percentuale Numero Insoluti;campo;QLK_VISTARISCHIO;Rischio Percentuale Numero Insoluti;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Saldo Movimenti Contabili;campo;QLK_VISTARISCHIO;Rischio Saldo Movimenti Contabili;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Scadenze Consolidate;campo;QLK_VISTARISCHIO;Rischio Scadenze Consolidate;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Scadenze Da Consolidare;campo;QLK_VISTARISCHIO;Rischio Scadenze Da Consolidare;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Scadenze Totali;campo;QLK_VISTARISCHIO;Rischio Scadenze Totali;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Scaduto Insoluto;campo;QLK_VISTARISCHIO;Rischio Scaduto Insoluto;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Scaduto Non Insoluto;campo;QLK_VISTARISCHIO;Rischio Scaduto Non Insoluto;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Cliente Scaduto Totale;campo;QLK_VISTARISCHIO;Rischio Scaduto Totale;{<[_Rischio Tipo Dati]={'C'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Data Calcolo;campo;QLK_VISTARISCHIO;Rischio Data Calcolo;;
+Rischio Fornitore A Scadere Incassati;campo;QLK_VISTARISCHIO;Rischio A Scadere Incassati;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore A Scadere Insoluto;campo;QLK_VISTARISCHIO;Rischio A Scadere Insoluto;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore A Scadere Non Insoluto;campo;QLK_VISTARISCHIO;Rischio A Scadere Non Insoluto;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore A Scadere Totale;campo;QLK_VISTARISCHIO;Rischio A Scadere Totale;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Data Calcolo;campo;QLK_VISTARISCHIO;Rischio Data Calcolo;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Documenti Da Evadere;campo;QLK_VISTARISCHIO;Rischio Documenti Da Evadere;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Documenti Da Fatturare;campo;QLK_VISTARISCHIO;Rischio Documenti Da Fatturare;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Effetti Da Liberalizzare;campo;QLK_VISTARISCHIO;Rischio Effetti Da Liberalizzare;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Fido Assegnato;campo;QLK_VISTARISCHIO;Rischio Fido Assegnato;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Fido Calcolato;campo;QLK_VISTARISCHIO;Rischio Fido Calcolato;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Fido Residuo;campo;QLK_VISTARISCHIO;Rischio Fido Residuo;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Giorni Dilazione Azienda;campo;QLK_VISTARISCHIO;Rischio Giorni Dilazione Azienda;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Giorni Dilazione Effettivi;campo;QLK_VISTARISCHIO;Rischio Giorni Dilazione Effettivi;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Giorni Ritardo Pagamento;campo;QLK_VISTARISCHIO;Rischio Giorni Ritardo Pagamento;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Importo Effetti Insoluti;campo;QLK_VISTARISCHIO;Rischio Importo Effetti Insoluti;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Importo Effetti Presentati;campo;QLK_VISTARISCHIO;Rischio Importo Effetti Presentati;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Movimenti Contabili Consolidati;campo;QLK_VISTARISCHIO;Rischio Movimenti Contabili Consolidati;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Movimenti Contabili Da Consolidare;campo;QLK_VISTARISCHIO;Rischio Movimenti Contabili Da Consolidare;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Movimenti Contabili Previsionali;campo;QLK_VISTARISCHIO;Rischio Movimenti Contabili Previsionali;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Numero Effetti Insoluti;campo;QLK_VISTARISCHIO;Rischio Numero Effetti Insoluti;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Numero Effetti Presentati;campo;QLK_VISTARISCHIO;Rischio Numero Effetti Presentati;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Ora Calcolo;campo;QLK_VISTARISCHIO;Rischio Ora Calcolo;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Percentuale Numero Insoluti;campo;QLK_VISTARISCHIO;Rischio Percentuale Numero Insoluti;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Saldo Movimenti Contabili;campo;QLK_VISTARISCHIO;Rischio Saldo Movimenti Contabili;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Scadenze Consolidate;campo;QLK_VISTARISCHIO;Rischio Scadenze Consolidate;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Scadenze Da Consolidare;campo;QLK_VISTARISCHIO;Rischio Scadenze Da Consolidare;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Scadenze Totali;campo;QLK_VISTARISCHIO;Rischio Scadenze Totali;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Scaduto Insoluto;campo;QLK_VISTARISCHIO;Rischio Scaduto Insoluto;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Scaduto Non Insoluto;campo;QLK_VISTARISCHIO;Rischio Scaduto Non Insoluto;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Scaduto Totale;campo;QLK_VISTARISCHIO;Rischio Scaduto Totale;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Fornitore Tipo Dati;campo;QLK_VISTARISCHIO;Rischio Tipo Dati;{<[_Rischio Tipo Dati]={'F'}>};vista caricata due volte (Cliente/Fornitore): due occorrenze con alias - valore C/F da verificare
+Rischio Movimenti Contabili Consolidati;campo;QLK_VISTARISCHIO;Rischio Movimenti Contabili Consolidati;;
+Rischio Ora Calcolo;campo;QLK_VISTARISCHIO;Rischio Ora Calcolo;;
+Rischio Tipo Dati;campo;QLK_VISTARISCHIO;Rischio Tipo Dati;;
+Semestre;calendario;;;;manca in LBI: da aggiungere al calendario
+Sezionale Documento;campo;QLK_VISTADOCUMENTICLIENTI, QLK_VISTADOCUMENTIFORNITORI, QLK_DOCUMENTICOAN, QLK_VISTASCADENZEFINANZIARIA;Sezionale Documento;;
+Tipo Documento;campo;QLK_VISTADOCUMENTICLIENTI, QLK_VISTADOCUMENTIFORNITORI, QLK_DOCUMENTICOAN, QLK_VISTAMOVIMENTICONTABILI;Tipo Documento;;
+Tipo Riga;campo;QLK_VISTADOCUMENTICLIENTI, QLK_VISTADOCUMENTIFORNITORI;Tipo Riga;;
+Trimestre;calendario;;{calendario} Trimestre;;{calendario} = campo data del dataset
+UM 1;campo;QLK_VISTAARTICOLI;UM 1;;
+Valore Libero 1;da_definire;;;;non trovato in nessuna vista QLK_
+Valore Libero 2;da_definire;;;;non trovato in nessuna vista QLK_
+Valore Libero 3;da_definire;;;;non trovato in nessuna vista QLK_
+Valore Libero 4;da_definire;;;;non trovato in nessuna vista QLK_
+Variante 1;da_definire;;;;non trovato in nessuna vista QLK_
+Variante 2;da_definire;;;;non trovato in nessuna vista QLK_
+X_pr;ignora;;;;campo di sistema Qlik
+Y_pr;ignora;;;;campo di sistema Qlik
+Giorno;calendario;;{calendario} Giorno;;
+Codice Sottocategoria Clienti;campo;QLK_VISTACLIENTI;Codice Sottocategoria;;
+Variante Articolo;campo;QLK_VISTAARTICOLI;Variante;;
+Descrizione Progetto;campo;QLK_VISTAPROGETTI;Descrizione Progetto;;legata da _KEYPROGETTODOC (da verificare)
+Descrizione SottoProgetto;campo;QLK_VISTASOTTOPROGETTI;Descrizione SottoProgetto;;legata da _KEYSPROGETTODOC (da verificare)
+Ragione Sociale Azienda;campo;QLK_AZIENDE;Ragione Sociale Azienda;;QLK_AZIENDE ha CODICE_DITTA e non _KEYDITTA: non si collega da sola
+Codice Articolo Variante;da_definire;;;;non trovato in nessuna vista QLK_
+Codice Documento;da_definire;;;;non trovato in nessuna vista QLK_
+Descrizione Macroarea Destin;da_definire;;;;non trovato in nessuna vista QLK_
+Tipo Omaggio;da_definire;;;;non trovato in nessuna vista QLK_

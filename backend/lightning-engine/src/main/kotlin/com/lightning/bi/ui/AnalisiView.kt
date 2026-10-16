@@ -56,6 +56,7 @@ import com.vaadin.flow.component.textfield.TextArea
 import com.lightning.bi.service.setanalysis.Operatore
 import com.lightning.piattaforma.ui.Notifiche
 import com.lightning.piattaforma.service.Cronometro
+import org.springframework.beans.factory.annotation.Autowired
 
 /**
  * Un foglio pivot del dataset (come un foglio di Qlik con una tabella pivot), dentro la shell:
@@ -209,6 +210,9 @@ class AnalisiView(
 
     // ================= Barra dei fogli: Esporta e azioni del foglio =================
 
+    @Autowired
+    private lateinit var esportaPerValore: EsportaPerValore
+
     /** "Esporta ▾" sulla testata della pivot: è chiaro che cosa si esporta. */
     private fun menuEsporta(): Component {
         val pulsante = Button("Esporta", Icon(VaadinIcon.DOWNLOAD_ALT)).apply {
@@ -217,11 +221,47 @@ class AnalisiView(
         }
         ContextMenu(pulsante).apply {
             isOpenOnClick = true
-            listOf("Excel (.xlsx)", "CSV", "Copia negli appunti", "PDF").forEach { voce ->
+            addItem("Excel (.xlsx)") { apriEsportaExcel() }
+            listOf("CSV", "Copia negli appunti", "PDF").forEach { voce ->
                 addItem("$voce · in arrivo").isEnabled = false
             }
         }
         return pulsante
+    }
+
+    private fun apriEsportaExcel() {
+        val a = area ?: return
+        val v = vista ?: return
+        val perId = misure.associateBy { it.id }
+        val sel = stato?.selezioni ?: emptyMap()
+        val nomeFile = v.nome.replace(Regex("[\\\\/:*?\"<>|]"), " ").trim().ifEmpty { "Pivot" } + ".xlsx"
+        EsportaExcelDialog(
+            v.id,
+            righe.map { nomi[it] ?: "?" },
+            colonne.map { nomi[it] ?: "?" },
+            ordineMisure.mapNotNull { perId[it]?.nome },
+            sel.mapNotNull { (id, valori) -> nomi[id]?.let { it to valori.size } },
+            nomeFile,
+            genera = { risposte ->
+                val valoriCampo = sel.mapNotNull { (id, valori) ->
+                    nomi[id]?.let { it to filtriService.etichette(a.id, id, valori).joinToString(", ") }
+                }.toMap()
+                val esito = analisiService.calcola(v.id, sel)
+                EsportaExcel.genera(risposte, esito, valoriCampo, nomeFoglio = v.nome)
+            },
+            salvaSuRete = { risposte ->
+                val nomeCampo = risposte.unFilePer ?: error("Campo non scelto")
+                val campoId = nomi.entries.firstOrNull { it.value == nomeCampo }?.key
+                    ?: error("Campo '$nomeCampo' non trovato")
+                val esito = esportaPerValore.salva(
+                    a.id, v.id, v.nome, campoId, nomeCampo, righe.toList(), nomi, sel, risposte
+                )
+                buildString {
+                    append("Salvati ${esito.salvati.size} file in ${esito.cartella}")
+                    if (esito.errori.isNotEmpty()) append("\nNon salvati: ${esito.errori.joinToString("; ")}")
+                }
+            }
+        ).open()
     }
 
     private fun menuFoglio(a: Area, v: PivotView): Component =

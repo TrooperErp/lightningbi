@@ -1,4 +1,4 @@
-package com.lightning.bi.service
+package com.lightning.piattaforma.connessioni
 
 /** Una tabella o view di una sorgente, come la restituisce un connettore. */
 data class TableInfo(val schema: String, val name: String)

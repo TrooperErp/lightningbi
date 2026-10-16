@@ -1,7 +1,7 @@
 // FILE: src/main/kotlin/com/lightningbi/lightning_engine/etl/TableSyncRunner.kt
 package com.lightning.bi.etl
 
-import com.lightning.bi.connector.ConnectionOrchestrator
+import com.lightning.piattaforma.connessioni.ConnectionOrchestrator
 import com.lightning.bi.model.EtlRun
 import com.lightning.bi.model.EtlStato
 import com.lightning.bi.model.ImportedColumn

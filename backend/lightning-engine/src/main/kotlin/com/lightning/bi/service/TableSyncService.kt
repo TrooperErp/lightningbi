@@ -1,10 +1,13 @@
 package com.lightning.bi.service
 
-import com.lightning.bi.connector.ConnectionOrchestrator
+import com.lightning.piattaforma.connessioni.ConnectionOrchestrator
 import com.lightning.bi.model.ModalitaSync
 import com.lightning.bi.model.TableSync
 import com.lightning.bi.repository.ImportedTableRepository
 import com.lightning.bi.repository.TableSyncRepository
+import com.lightning.piattaforma.connessioni.KeyQueryProbe
+import com.lightning.piattaforma.connessioni.QueryNonValidaException
+import com.lightning.piattaforma.connessioni.QueryScadutaException
 import com.lightning.piattaforma.service.AdminGuard
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
@@ -43,8 +46,8 @@ class TableSyncService(
      * "Prova" della pagina e da [salva].
      *
      * @param etichetta come chiamare la query nei messaggi ("query dei cambiati")
-     * @throws QueryScadutaException se la sorgente non risponde entro il tempo concesso
-     * @throws QueryNonValidaException se la sorgente la rifiuta o le colonne non coincidono con l'unità
+     * @throws com.lightning.piattaforma.connessioni.QueryScadutaException se la sorgente non risponde entro il tempo concesso
+     * @throws com.lightning.piattaforma.connessioni.QueryNonValidaException se la sorgente la rifiuta o le colonne non coincidono con l'unità
      */
     fun provaQuery(
         importedTableId: UUID,

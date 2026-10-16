@@ -1,10 +1,10 @@
 // FILE: src/main/kotlin/com/lightningbi/lightning_engine/view/SorgentiTabellaDialog.kt
 package com.lightning.bi.view
 
-import com.lightning.bi.connector.ConnectionOrchestrator
+import com.lightning.piattaforma.connessioni.ConnectionOrchestrator
 import com.lightning.bi.model.ImportedTable
 import com.lightning.bi.model.SorgenteTabella
-import com.lightning.bi.model.SourceConnection
+import com.lightning.piattaforma.connessioni.SourceConnection
 import com.lightning.bi.service.TableImportService
 import com.vaadin.flow.component.button.Button
 import com.vaadin.flow.component.button.ButtonVariant

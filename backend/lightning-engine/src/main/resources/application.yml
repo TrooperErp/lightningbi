@@ -212,3 +212,5 @@ logging:
 lbi:
   alert:
     admin-email: ict@tosoniindustrie.com
+  export:
+    cartella: /report

@@ -1,6 +1,5 @@
-package com.lightning.bi.repository
+package com.lightning.piattaforma.connessioni
 
-import com.lightning.bi.model.SourceConnection
 import java.util.UUID
 
 interface SourceConnectionRepository {

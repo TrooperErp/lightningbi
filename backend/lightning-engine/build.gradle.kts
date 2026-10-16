@@ -73,6 +73,8 @@ dependencies {
 
 	// Motore 2.0: bitmap in memoria (Java puro, niente JNI)
 	implementation("org.roaringbitmap:RoaringBitmap:1.6.14")
+	// Esportazione Excel (.xlsx)
+	implementation("org.apache.poi:poi-ooxml:5.5.1")
 
 }
 

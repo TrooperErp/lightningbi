@@ -1,8 +1,8 @@
 package com.lightning.bi.service
 
-import com.lightning.bi.connector.ConnectionOrchestrator
+import com.lightning.piattaforma.connessioni.ConnectionOrchestrator
 import com.lightning.bi.model.RuoloTabella
-import com.lightning.bi.model.SourceConnection
+import com.lightning.piattaforma.connessioni.SourceConnection
 import com.lightning.bi.repository.ImportedTableRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service

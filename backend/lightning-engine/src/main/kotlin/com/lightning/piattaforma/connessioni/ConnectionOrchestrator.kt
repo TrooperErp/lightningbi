@@ -1,11 +1,5 @@
-package com.lightning.bi.connector
+package com.lightning.piattaforma.connessioni
 
-import com.lightning.bi.model.SourceConnection
-import com.lightning.bi.service.ColumnInfo
-import com.lightning.bi.service.KeyQueryProbe
-import com.lightning.bi.service.KeyQueryResult
-import com.lightning.bi.service.SourceConnectionService
-import com.lightning.bi.service.TableInfo
 import org.springframework.stereotype.Service
 import java.util.UUID
 import java.time.LocalDateTime

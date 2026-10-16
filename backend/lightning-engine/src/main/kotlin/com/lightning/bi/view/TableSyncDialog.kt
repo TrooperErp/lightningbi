@@ -3,8 +3,8 @@ package com.lightning.bi.view
 import com.lightning.bi.model.ImportedTable
 import com.lightning.bi.model.ModalitaSync
 import com.lightning.bi.model.TableSync
-import com.lightning.bi.service.QueryNonValidaException
-import com.lightning.bi.service.QueryScadutaException
+import com.lightning.piattaforma.connessioni.QueryNonValidaException
+import com.lightning.piattaforma.connessioni.QueryScadutaException
 import com.lightning.bi.service.TableImportService
 import com.lightning.bi.service.TableSyncService
 import com.vaadin.flow.component.button.Button

@@ -1,4 +1,4 @@
-package com.lightning.bi.model
+package com.lightning.piattaforma.connessioni
 
 import java.time.Instant
 import java.util.UUID
